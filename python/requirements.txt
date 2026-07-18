@@ -1,0 +1,13 @@
+# doc-intake Python 依赖
+# 本地提取（必须）
+pypdf>=3.0.0
+pdfplumber>=0.9.0
+
+# 图片处理（必须）
+Pillow>=9.0.0
+
+# MinerU 云端 API（可选，PDF 提取）
+mineru-open-sdk>=0.2.0
+
+# PaddleOCR 云端 API（可选，图片 OCR）
+# requests>=2.28.0  # PaddleOCR 直接调用 API 需要

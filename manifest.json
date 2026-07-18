@@ -1,0 +1,247 @@
+{
+  "manifestVersion": 1,
+  "id": "doc-intake",
+  "name": "Doc Intake",
+  "version": "0.1.0",
+  "trust": "restricted",
+  "description": "文档/图片内容提取工具。支持 MinerU（PDF）、PaddleOCR（图片）、本地 Python 库（DOCX/PPTX/XLSX/HTML），输出结构化 Markdown。支持公式转 LaTeX、EMF 转 PNG。",
+  "contributes": {
+    "configuration": {
+      "properties": {
+        "pythonPath": {
+          "type": "string",
+          "default": "",
+          "title": "Python 可执行文件路径（如 conda 环境的 python.exe）"
+        },
+        "defaultBackend": {
+          "type": "string",
+          "default": "auto",
+          "title": "默认解析后端（auto/mineru/paddleocr/local）"
+        },
+        "pdfBackendChain": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["mineru", "paddleocr", "local"]
+          },
+          "default": ["mineru", "paddleocr", "local"],
+          "title": "PDF 后端降级链（按顺序尝试，失败自动降级到下一档）"
+        },
+        "mineruCredentials": {
+          "type": "string",
+          "default": "",
+          "title": "MinerU Token（多个用分号分隔，获取地址：https://mineru.net/apiManage/token）"
+        },
+        "mineruModelVersion": {
+          "type": "string",
+          "default": "vlm",
+          "title": "MinerU 模型版本（vlm/pipeline/MinerU-HTML）",
+          "enum": ["vlm", "pipeline", "MinerU-HTML"]
+        },
+        "mineruEnableOCR": {
+          "type": "boolean",
+          "default": true,
+          "title": "MinerU 是否开启 OCR（仅对 pipeline/vlm 有效）"
+        },
+        "mineruEnableFormula": {
+          "type": "boolean",
+          "default": true,
+          "title": "MinerU 是否开启公式识别"
+        },
+        "mineruEnableTable": {
+          "type": "boolean",
+          "default": true,
+          "title": "MinerU 是否开启表格识别"
+        },
+        "paddleTokens": {
+          "type": "string",
+          "default": "",
+          "title": "PaddleOCR Token（分号分隔）"
+        },
+        "paddleUseDocOrientationClassify": {
+          "type": "boolean",
+          "default": false,
+          "title": "PaddleOCR 文档方向分类"
+        },
+        "paddleUseDocUnwarping": {
+          "type": "boolean",
+          "default": true,
+          "title": "PaddleOCR 文档去扭曲"
+        },
+        "paddleUseChartRecognition": {
+          "type": "boolean",
+          "default": true,
+          "title": "PaddleOCR 图表识别"
+        },
+        "paddleUseSealRecognition": {
+          "type": "boolean",
+          "default": false,
+          "title": "PaddleOCR 印章识别"
+        },
+        "paddleUseTableRecognition": {
+          "type": "boolean",
+          "default": true,
+          "title": "PaddleOCR 表格识别"
+        },
+        "paddleUseFormulaRecognition": {
+          "type": "boolean",
+          "default": true,
+          "title": "PaddleOCR 公式识别"
+        },
+        "splitImageThreshold": {
+          "type": "number",
+          "default": 1.2,
+          "title": "图片分割阈值（高度/宽度超过此值才分割）"
+        },
+        "splitImageTolerance": {
+          "type": "number",
+          "default": 15,
+          "title": "图片分割色差容忍度（欧氏距离）"
+        },
+        "splitImageBlankRatio": {
+          "type": "number",
+          "default": 0.98,
+          "title": "图片分割空白行像素比例阈值"
+        },
+        "splitImageMinBlank": {
+          "type": "number",
+          "default": 5,
+          "title": "图片分割最小连续空白行数"
+        },
+        "maxConcurrent": {
+          "type": "number",
+          "default": 4,
+          "title": "云端 API 后端并发限（同时多少路 MinerU / PaddleOCR 调用，避免 API rate limit）"
+        },
+        "maxConcurrentLocal": {
+          "type": "number",
+          "default": 8,
+          "title": "本地后端并发限（同时多少路本地 DOCX / PPTX 解析，无 API 限制）"
+        },
+        "maxRetries": {
+          "type": "number",
+          "default": 3,
+          "title": "API 临时错误最大重试次数（429 / 5xx / 网络抖动，超限后降下一档）"
+        },
+        "retryBaseDelayMs": {
+          "type": "number",
+          "default": 1000,
+          "title": "重试基础退避毫秒（5xx/network 按这个数 × 2^attempt；429 独立用 8s base）"
+        },
+        "maxRemoteImagesPerHtml": {
+          "type": "number",
+          "default": 100,
+          "title": "HTML 页面最多下载多少远程图片（防止超多 URL 的页面拉爆网络/磁盘）"
+        },
+        "defaultLanguage": {
+          "type": "string",
+          "default": "zh",
+          "title": "默认语言（zh/en等）"
+        },
+        "includeImages": {
+          "type": "boolean",
+          "default": true,
+          "title": "默认是否提取图片"
+        },
+        "mineruFlashMaxMB": {
+          "type": "number",
+          "default": 10,
+          "title": "MinerU Flash 最大文件大小(MB)"
+        },
+        "mineruFlashMaxPages": {
+          "type": "number",
+          "default": 20,
+          "title": "MinerU Flash 最大页数"
+        },
+        "mineruPrecisionMaxMB": {
+          "type": "number",
+          "default": 200,
+          "title": "MinerU Precision 最大文件大小(MB)"
+        },
+        "mineruPrecisionMaxPages": {
+          "type": "number",
+          "default": 200,
+          "title": "MinerU Precision 最大页数"
+        },
+        "autoSplitLargePDF": {
+          "type": "boolean",
+          "default": true,
+          "title": "自动切割超限 PDF（plugin 端按 splitChunkPages 切分大 PDF，多路并发可计入 maxConcurrent）"
+        },
+        "splitChunkPages": {
+          "type": "number",
+          "default": 180,
+          "title": "切割时每块页数（默认 180 页，小于 MinerU 200 页限制）"
+        },
+        "keyRetryOnFailure": {
+          "type": "boolean",
+          "default": true,
+          "title": "Key 失败时自动重试下一个"
+        },
+        "notifyKeyFailure": {
+          "type": "boolean",
+          "default": true,
+          "title": "Key 失效时通知用户"
+        },
+        "saveJson": {
+          "type": "boolean",
+          "default": false,
+          "title": "是否默认保存结构化 JSON"
+        },
+        "summaryThreshold": {
+          "type": "number",
+          "default": 3,
+          "minimum": 2,
+          "title": "文件数阈值：>= 此值时返回结果去掉 markdown/imagePathMap（只保留 metadata + mdPath + imagesDir，省 context）"
+        },
+        "logLevel": {
+          "type": "string",
+          "default": "INFO",
+          "title": "日志级别",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR"]
+        },
+        "logFile": {
+          "type": "string",
+          "default": "",
+          "title": "日志文件路径（留空则只输出到控制台）"
+        },
+        "htmlExtractMetadata": {
+          "type": "boolean",
+          "default": true,
+          "title": "HTML: 提取元数据（title、author、description等）"
+        },
+        "htmlExtractLinks": {
+          "type": "boolean",
+          "default": true,
+          "title": "HTML: 提取所有链接列表"
+        },
+        "htmlExtractImages": {
+          "type": "boolean",
+          "default": true,
+          "title": "HTML: 提取并下载所有图片"
+        },
+        "htmlExtractCodeBlocks": {
+          "type": "boolean",
+          "default": true,
+          "title": "HTML: 提取代码块并标注语言"
+        },
+        "htmlHeadingStyle": {
+          "type": "string",
+          "default": "ATX",
+          "title": "HTML: 标题风格",
+          "enum": ["ATX", "SETEXT"]
+        },
+        "autoSave": {
+          "type": "boolean",
+          "default": false,
+          "title": "默认自动保存到本地"
+        },
+        "savePath": {
+          "type": "string",
+          "default": "D:\\Agent",
+          "title": "默认保存路径"
+        }
+      }
+    }
+  }
+}
