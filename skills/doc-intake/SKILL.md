@@ -37,7 +37,7 @@ metadata:
 | backend | string | ❌ | 强制后端：`auto`（默认）/ `mineru` / `paddleocr` / `local` |
 | pageRange | string | ❌ | PDF 页码范围，如 `"1-5,10"` |
 | language | string | ❌ | 语言：zh / en 等 |
-| includeImages | boolean | ❌ | 是否提取图片（默认 true） |
+| includeMedia | boolean | ❌ | 是否提取媒体（图片/视频/音频，默认 true）。关闭后只输出文本，不抽媒体文件 |
 | format | string | ❌ | 输出格式：`markdown`（默认）/ `json` / `text` |
 | saveJson | boolean | ❌ | 是否额外保存 JSON 格式（默认 false） |
 | splitOnly | boolean | ❌ | 仅做图片分割测试，不调用后端（默认 false） |
@@ -124,19 +124,28 @@ Agent：调用 doc_intake(source=["a.docx","b.pptx","c.xlsx"], outputDir="D:\输
 指定 `outputDir` 或启用自动保存后保存：
 ```
 outputDir/
-├── 文件名.docx.md          ← markdown 文件（原始文件名 + 扩展名）
-├── 文件名.docx.json        ← JSON 格式（可选，saveJson=true）
-├── 文件名.docx_images/     ← 图片目录
+├── 文件名.pptx.md          ← markdown 文件（原始文件名 + 扩展名）
+├── 文件名.pptx.json        ← JSON 格式（可选，saveJson=true）
+├── 文件名.pptx_media/      ← 媒体目录(图/视频/音频都在这里)
 │   ├── image_001.png
 │   ├── image_002.png
+│   ├── video_001.mp4
+│   ├── audio_001.mp3
 │   └── ...
 ```
 
+媒体命名按类型分别连续编号：`image_001.png` / `video_001.mp4` / `audio_001.mp3`。
+
 ### 引导文字
-保存到本地且有图片时，markdown 末尾自动追加：
+保存到本地且有媒体时，markdown 末尾自动追加：
 ```
-📷 提取了 X 张图片，请先阅读以上图片，再结合文档内容回复。
+📎 提取了 X 个媒体文件（📷 N 张图片、🎬 M 个视频、🎵 K 个音频），已保存到本地。请先阅读以上媒体，再结合文档内容回复。
 ```
+
+### Markdown 媒体引用语法
+- 图片：`![alt](stem_media/image_001.png)` — 渲染成普通图片
+- 视频：`<video controls src="stem_media/video_001.mp4" title="alt"></video>` — 标准 HTML5 标签，Markdown 渲染器普遍支持
+- 音频：`<audio controls src="stem_media/audio_001.mp3" title="alt"></audio>` — 同上
 
 ### 公式支持
 PPTX / DOCX 中的公式支持：
@@ -146,6 +155,13 @@ PPTX / DOCX 中的公式支持：
 
 ### EMF 转换
 Office 文档中的 EMF 图片自动转换为 PNG（用 Pillow；老 Pillow 不支持 EMF 时保留原文件）。
+
+### 视频/音频提取
+DOCX / PPTX / XLSX / HTML 中的嵌入视频和音频会被一并抽出（开启 `includeMedia` 时）：
+- **PPTX**：扫描 `p:video` / `p:audio` 节点（含 AlternateContent.Fallback、videoFile/audioFile 的 r:link）
+- **DOCX**：从 `word/media/*` 抽取所有媒体（含 mp4/mp3/wav 等），不做特殊引用语法区分
+- **XLSX**：从 `xl/media/*` 抽取所有媒体，按 drawings 锚定位置插入到对应单元格
+- **HTML**：下载 `<img>` / `<video>` / `<audio>` / `<source>` 引用的远程媒体
 
 ### .ppt 转换
 旧版 .ppt 文件用 PowerPoint COM（`win32com` + `DispatchEx`）后台转 .pptx 后再走 PPTX 提取；过程不闪窗口（Microsoft COM 限制：Visible=False 会抛错，所以仅靠 DispatchEx 隔离进程 + SaveAs 后立即 Close+Quit）。

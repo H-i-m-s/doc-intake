@@ -77,11 +77,11 @@ class PdfExtractor(BaseExtractor):
             return result
 
         saved_images: list[str] = []
-        images_dir: Optional[Path] = None
+        media_dir: Optional[Path] = None
         if include_images and output_dir:
             stem = Path(source).stem
-            images_dir = Path(output_dir) / f"{stem}_images"
-            images_dir.mkdir(parents=True, exist_ok=True)
+            media_dir = Path(output_dir) / f"{stem}_media"
+            media_dir.mkdir(parents=True, exist_ok=True)
 
         page_chunks: list[str] = []
         total_chars = 0
@@ -101,7 +101,7 @@ class PdfExtractor(BaseExtractor):
 
             if include_images:
                 saved_images.extend(self._extract_page_images(
-                    page, page_num, images_dir, doc, source
+                    page, page_num, media_dir, doc, source
                 ))
 
         doc.close()
@@ -124,6 +124,8 @@ class PdfExtractor(BaseExtractor):
             + "\n".join(page_chunks)
         )
         result.images = saved_images
+        # PDF 本地档只抽图(视频音频在 PDF 中概念上不常见,本地档不强抽)
+        result.media_kinds = ["image"] * len(saved_images)
         result.warnings = warnings
         result.metadata = {
             "format": "pdf",
@@ -144,7 +146,7 @@ class PdfExtractor(BaseExtractor):
         )
         return result
 
-    def _extract_page_images(self, page, page_num: int, images_dir, doc, source: str) -> list[str]:
+    def _extract_page_images(self, page, page_num: int, media_dir, doc, source: str) -> list[str]:
         """从单页提取内嵌图片。已提取过的不重复。"""
         if images_dir is None:
             return []
@@ -159,7 +161,7 @@ class PdfExtractor(BaseExtractor):
             try:
                 img_bytes = doc.extract_image(xref)["image"]
                 ext = doc.extract_image(xref)["ext"]
-                out_path = images_dir / f"page{page_num:03d}_xref{xref}.{ext}"
+                out_path = media_dir / f"page{page_num:03d}_xref{xref}.{ext}"
                 out_path.write_bytes(img_bytes)
                 saved.append(str(out_path))
             except Exception as e:

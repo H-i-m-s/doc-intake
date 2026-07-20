@@ -20,7 +20,7 @@ def normalize_images(
     cleanup_temps: bool = True,
 ) -> List[str]:
     """
-    归一化图片路径：统一放到 {stem}_images/ 目录
+    归一化媒体路径：统一放到 {stem}_media/ 目录
 
     Args:
         raw_images: 原始图片列表，支持以下类型混传：
@@ -40,8 +40,8 @@ def normalize_images(
     if not output_dir:
         return [str(img.get("url", img) if isinstance(img, dict) else img) for img in raw_images]
 
-    images_dir = Path(output_dir) / f"{stem}_images"
-    images_dir.mkdir(parents=True, exist_ok=True)
+    media_dir = Path(output_dir) / f"{stem}_media"
+    media_dir.mkdir(parents=True, exist_ok=True)
 
     saved_paths = []
     temp_paths = []  # 记录临时文件,后续清理
@@ -55,7 +55,7 @@ def normalize_images(
                 continue
             # 用 virtual_path 的 basename 当文件名，避免重名覆盖
             base = Path(virtual_path).name if virtual_path else f"{i:03d}.jpg"
-            dest = images_dir / base
+            dest = media_dir / base
             try:
                 response = requests.get(src_url, timeout=30)
                 response.raise_for_status()
@@ -68,7 +68,7 @@ def normalize_images(
         # mineru.Image 对象（name, data, path）—— 用 Image.name 当文件名（保留原扩展名）
         if hasattr(img, "data") and hasattr(img, "path") and hasattr(img, "name"):
             try:
-                dest = images_dir / img.name
+                dest = media_dir / img.name
                 img.save(str(dest))
                 saved_paths.append(str(dest))
             except Exception as e:
@@ -77,7 +77,7 @@ def normalize_images(
 
         # string/Path 格式（保留原逻辑）
         filename = f"{i:03d}.png"
-        dest = images_dir / filename
+        dest = media_dir / filename
 
         try:
             if isinstance(img, str) and img.startswith("http"):

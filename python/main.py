@@ -275,39 +275,57 @@ def _extract_with_backend(
         raise ValueError(f"不支持的后端: {backend}")
 
 
-def _flatten_image_paths(image_path_map) -> list[str]:
-    """把 imagePathMap (dict 或 list) 拍平成完整路径字符串数组。key (虚拟路径) 丢掉，只留 value。"""
-    if not image_path_map:
+def _flatten_media_paths(media_paths) -> list[str]:
+    """把 mediaPathMap (dict 或 list) 拍平成完整路径字符串数组。key (虚拟路径) 丢掉，只留 value。"""
+    if not media_paths:
         return []
-    if isinstance(image_path_map, dict):
-        return list(image_path_map.values())
-    if isinstance(image_path_map, list):
-        return list(image_path_map)
+    if isinstance(media_paths, dict):
+        return list(media_paths.values())
+    if isinstance(media_paths, list):
+        return list(media_paths)
     return []
 
 
+# 媒体标签 / Markdown 图片 / base64 data URL 三类模式
 _DATA_URL_IMG_MD_RE = __import__("re").compile(r'!\[([^\]]*)\]\((data:[^)]+)\)')
 _DATA_URL_IMG_HTML_RE = __import__("re").compile(r'<img[^>]*\bsrc="(data:[^"]+)"[^>]*>', __import__("re").IGNORECASE)
-_DATA_URL_IMG_HTML_ALT_RE = __import__("re").compile(r'\balt="([^"]*)"', __import__("re").IGNORECASE)
 _ANY_IMG_MD_RE = __import__("re").compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+# <img ...> 整体匹配(为了判断是否要保留 / 抹除)
 _ANY_IMG_HTML_RE = __import__("re").compile(r'<img\b[^>]*>', __import__("re").IGNORECASE)
 _ANY_IMG_HTML_ALT_RE = __import__("re").compile(r'\balt="([^"]*)"', __import__("re").IGNORECASE)
+# <video> / <audio> 整标签 — 不抹除,只动 base64 图片
+_VIDEO_TAG_RE = __import__("re").compile(r'<video\b[^>]*>.*?</video>|<video\b[^>]*/>', __import__("re").IGNORECASE | __import__("re").DOTALL)
+_AUDIO_TAG_RE = __import__("re").compile(r'<audio\b[^>]*>.*?</audio>|<audio\b[^>]*/>', __import__("re").IGNORECASE | __import__("re").DOTALL)
+
+
+def _strip_data_url_images(markdown: str) -> str:
+    """把 markdown 里 base64 (data URL) 图片标签替换成占位文本。不动 <video>/<audio>/非 base64 <img>。"""
+    if not markdown:
+        return markdown
+    # 抹除 markdown 格式的 base64 图片: ![alt](data:...)
+    markdown = _DATA_URL_IMG_MD_RE.sub(r'[图片]', markdown)
+    # 抹除 HTML 格式的 base64 图片: <img src="data:...">
+    markdown = _DATA_URL_IMG_HTML_RE.sub(r'', markdown)
+    return __import__("re").sub(r'\n{3,}', '\n\n', markdown)
+
+
+def _strip_all_image_tags(markdown: str) -> str:
+    """没保存图路径(output_dir 没设)时,抹所有 <img> 标签和 base64 markdown 图片。
+    保留 <video>/<audio>(它们通常指向本地路径,留着有意义)。
+    """
+    if not markdown:
+        return markdown
+    markdown = _DATA_URL_IMG_MD_RE.sub(r'[图片]', markdown)
+    markdown = _ANY_IMG_HTML_RE.sub('', markdown)
+    return __import__("re").sub(r'\n{3,}', '\n\n', markdown)
 
 
 def _replace_image_placeholders(markdown: str, predicate) -> str:
-    """按出现顺序拍平 markdown / HTML 图片标签为占位文本。
-
-    - predicate(match_text) 决定当前 match 要不要被替。一次扫描，二次 sub 交替
-      完成（by merging md / html iterators, sorted by start pos）。
-    - 相同 alt 合并到同一占位符，序号按首次出现计数。
-    """
+    """(保留旧 API 用于 batch output 警告文案场景)按出现顺序替换 <img> / ![](url) 为占位文本。"""
     if not markdown or "<img" not in markdown and "![" not in markdown:
         return markdown
-
-    # 扫描 markdown img 与 HTML img 两种，所有 match 按出现顺序排队。
     md_iter = _ANY_IMG_MD_RE.finditer(markdown)
     html_iter = _ANY_IMG_HTML_RE.finditer(markdown)
-
     pending = []
     for m in md_iter:
         if predicate(m.group(0)):
@@ -317,19 +335,14 @@ def _replace_image_placeholders(markdown: str, predicate) -> str:
             alt_match = _ANY_IMG_HTML_ALT_RE.search(m.group(0))
             alt = alt_match.group(1) if alt_match else ""
             pending.append((m.start(), m.end(), alt))
-
     if not pending:
         return markdown
-
     pending.sort(key=lambda x: x[0])
-
     counter = [0]
     seen_alts: dict[str, int] = {}
-
     def _new_counter() -> int:
         counter[0] += 1
         return counter[0]
-
     def _placeholder_for(alt: str) -> str:
         alt = (alt or "").strip()
         if alt and alt in seen_alts:
@@ -339,11 +352,7 @@ def _replace_image_placeholders(markdown: str, predicate) -> str:
             seen_alts[alt] = n
             return f"[图片 {n}: {alt}]"
         return f"[图片 {n}]"
-
-    # 先按出现顺序算出每段替换的 placeholder，再从反向拼接 markdown。
-    # 每块都以原 markdown 中的 \n 边界为间隔，所以拼接后不会重复换行。
     replacements = [(s, e, _placeholder_for(alt)) for s, e, alt in pending]
-
     pieces = []
     cursor = len(markdown)
     for start, end, placeholder in reversed(replacements):
@@ -352,43 +361,27 @@ def _replace_image_placeholders(markdown: str, predicate) -> str:
         cursor = start
     pieces.append(markdown[:cursor])
     pieces.reverse()
-    # 最后去紧贴 multiple consecutive newlines（不这里也去一下）
-    result = "".join(pieces)
-    result = __import__("re").sub(r'\n{3,}', '\n\n', result)
-    return result
-
-
-def _strip_data_url_images(markdown: str) -> str:
-    """把 markdown 里 base64 (data URL) 图片标签替换成占位文本。不动非 base64 <img>。"""
-    return _replace_image_placeholders(
-        markdown,
-        predicate=lambda m: "data:" in m,
-    )
-
-
-def _strip_all_images(markdown: str) -> str:
-    """没保存图路径时，抹所有 <img> 标签。防止 base64 / 虚拟路径 / 远程 URL 进 markdown。"""
-    return _replace_image_placeholders(
-        markdown,
-        predicate=lambda m: True,
-    )
+    return __import__("re").sub(r'\n{3,}', '\n\n', "".join(pieces))
 
 
 def format_result(result: ExtractionResult) -> dict:
     """返回给 JS 端的 dict，结构与本地 JSON 的 metadata 对齐（顶层有 name/outputDir/markdown/metadata）。"""
     meta = result.metadata or {}
 
-    # 没保存图路径（output_dir 没设）→ 全部 <img> 抹除，避免 base64 / 虚拟路径 / 远程 URL 全部进 markdown。
+    # 没保存图路径（output_dir 没设）→ 抹所有 <img> 标签和 base64 markdown 图片。
+    # video/audio 标签始终保留(它们 src 是本地路径,不会进 base64)。
     # 有保存路径 → 只 strip base64，<img src="本地路径"> 保留供 agent 看。
     raw_markdown = result.markdown or ""
     if not result.output_dir:
-        cleaned_markdown = _strip_all_images(raw_markdown)
+        cleaned_markdown = _strip_all_image_tags(raw_markdown)
     else:
         cleaned_markdown = _strip_data_url_images(raw_markdown)
 
     # 给 JS 端用的结构。metadata 字段顺序与本地 JSON 对齐，多 mdPath/imagesDir 给批量模式用。
+    # mediaPaths / mediaKinds 与 result.images / result.media_kinds 对齐。
     compact_meta = {
-        "imagePaths": _flatten_image_paths(meta.get("imagePathMap")),
+        "mediaPaths": list(result.images or []),
+        "mediaKinds": list(result.media_kinds or []),
         "format": meta.get("format"),
         "reader": meta.get("reader"),
         "backendChain": meta.get("backendChain"),
@@ -534,33 +527,36 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
     json_path = output_path / f"{filename}.json"
 
     # 顶部设 result.md_path / result.images_dir。JSON 写入会读 result.md_path（批量模式 metadata 需要）。
+    # images_dir 字段名仅为向后兼容 — 实际指向 {stem}_media 目录。
+    stem = Path(filename).stem
     result.md_path = str(md_path)
-    if (result.metadata or {}).get("imagePathMap"):
-        result.images_dir = str(output_path / f"{Path(filename).stem}_images")
+    if result.images:
+        result.images_dir = str(output_path / f"{stem}_media")
 
-    # 重写 markdown 里的 <img src="imgs/xxx"> → 本地路径
-    # 仅当 metadata.imagePathMap 存在（PaddleOCR 提供）
+    # 重写 markdown 里的虚拟路径(比如 MinerU 返回的 'images/xxx.png'、
+    # PaddleOCR 的 'imgs/xxx.jpg') → 本地路径 '{stem}_media/xxx.ext'。
     final_markdown = result.markdown
-    image_path_map = result.metadata.get("imagePathMap") if result.metadata else None
-    if image_path_map:
+    meta = result.metadata or {}
+    media_map_for_rewrite = meta.get("mediaMap") or meta.get("imagePathMap")
+    if media_map_for_rewrite:
         import re as _re
-        stem = Path(filename).stem  # 文档主名（用于 images 子目录名）
-        for virtual_path, local_path in image_path_map.items():
-            # 虚拟路径可能是 'imgs/xxx.jpg'（PaddleOCR）或 'images/xxx.png'（MinerU），
-            # 重写为 '{stem}_images/xxx.jpg'（相对路径）。
-            rel = f"{stem}_images/{Path(virtual_path).name}"
+        for virtual_path, local_info in media_map_for_rewrite.items():
+            # 兼容旧 PaddleOCR dict{local}和新 dict{original: {local_path, kind}}
+            if isinstance(local_info, dict) and "local_path" in local_info:
+                local_name = Path(local_info["local_path"]).name
+            else:
+                local_name = Path(str(local_info)).name
+            rel = f"{stem}_media/{local_name}"
             vp_escaped = _re.escape(virtual_path)
-            # HTML <img src="...">
             final_markdown = _re.sub(rf'src="{vp_escaped}"', f'src="{rel}"', final_markdown)
-            # Markdown ![alt](path) 或 ![alt](path "title")
             final_markdown = _re.sub(
                 rf'\]\({vp_escaped}(\s+[^)]*)?\)',
                 f']({rel}\\1)',
                 final_markdown,
             )
-        logger.debug("Markdown 图片路径已重写",
-                     rewritten_count=len(image_path_map),
-                     total=len(image_path_map))
+        logger.debug("Markdown 媒体路径已重写",
+                     rewritten_count=len(media_map_for_rewrite),
+                     total=len(media_map_for_rewrite))
 
     try:
         # base64 图片最后抹除，防止一坨 base64 进 markdown 让人看 / agent 渲染。
@@ -576,15 +572,14 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
             success=True,
             size=len(final_markdown.encode('utf-8'))
         )
-        
+
         # 保存 JSON（如果启用了 saveJson）
         if save_json:
-            # 精简 JSON: imagePathMap 拍平成 imagePaths 字符串数组（去掉虚拟路径 key）。
-            meta = result.metadata or {}
             json_data = {
                 "content": final_markdown,
                 "metadata": {
-                    "imagePaths": _flatten_image_paths(meta.get("imagePathMap")),
+                    "mediaPaths": list(result.images or []),
+                    "mediaKinds": list(result.media_kinds or []),
                     "format": meta.get("format"),
                     "reader": meta.get("reader"),
                     "backendChain": meta.get("backendChain"),
@@ -595,7 +590,7 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
             with open(json_path, "w", encoding="utf-8") as f:
                 import json
                 json.dump(json_data, f, ensure_ascii=False, indent=2)
-            
+
             logger.log_file_operation(
                 operation="保存",
                 path=str(json_path),

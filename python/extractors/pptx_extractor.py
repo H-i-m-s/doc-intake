@@ -1,4 +1,9 @@
-"""PPTX 文档提取器 - 重构版"""
+"""PPTX 文档提取器 - 重构版
+
+支持: 文本 / 表格 / OMML & MathType 公式 / 图片 / 视频 / 音频
+所有媒体按 kind 分别连续编号(image_001.png, video_001.mp4, audio_001.mp3),
+markdown 引用按 kind 分别用 ![](), <video>, <audio> 渲染。
+"""
 from __future__ import annotations
 
 import os
@@ -12,14 +17,25 @@ from .base import BaseExtractor, ExtractionResult
 from .emf_converter import convert_emf_to_png
 from .omml_converter import OmmlToLatexConverter
 from .mathtype_filter import filter_mathtype_previews
-from ._utils import local_name as _local_name, markdown_table as _markdown_table
+from ._utils import (
+    ExtractedMedia,
+    classify_media,
+    format_media_ref,
+    local_name as _local_name,
+    markdown_table as _markdown_table,
+    media_filename,
+    media_rel_path,
+)
 from logger import get_logger
 
 logger = get_logger("pptx_extractor")
 
 
+# XML 命名空间常量(关系 ID / 嵌入 / 链接)
+_R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
 def _find_child(elem, tag_name):
-    """查找指定名称的子元素"""
     for child in elem:
         if _local_name(child.tag) == tag_name:
             return child
@@ -27,7 +43,6 @@ def _find_child(elem, tag_name):
 
 
 def _find_children(elem, tag_name):
-    """查找所有指定名称的子元素"""
     return [child for child in elem if _local_name(child.tag) == tag_name]
 
 
@@ -40,7 +55,7 @@ class PptxExtractor(BaseExtractor):
         super().__init__(settings)
         self.omml_converter = OmmlToLatexConverter()
         self._mathtype_converter = None
-    
+
     @property
     def mathtype_converter(self):
         if self._mathtype_converter is None:
@@ -51,13 +66,13 @@ class PptxExtractor(BaseExtractor):
                 self._mathtype_converter = None
         return self._mathtype_converter
 
-    def extract(self, source, output_dir=None, page_range=None, 
+    def extract(self, source, output_dir=None, page_range=None,
                 language="zh", include_images=True, **kwargs):
         path = self._check_file_exists(source)
-        
+
         if path.suffix.lower() == ".ppt":
             return self._handle_legacy_ppt(path, output_dir, include_images)
-        
+
         result = ExtractionResult()
 
         with zipfile.ZipFile(path) as zf:
@@ -67,8 +82,8 @@ class PptxExtractor(BaseExtractor):
                 return result
 
             # 第一步：解析结构
-            slides, rid_map, media_list = self._parse_structure(zf, names)
-            
+            slides, media_list = self._parse_structure(zf, names)
+
             # 获取 MathType 公式
             mathtype_equations = []
             if self.mathtype_converter:
@@ -76,28 +91,26 @@ class PptxExtractor(BaseExtractor):
                     mathtype_equations = self.mathtype_converter.extract_mathtype_from_pptx(source)
                 except Exception as e:
                     logger.warning("MathType 提取失败，公式将退化为图片", error=str(e), source=source)
-            
-            # 不再构建全局 mathtype_map—— rId 在各 slide 的 rels 里独立
-            # （都从 rId1 开始）,跨 slide 共享会串（slide1.rId4 和 slide5.rId4 不是一个东西）。
-            # 每个 slide 自己的 mathtype_map 在 _extract_content 里临时构建。
 
-            # 第二步：确定图片列表
-            used_media = self._determine_images(slides, rid_map, media_list, zf)
-            
-            # 第三步：分配编号
-            image_map = self._assign_numbers(used_media)
+            # 第二步：确定媒体列表(图片/视频/音频,按 slide 出现顺序排)
+            used_media = self._determine_media(slides, media_list, zf)
 
-            # 第四步：提取内容
+            # 第三步：按 kind 分别连续编号
+            media_records = self._assign_numbers(used_media)
+
+            # 第四步：提取内容(markdown)
             result.markdown = self._extract_content(
-                slides, image_map, mathtype_equations, zf,
+                slides, media_records, mathtype_equations, zf,
                 path.name, include_images
             )
-            
-            # 第五步：提取图片
-            if include_images and output_dir and image_map:
-                result.images = self._extract_images(
-                    image_map, zf, output_dir, path.name
+
+            # 第五步：抽取媒体文件
+            if include_images and output_dir and media_records:
+                extracted = self._extract_files(
+                    media_records, zf, output_dir, path.stem
                 )
+                result.images = [m.local_path for m in extracted]
+                result.media_kinds = [m.kind for m in extracted]
 
         result.metadata = {
             "format": "pptx",
@@ -111,13 +124,9 @@ class PptxExtractor(BaseExtractor):
     def _build_slide_mathtype_map(self, zf, slide_path: str, mathtype_equations: list) -> dict:
         """为一个 slide 构建 rId → LaTeX 映射。
 
-        重要: 每个 slide 的 rels 里 rId 是独立的命名空间(都从 rId1 开始),
-        不能跨 slide 合并。所以这里按 slide_path 单独建一张表。
-
-        Returns:
-            dict rId -> LaTeX string。只包含该 slide 里能成功转 LaTeX 的 OLE。
+        rId 在各 slide 的 rels 里独立(都从 rId1 开始),不能跨 slide 合并。
         """
-        slide_map = {}
+        slide_map: dict[str, str] = {}
         if not slide_path:
             return slide_map
         rels_name = f"ppt/slides/_rels/{Path(slide_path).name}.rels"
@@ -144,27 +153,22 @@ class PptxExtractor(BaseExtractor):
     def _parse_structure(self, zf, names):
         """解析 PPTX 结构"""
         slides = []
-        rid_map = {}
-        
-        # 获取幻灯片列表
+
         try:
             pres_xml = zf.read("ppt/presentation.xml")
             pres_root = ET.fromstring(pres_xml)
             for sldId in pres_root.iter():
                 if _local_name(sldId.tag) == "sldId":
-                    rId = sldId.get(
-                        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", ""
-                    )
+                    rId = sldId.get(f"{_R_NS}id", "")
                     if rId:
                         slides.append({"rId": rId})
         except Exception:
             pass
-        
-        # 获取 rId → 路径映射
+
         try:
             rels_xml = zf.read("ppt/_rels/presentation.xml.rels")
             rels_root = ET.fromstring(rels_xml)
-            rId_to_path = {}
+            rId_to_path: dict[str, str] = {}
             for rel in rels_root:
                 if _local_name(rel.tag) == "Relationship":
                     rid = rel.get("Id", "")
@@ -175,100 +179,153 @@ class PptxExtractor(BaseExtractor):
                 slide["path"] = rId_to_path.get(slide["rId"], "")
         except Exception:
             pass
-        
-        # 获取媒体文件列表
+
         media_list = sorted(name for name in names if name.startswith("ppt/media/"))
         media_list = filter_mathtype_previews(media_list, zf)
-        
-        return slides, rid_map, media_list
 
-    # ========== 第二步：确定图片列表 ==========
+        return slides, media_list
 
-    def _determine_images(self, slides, rid_map, media_list, zf):
-        """确定哪些图片需要提取"""
-        used_media = []
-        seen_rids = set()
-        
-        # 遍历幻灯片，查找需要的图片
+    # ========== 第二步：确定媒体列表 ==========
+
+    def _determine_media(self, slides, media_list, zf):
+        """扫描每个 slide,找出所有被引用的媒体(图/视/音),返回按出现顺序的字典列表。
+
+        每条 dict: {media_path, kind, ext, alt, type}
+        - type="main" → 主引用(图的 blip、视/音的 videoFile/audioFile/p14:media)
+        - type="preview" → AlternateContent Fallback 中的预览图(公式回退等)
+
+        同一个 media_path 可能被 slide xml 多个标签引用(如 videoFile 和 p14:media),
+        按 rels Type 优先级取最具体的 kind: video > audio > image > other。
+        """
+        used_media: list[dict] = []
+        # 同一 media_path 可能被多次扫描,记录已有记录以便按需升级 kind
+        seen: dict[str, dict] = {}
+
         for slide_info in slides:
             slide_path = slide_info.get("path", "")
             if not slide_path:
                 continue
-            
-            # 为当前 slide 构建 rId → 媒体文件映射
-            rid_to_media = {}
+
+            rid_to_info: dict[str, tuple[str, str | None]] = {}
             rels_path = f"ppt/slides/_rels/{Path(slide_path).name}.rels"
             if rels_path in zf.namelist():
                 rels_xml = zf.read(rels_path).decode("utf-8")
+                # 同时匹配 media / hdphoto，同一可接受两种 Target 格式:
+                # 1. 标准 OOXML: Target="../media/xxx.ext"
+                # 2. mock/部分工具: Target="media/xxx.ext" (无 ../ 前缀)
                 for match in re.finditer(
-                    r'Id="(rId\d+)"[^>]*Target="[^"]*(?:media|hdphoto)/([^"]+)"', rels_xml
+                    r'Id="(rId\d+)"[^>]*Type="([^"]+)"[^>]*Target="(?:\.\./)?(media|hdphoto)/([^"]+)"',
+                    rels_xml,
                 ):
                     rid = match.group(1)
-                    media = match.group(2)
-                    rid_to_media[rid] = media
-            
+                    rtype = match.group(2)
+                    subdir = match.group(3)
+                    media_file = match.group(4)
+                    kind = self._kind_from_rels_type(rtype)
+                    rid_to_info[rid] = (f"ppt/{subdir}/{media_file}", kind)
+
             try:
                 slide_xml = zf.read(f"ppt/{slide_path}")
                 slide_root = ET.fromstring(slide_xml)
-                
-                self._find_images_in_element(
-                    slide_root, rid_to_media, used_media, seen_rids
+                self._scan_media_in_element(
+                    slide_root, rid_to_info, used_media, seen
                 )
             except Exception:
                 continue
-        
+
         return used_media
 
-    def _find_images_in_element(self, elem, rid_to_media, used_media, seen_rids, in_fallback=False):
-        """递归查找元素中的图片"""
+    @staticmethod
+    def _kind_from_rels_type(rels_type: str) -> str | None:
+        """rels Type → media kind。返回 None 表示由扩展名决定(rels Type 是通用 media 类型)。"""
+        rt = rels_type.lower()
+        if "video" in rt:
+            return "video"
+        if "audio" in rt:
+            return "audio"
+        # image / hdphoto(HD Photo 即 JPEG XR 是一种图片格式)均按图处理
+        if "image" in rt or "hdphoto" in rt:
+            return "image"
+        # Microsoft 2007 通用 media 类型,目标扩展名定夺
+        return None
+
+    @staticmethod
+    def _kind_priority(kind: str) -> int:
+        return {"video": 4, "audio": 3, "image": 2, "other": 1}.get(kind, 0)
+
+    def _scan_media_in_element(self, elem, rid_to_info, used_media, seen):
+        """递归扫描元素中所有媒体引用。
+
+        支持:
+        - <a:blip r:embed="rIdN">   图片
+        - <a14:imgLayer r:embed="rIdN">  HD Photo(wdp 文件)
+        - <p:videoFile r:link="rIdN"> / <a:videoFile r:link="rIdN">  视频
+        - <p:audioFile r:link="rIdN"> / <a:audioFile r:link="rIdN">  音频
+        - <p14:media r:embed="rIdN">  PowerPoint 2010+ 通用媒体扩展(常见于嵌在 pic 里)
+        - <mc:AlternateContent><mc:Choice> 优先;Fallback 只收 Equation.3 预览
+        """
         tag = _local_name(elem.tag)
-        
-        # 处理 AlternateContent
+
         if tag == "AlternateContent":
-            # 先处理 Choice（主要图片）
             for child in elem:
-                child_tag = _local_name(child.tag)
-                if child_tag == "Choice":
-                    self._find_images_in_element(
-                        child, rid_to_media, used_media, seen_rids, in_fallback=False
+                if _local_name(child.tag) == "Choice":
+                    self._scan_media_in_element(
+                        child, rid_to_info, used_media, seen
                     )
-            # 再处理 Fallback（只收集 Equation 相关的预览）
             for child in elem:
-                child_tag = _local_name(child.tag)
-                if child_tag == "Fallback":
-                    self._find_fallback_preview(
-                        child, rid_to_media, used_media, seen_rids
+                if _local_name(child.tag) == "Fallback":
+                    self._scan_fallback_preview(
+                        child, rid_to_info, used_media, seen
                     )
             return
-        
-        # 处理 blip（图片引用）- 只在 Choice 或直接位置时处理
-        if tag == "blip" and not in_fallback:
-            embed = elem.get(
-                "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
-            )
-            if embed and embed in rid_to_media:
-                media_name = rid_to_media[embed]
-                # 使用媒体文件名判断是否重复，而不是 rId
-                if media_name not in seen_rids:
-                    seen_rids.add(media_name)
-                    alt = "image"
-                    used_media.append({
-                        "rid": embed,
-                        "file": media_name,
-                        "type": "main",
-                        "alt": alt
-                    })
+
+        # 图片 / HD Photo 都用 r:embed
+        # blip / imgLayer 仍要继续递归子元素(<a:blip> 内部可能含
+        # <a:extLst><a:ext><a14:imgLayer> 这种 HD Photo 扩展元数据)
+        if tag == "blip":
+            embed = elem.get(f"{_R_NS}embed", "")
+            if embed and embed in rid_to_info:
+                self._add_media(
+                    rid_to_info[embed][0], rid_to_info[embed][1],
+                    seen=seen, used_media=used_media, mtype="main",
+                )
+            # 继续递归(不 return),子元素里可能含 imgLayer
+        elif tag == "imgLayer":
+            embed = elem.get(f"{_R_NS}embed", "")
+            if embed and embed in rid_to_info:
+                self._add_media(
+                    rid_to_info[embed][0], rid_to_info[embed][1],
+                    seen=seen, used_media=used_media, mtype="main",
+                )
             return
-        
-        # 递归处理子元素
+
+        # 视频 / 音频文件引用(任意命名空间: a: / p: 都兼容)
+        if tag in ("videoFile", "audioFile"):
+            link = elem.get(f"{_R_NS}link", "")
+            if link and link in rid_to_info:
+                self._add_media(
+                    rid_to_info[link][0], rid_to_info[link][1],
+                    seen=seen, used_media=used_media, mtype="main",
+                )
+            return
+
+        # PowerPoint 2010+ 媒体扩展(p14:media 用 r:embed)
+        if tag == "media":
+            embed = elem.get(f"{_R_NS}embed", "")
+            if embed and embed in rid_to_info:
+                self._add_media(
+                    rid_to_info[embed][0], rid_to_info[embed][1],
+                    seen=seen, used_media=used_media, mtype="main",
+                )
+            return
+
         for child in elem:
-            self._find_images_in_element(
-                child, rid_to_media, used_media, seen_rids, in_fallback
+            self._scan_media_in_element(
+                child, rid_to_info, used_media, seen
             )
-    
-    def _find_fallback_preview(self, elem, rid_to_media, used_media, seen_rids):
-        """在 Fallback 中查找 Equation.3 相关的预览图片"""
-        # 检查是否包含 Equation.3（不支持转 LaTeX 的格式）
+
+    def _scan_fallback_preview(self, elem, rid_to_info, used_media, seen):
+        """在 AlternateContent.Fallback 中收集 Equation.3 预览图。"""
         has_equation3 = False
         for child in elem.iter():
             if _local_name(child.tag) == "oleObj":
@@ -276,62 +333,84 @@ class PptxExtractor(BaseExtractor):
                 if prog_id == "Equation.3":
                     has_equation3 = True
                     break
-        
         if not has_equation3:
             return
-        
-        # 查找 blip
         for child in elem.iter():
             if _local_name(child.tag) == "blip":
-                embed = child.get(
-                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
-                )
-                if embed and embed in rid_to_media and embed not in seen_rids:
-                    seen_rids.add(embed)
-                    media_name = rid_to_media[embed]
-                    used_media.append({
-                        "rid": embed,
-                        "file": media_name,
-                        "type": "preview",
-                        "alt": "formula"
-                    })
+                embed = child.get(f"{_R_NS}embed", "")
+                if embed and embed in rid_to_info:
+                    self._add_media(
+                        rid_to_info[embed][0], "image",
+                        seen=seen, used_media=used_media, mtype="preview",
+                    )
+
+    def _add_media(self, media_path: str, kind: str | None,
+                   seen: dict, used_media: list, mtype: str = "main"):
+        """把媒体加入 used_media;同一 media_path 多次出现时按 kind 优先级升级。
+
+        kind 优先级: video > audio > image > other。
+        """
+        if not media_path:
+            return
+        ext = Path(media_path).suffix.lower()
+        if kind is None:
+            kind = classify_media(ext)
+        if kind == "other":
+            kind = "other"  # 保持 other
+
+        if media_path in seen:
+            existing = seen[media_path]
+            # 升级 kind(选更具体的)
+            if self._kind_priority(kind) > self._kind_priority(existing["kind"]):
+                existing["kind"] = kind
+            return
+
+        record = {
+            "media_path": media_path,
+            "kind": kind,
+            "ext": ext,
+            "alt": "image" if mtype == "main" and kind == "image" else "",
+            "type": mtype,
+        }
+        seen[media_path] = record
+        used_media.append(record)
 
     # ========== 第三步：分配编号 ==========
 
-    def _assign_numbers(self, used_media):
-        """为图片分配连续编号"""
-        image_map = {}
-        counter = 1
-        
+    def _assign_numbers(self, used_media: list[dict]) -> dict[str, dict]:
+        """按 kind 分别连续编号,返回 media_path -> {kind, ext, new_name, alt, type}"""
+        media_records: dict[str, dict] = {}
+        counters = {"image": 0, "video": 0, "audio": 0, "other": 0}
+
         for media in used_media:
-            file_name = media["file"]
+            media_path = media["media_path"]
+            kind = media["kind"]
+            ext = media["ext"]
             alt = media["alt"]
-            ext = Path(file_name).suffix.lower()
-            
-            # EMF/WMF 转换为 PNG
-            if ext in [".emf", ".wmf"]:
-                new_name = f"image_{counter:03d}.png"
+
+            counters[kind] += 1
+            # EMF/WMF 转 PNG,其他保持原扩展
+            if ext in (".emf", ".wmf"):
+                new_name = media_filename("image", counters[kind], ".png")
             else:
-                new_name = f"image_{counter:03d}{ext}"
-            
-            original_path = f"ppt/media/{file_name}"
-            image_map[original_path] = {"name": new_name, "alt": alt}
-            counter += 1
-        
-        return image_map
+                new_name = media_filename(kind, counters[kind], ext)
+
+            media_records[media_path] = {
+                "kind": kind,
+                "ext": ext,
+                "new_name": new_name,
+                "alt": alt,
+                "type": media.get("type", "main"),
+            }
+
+        return media_records
 
     # ========== 第四步：提取内容 ==========
 
-    def _extract_content(self, slides, image_map, mathtype_equations, zf,
+    def _extract_content(self, slides, media_records, mathtype_equations, zf,
                          filename, include_images):
-        """提取所有内容为 Markdown
-
-        mathtype_equations 是全局查到的 (olefile -> latex) 列表。
-        每个 slide 根据自己的 rels 里 rId -> olefile 映射,按需查这张表,
-        所以同一个 rId 在不同 slide 指向不同的公式,不会串。
-        """
-        # 设置当前 stem 用于图片引用（使用完整文件名）
-        self._current_stem = Path(filename).name
+        # 用 stem(去后缀)拼 {stem}_media/xxx 与 main.py 写到磁盘的子目录对齐
+        self._current_stem = Path(filename).stem
 
         lines = [f"# {filename}", ""]
 
@@ -340,7 +419,6 @@ class PptxExtractor(BaseExtractor):
             if not slide_path:
                 continue
 
-            # per-slide mathtype_map,rId 只在该 slide 范围内有效
             slide_mathtype_map = self._build_slide_mathtype_map(
                 zf, slide_path, mathtype_equations
             )
@@ -348,15 +426,13 @@ class PptxExtractor(BaseExtractor):
             try:
                 slide_xml = zf.read(f"ppt/{slide_path}")
                 slide_root = ET.fromstring(slide_xml)
-
-                # 设置当前 slide 路径
                 self._current_slide_path = slide_path
 
                 lines.append(f"## Slide {i}")
                 lines.append("")
 
                 slide_content = self._extract_element(
-                    slide_root, image_map, slide_mathtype_map, zf
+                    slide_root, media_records, slide_mathtype_map, zf
                 )
                 lines.append(slide_content)
                 lines.append("")
@@ -366,153 +442,126 @@ class PptxExtractor(BaseExtractor):
 
         return "\n".join(lines).strip() + "\n"
 
-    def _extract_element(self, elem, image_map, mathtype_map, zf, depth=0):
-        """递归提取元素内容"""
+    def _extract_element(self, elem, media_records, mathtype_map, zf, depth=0):
         if depth > 50:
             return ""
-        
+
         tag = _local_name(elem.tag)
         parts = []
-        
-        # 处理 AlternateContent
+
         if tag == "AlternateContent":
             for child in elem:
-                child_tag = _local_name(child.tag)
-                if child_tag == "Choice":
+                if _local_name(child.tag) == "Choice":
                     content = self._extract_element(
-                        child, image_map, mathtype_map, zf, depth + 1
+                        child, media_records, mathtype_map, zf, depth + 1
                     )
                     if content:
                         parts.append(content)
-                    break  # 只处理 Choice
+                    break
             return "\n".join(parts)
-        
-        # 处理 sp（形状）
+
         if tag == "sp":
-            content = self._extract_sp(elem, image_map, mathtype_map, zf)
+            content = self._extract_sp(elem, media_records, mathtype_map, zf)
             if content:
                 parts.append(content)
             return "\n".join(parts)
-        
-        # 处理 graphicFrame
+
         if tag == "graphicFrame":
-            content = self._extract_graphic_frame(elem, image_map, mathtype_map, zf)
+            content = self._extract_graphic_frame(elem, media_records, mathtype_map, zf)
             if content:
                 parts.append(content)
             return "\n".join(parts)
-        
-        # 处理 pic（独立图片）
+
         if tag == "pic":
             stem = getattr(self, '_current_stem', '')
             slide_path = getattr(self, '_current_slide_path', None)
-            img_ref = self._extract_blip(elem, image_map, zf, stem, slide_path)
+            img_ref = self._extract_pic_media(elem, media_records, zf, stem, slide_path)
             if img_ref:
                 parts.append(img_ref)
             return "\n".join(parts)
-        
-        # 处理表格
+
         if tag == "tbl":
-            content = self._extract_table(elem, image_map, mathtype_map, zf)
+            content = self._extract_table(elem, media_records, mathtype_map, zf)
             if content:
                 parts.append(content)
             return "\n".join(parts)
-        
-        # 处理段落
+
         if tag == "p":
-            content = self._extract_paragraph(elem, image_map, mathtype_map, zf)
+            content = self._extract_paragraph(elem, media_records, mathtype_map, zf)
             if content:
                 parts.append(content)
             return "\n".join(parts)
-        
-        # 处理文本框
+
         if tag == "txBody":
-            content = self._extract_tx_body(elem, image_map, mathtype_map, zf)
+            content = self._extract_tx_body(elem, media_records, mathtype_map, zf)
             if content:
                 parts.append(content)
             return "\n".join(parts)
-        
-        # 递归处理其他元素
+
         for child in elem:
             content = self._extract_element(
-                child, image_map, mathtype_map, zf, depth + 1
+                child, media_records, mathtype_map, zf, depth + 1
             )
             if content:
                 parts.append(content)
-        
+
         return "\n".join(parts)
 
-    def _extract_sp(self, sp, image_map, mathtype_map, zf):
-        """提取 sp（形状）内容"""
+    def _extract_sp(self, sp, media_records, mathtype_map, zf):
         parts = []
-        
-        # 查找文本框
+
         tx_body = _find_child(sp, "txBody")
         if tx_body is not None:
-            content = self._extract_tx_body(tx_body, image_map, mathtype_map, zf)
+            content = self._extract_tx_body(tx_body, media_records, mathtype_map, zf)
             if content:
                 parts.append(content)
-        
-        # 查找图片
+
+        # sp 内可能含视频/音频(较少见,通常在 graphicFrame)
         stem = getattr(self, '_current_stem', '')
         slide_path = getattr(self, '_current_slide_path', None)
-        img_ref = self._extract_blip(sp, image_map, zf, stem, slide_path)
-        if img_ref:
-            parts.append(img_ref)
-        
+        for child in sp.iter():
+            child_tag = _local_name(child.tag)
+            if child_tag in ("videoFile", "audioFile"):
+                ref = self._extract_link_media(
+                    child, media_records, zf, stem, slide_path, link_attr="link"
+                )
+                if ref:
+                    parts.append(ref)
+
         return "\n".join(parts)
 
-    def _extract_tx_body(self, tx_body, image_map, mathtype_map, zf):
-        """提取文本框内容"""
+    def _extract_tx_body(self, tx_body, media_records, mathtype_map, zf):
         parts = []
-        
         for child in tx_body:
             tag = _local_name(child.tag)
             if tag == "p":
-                content = self._extract_paragraph(child, image_map, mathtype_map, zf)
+                content = self._extract_paragraph(child, media_records, mathtype_map, zf)
                 if content:
                     parts.append(content)
-        
         return "\n".join(parts)
 
-    def _extract_paragraph(self, para, image_map, mathtype_map, zf):
-        """提取段落内容"""
+    def _extract_paragraph(self, para, media_records, mathtype_map, zf):
         parts = []
         list_info = None
-        
-        # 检查段落属性（列表信息）
+
         pPr = _find_child(para, "pPr")
         if pPr is not None:
             list_info = self._get_list_info(pPr)
-        
-        # 如果没有列表信息，检查是否有缩进
-        if list_info is None and pPr is not None:
-            # 检查 spcBef（段前间距）或其他缩进属性
-            spc_bef = _find_child(pPr, "spcBef")
-            if spc_bef is not None:
-                # 可能是列表项
-                pass
-        
-        # 提取段落内容（递归处理）
-        self._extract_para_content(para, parts, image_map, mathtype_map, zf)
-        
+
+        self._extract_para_content(para, parts, media_records, mathtype_map, zf)
+
         content = "".join(parts).strip()
-        
-        # 应用列表格式
         if content and list_info and list_info["type"]:
             indent = "  " * list_info["level"]
             marker = list_info["marker"]
             content = f"{indent}{marker} {content}"
-        
         return content
-    
-    def _extract_para_content(self, elem, parts, image_map, mathtype_map, zf, depth=0):
-        """递归提取段落内容"""
+
+    def _extract_para_content(self, elem, parts, media_records, mathtype_map, zf, depth=0):
         if depth > 20:
             return
-        
         for child in elem:
             tag = _local_name(child.tag)
-            
             if tag == "r":
                 text = self._extract_run(child)
                 if text:
@@ -534,11 +583,9 @@ class PptxExtractor(BaseExtractor):
             elif tag == "br":
                 parts.append("\n")
             elif tag == "m":
-                # OMML 包装元素，递归处理
-                self._extract_para_content(child, parts, image_map, mathtype_map, zf, depth + 1)
+                self._extract_para_content(child, parts, media_records, mathtype_map, zf, depth + 1)
 
     def _extract_run(self, run):
-        """提取 run 中的文本"""
         text_parts = []
         for child in run:
             tag = _local_name(child.tag)
@@ -547,17 +594,14 @@ class PptxExtractor(BaseExtractor):
         return "".join(text_parts)
 
     def _get_list_info(self, pPr):
-        """获取列表信息"""
         level = 0
         list_type = None
         marker = None
-        
-        # 检查缩进级别
+
         lvl = _find_child(pPr, "lvl")
         if lvl is not None:
             level = int(lvl.get("{http://schemas.openxmlformats.org/drawingml/2006/main}val", "0"))
-        
-        # 检查 bullet 字符（无序列表）
+
         bu_char = _find_child(pPr, "buChar")
         if bu_char is not None:
             char = bu_char.get("{http://schemas.openxmlformats.org/drawingml/2006/main}char", "")
@@ -570,12 +614,10 @@ class PptxExtractor(BaseExtractor):
             elif char:
                 list_type = "unordered"
                 marker = "-"
-        
-        # 检查自动编号（有序列表）
+
         if list_type is None:
             bu_auto = _find_child(pPr, "buAutoNum")
             if bu_auto is not None:
-                # type 属性可能没有命名空间
                 auto_type = bu_auto.get("type", "")
                 if not auto_type:
                     auto_type = bu_auto.get("{http://schemas.openxmlformats.org/drawingml/2006/main}type", "")
@@ -585,108 +627,98 @@ class PptxExtractor(BaseExtractor):
                 elif auto_type in ["alphaLcPeriod", "alphaUcPeriod"]:
                     list_type = "ordered"
                     marker = "a."
-        
+
         if list_type is None:
             return None
-        
-        return {
-            "type": list_type,
-            "level": level,
-            "marker": marker
-        }
+        return {"type": list_type, "level": level, "marker": marker}
 
-    def _extract_graphic_frame(self, gf, image_map, mathtype_map, zf):
-        """提取 graphicFrame 内容"""
+    def _extract_graphic_frame(self, gf, media_records, mathtype_map, zf):
         parts = []
-        
-        # 查找表格
+
+        # 表格优先
         tbl = self._find_recursive(gf, "tbl")
         if tbl is not None:
-            content = self._extract_table(tbl, image_map, mathtype_map, zf)
+            content = self._extract_table(tbl, media_records, mathtype_map, zf)
             if content:
                 parts.append(content)
             return "\n".join(parts)
-        
-        # 查找 OLE 对象
+
+        # OLE 对象(公式)
         for child in gf.iter():
             tag = _local_name(child.tag)
             if tag == "oleObj":
-                content = self._extract_ole(child, gf, image_map, mathtype_map, zf)
+                content = self._extract_ole(child, gf, media_records, zf)
                 if content:
                     parts.append(content)
                 break
-        
+
+        # 视频/音频(在 graphicFrame 里常以 p:video / p:audio 形式存在)
+        stem = getattr(self, '_current_stem', '')
+        slide_path = getattr(self, '_current_slide_path', None)
+        for child in gf.iter():
+            tag = _local_name(child.tag)
+            if tag == "videoFile":
+                ref = self._extract_link_media(
+                    child, media_records, zf, stem, slide_path, link_attr="link"
+                )
+                if ref:
+                    parts.append(ref)
+            elif tag == "audioFile":
+                ref = self._extract_link_media(
+                    child, media_records, zf, stem, slide_path, link_attr="link"
+                )
+                if ref:
+                    parts.append(ref)
+
         return "\n".join(parts)
 
-    def _extract_table(self, tbl, image_map, mathtype_map, zf):
-        """提取表格为 Markdown"""
+    def _extract_table(self, tbl, media_records, mathtype_map, zf):
         rows = []
-        
         for tr in tbl:
             if _local_name(tr.tag) != "tr":
                 continue
-            
             row = []
             for tc in tr:
                 if _local_name(tc.tag) != "tc":
                     continue
-                
-                # 提取单元格内容
-                cell_content = self._extract_element(tc, image_map, mathtype_map, zf)
+                cell_content = self._extract_element(tc, media_records, mathtype_map, zf)
                 row.append(cell_content.replace("\n", " ").strip())
-            
             if row:
                 rows.append(row)
-        
         if not rows:
             return ""
-        
         return _markdown_table(rows, trailing_blank=True)
 
-    def _extract_ole(self, ole, graphic_frame, image_map, mathtype_map, zf):
-        """提取 OLE 对象"""
+    def _extract_ole(self, ole, graphic_frame, media_records, zf):
         prog_id = ole.get("progId", "")
-        rId = ole.get(
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", ""
-        )
-        
-        # 检查是否是公式
+        rId = ole.get(f"{_R_NS}id", "")
+
         if "Equation" in prog_id:
-            # 尝试从 mathtype_map 获取 LaTeX
-            if rId and rId in mathtype_map:
-                return f"${mathtype_map[rId]}$"
-            
-            # Equation.3 或其他无法转换的公式，返回预览图片
-            preview = self._get_ole_preview(graphic_frame, image_map, zf)
+            slide_mathtype_map = self._build_slide_mathtype_map(
+                zf, getattr(self, '_current_slide_path', ""), []
+            )
+            if rId and rId in slide_mathtype_map:
+                return f"${slide_mathtype_map[rId]}$"
+
+            preview = self._get_ole_preview(graphic_frame, media_records, zf)
             if preview:
                 return preview
-        
         return ""
 
-    def _get_ole_preview(self, graphic_frame, image_map, zf):
-        """获取 OLE 对象的预览图片"""
-        # 在 Fallback 中查找 blip
+    def _get_ole_preview(self, graphic_frame, media_records, zf):
         for child in graphic_frame.iter():
             tag = _local_name(child.tag)
             if tag == "Fallback":
                 for blip in self._find_all(child, "blip"):
-                    embed = blip.get(
-                        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
-                    )
+                    embed = blip.get(f"{_R_NS}embed", "")
                     if embed:
-                        # 从 image_map 中查找对应的新文件名
-                        # 需要先从 rels 中找到 rId 对应的原始文件名
-                        preview = self._find_preview_by_rid(embed, image_map, zf)
+                        preview = self._find_preview_by_rid(embed, media_records, zf)
                         if preview:
                             return preview
-        
         return None
 
-    def _find_preview_by_rid(self, rid, image_map, zf):
-        """通过 rId 查找预览图片"""
+    def _find_preview_by_rid(self, rid, media_records, zf):
         stem = getattr(self, '_current_stem', '')
-        
-        # 遍历所有 slide rels
         for name in zf.namelist():
             if name.startswith("ppt/slides/_rels/") and name.endswith(".rels"):
                 rels_xml = zf.read(name).decode("utf-8")
@@ -695,47 +727,103 @@ class PptxExtractor(BaseExtractor):
                 ):
                     media_name = match.group(1)
                     original_path = f"ppt/media/{media_name}"
-                    if original_path in image_map:
-                        info = image_map[original_path]
-                        new_name = info["name"]
-                        alt = info["alt"]
-                        if stem:
-                            return f"![{alt}]({stem}_images/{new_name})"
-                        return f"![{alt}]({new_name})"
-        
+                    if original_path in media_records:
+                        info = media_records[original_path]
+                        if info["kind"] == "image":
+                            return format_media_ref(
+                                f"{stem}_media/{info['new_name']}",
+                                "image",
+                                info.get("alt", "formula") or "formula",
+                            )
         return None
 
-    def _extract_blip(self, elem, image_map, zf=None, stem=None, slide_path=None):
-        """提取图片引用"""
+    def _extract_pic_media(self, elem, media_records, zf, stem, slide_path):
+        """处理 <p:pic> 节点:按优先级返回媒体引用。
+
+        优先级: videoFile / audioFile / p14:media 上下文 > blip(imgLayer)。
+        PowerPoint 常把视频包装在 <p:pic> 里(看似是图片,实际是视频帧),
+        这种 pic 同时含 <a:blip>(海报图) 和 <a:videoFile>/<p14:media>(视频),
+        要优先输出视频。
+
+        实际 PPTX 中 rId 会有多种用途(<a:videoFile r:link=...>、
+        <p14:media r:embed=...>),有些 rId 的 Target 是空占位(没有可用文件)。
+        本函数收集所有 video/audio 引用,依次试,首个能 resolve 的赢;
+        都失败才 fallback 到 blip。
+        """
+        if not (zf and slide_path):
+            return None
+
+        # 收集 pic 内所有 video/audio rId(顺序按 XML 出现顺序)
+        candidate_rids: list[str] = []
         for child in elem.iter():
             tag = _local_name(child.tag)
-            if tag == "blip":
-                embed = child.get(
-                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
+            if tag in ("videoFile", "audioFile"):
+                rid = child.get(f"{_R_NS}link", "")
+                if rid and rid not in candidate_rids:
+                    candidate_rids.append(rid)
+            elif tag == "media":
+                rid = child.get(f"{_R_NS}embed", "")
+                if rid and rid not in candidate_rids:
+                    candidate_rids.append(rid)
+
+        for rid in candidate_rids:
+            ref = self._resolve_media_ref(
+                rid, media_records, zf, stem, slide_path, use_link=True
+            )
+            if ref:
+                return ref
+
+        # 没有有效 video/audio 上下文,按 blip(imgLayer) 走图片
+        for child in elem.iter():
+            if _local_name(child.tag) in ("blip", "imgLayer"):
+                embed = child.get(f"{_R_NS}embed", "")
+                if embed:
+                    return self._resolve_media_ref(
+                        embed, media_records, zf, stem, slide_path
+                    )
+        return None
+
+    def _extract_link_media(self, elem, media_records, zf, stem, slide_path, link_attr="link"):
+        """处理 videoFile / audioFile 节点,按 r:link 找 rels 中的媒体。"""
+        rid = elem.get(f"{_R_NS}{link_attr}", "")
+        if rid and zf and slide_path:
+            return self._resolve_media_ref(rid, media_records, zf, stem, slide_path, use_link=True)
+        return None
+
+    def _resolve_media_ref(self, rid, media_records, zf, stem, slide_path, use_link=False):
+        """通用:按 rId 查 slide rels -> 媒体路径 -> 在 media_records 找记录 -> 返回 markdown 引用。
+
+        use_link=True 时查 r:link(视频/音频),否则查 r:embed(图片)。
+        """
+        rels_path = f"ppt/slides/_rels/{Path(slide_path).name}.rels"
+        if rels_path not in zf.namelist():
+            return None
+        rels_xml = zf.read(rels_path).decode("utf-8")
+        # rId -> media filename(可能有 hdphoto 前缀)
+        for match in re.finditer(
+            f'Id="{rid}"[^>]*Target="(?:\\.\\./)?(media|hdphoto)/([^"]+)"',
+            rels_xml,
+        ):
+            subdir = match.group(1)
+            media_name = match.group(2)
+            original_path = f"ppt/{subdir}/{media_name}"
+            if original_path in media_records:
+                info = media_records[original_path]
+                kind = info["kind"]
+                alt = info.get("alt", "")
+                # EMF/WMF 转 PNG 后,alt 仍可保留
+                if kind == "video" and not alt:
+                    alt = Path(media_name).stem
+                if kind == "audio" and not alt:
+                    alt = Path(media_name).stem
+                return format_media_ref(
+                    f"{stem}_media/{info['new_name']}",
+                    kind,
+                    alt,
                 )
-                if embed and zf and slide_path:
-                    # 只在当前 slide 的 rels 文件中查找
-                    rels_path = f"ppt/slides/_rels/{Path(slide_path).name}.rels"
-                    if rels_path in zf.namelist():
-                        rels_xml = zf.read(rels_path).decode("utf-8")
-                        for match in re.finditer(
-                            f'Id="{embed}"[^>]*Target="[^"]*(?:media|hdphoto)/([^"]+)"',
-                            rels_xml
-                        ):
-                            media_name = match.group(1)
-                            original_path = f"ppt/media/{media_name}"
-                            if original_path in image_map:
-                                info = image_map[original_path]
-                                alt = info["alt"]
-                                new_name = info["name"]
-                                if stem:
-                                    return f"![{alt}]({stem}_images/{new_name})"
-                                return f"![{alt}]({new_name})"
-        
         return None
 
     def _find_recursive(self, elem, tag_name):
-        """递归查找指定标签的元素"""
         for child in elem:
             if _local_name(child.tag) == tag_name:
                 return child
@@ -745,7 +833,6 @@ class PptxExtractor(BaseExtractor):
         return None
 
     def _find_all(self, elem, tag_name):
-        """递归查找所有指定标签的元素"""
         results = []
         for child in elem:
             if _local_name(child.tag) == tag_name:
@@ -753,45 +840,75 @@ class PptxExtractor(BaseExtractor):
             results.extend(self._find_all(child, tag_name))
         return results
 
-    # ========== 第五步：提取图片 ==========
+    # ========== 第五步：抽取媒体文件 ==========
 
-    def _extract_images(self, image_map, zf, output_dir, stem):
-        """提取图片文件"""
-        images_dir = Path(output_dir) / f"{stem}_images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        
-        extracted = []
-        
-        for original_path, info in image_map.items():
+    def _extract_files(self, media_records, zf, output_dir, stem):
+        """从 zip 抽所有媒体文件到 {stem}_media/ 目录,EMF/WMF 转 PNG。
+
+        返回 list[ExtractedMedia],用于填 result.images / result.media_kinds。
+        """
+        media_dir = Path(output_dir) / f"{stem}_media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+
+        extracted: list[ExtractedMedia] = []
+
+        for original_path, info in media_records.items():
+            if original_path not in zf.namelist():
+                continue
+            new_name = info["new_name"]
+            kind = info["kind"]
+            ext = info["ext"]
+            out_path = media_dir / new_name
+
             try:
-                if original_path not in zf.namelist():
-                    continue
-                
-                new_name = info["name"]
-                out_path = images_dir / new_name
-                
-                # 提取文件
                 with zf.open(original_path) as src, open(out_path, "wb") as dst:
                     dst.write(src.read())
-                
-                # EMF/WMF 转换为 PNG
-                if new_name.endswith(".png") and original_path.lower().endswith((".emf", ".wmf")):
-                    # 先用原始扩展名保存，再转换
-                    temp_path = str(out_path.with_suffix(Path(original_path).suffix.lower()))
-                    os.rename(str(out_path), temp_path)
-                    if convert_emf_to_png(temp_path, str(out_path)):
+
+                # EMF/WMF:原扩展名存为 raw_,然后尝试转 PNG,失败则保留原 EMF/WMF
+                if ext in (".emf", ".wmf"):
+                    png_path = media_dir / media_filename("image", 0, ".png")  # 占位
+                    # 用 new_name 已定为 .png,直接把 out_path 当 raw 转
+                    raw_path = out_path.with_suffix(ext)
+                    try:
+                        out_path.rename(raw_path)
+                    except OSError:
+                        raw_path = out_path
+                    if convert_emf_to_png(str(raw_path), str(out_path)):
                         try:
-                            os.remove(temp_path)
+                            raw_path.unlink()
                         except OSError:
                             pass
+                        extracted.append(ExtractedMedia(
+                            local_path=str(out_path),
+                            original_path=original_path,
+                            kind="image",
+                            ext=".png",
+                        ))
                     else:
-                        # 转换失败，改回原扩展名
-                        os.rename(temp_path, str(out_path.with_suffix(".original")))
-                
-                extracted.append(str(out_path))
-            except Exception:
+                        # 转换失败:保留原 EMF/WMF(重命名为 *.original)
+                        try:
+                            raw_path.rename(out_path.with_suffix(".original"))
+                            final = str(out_path.with_suffix(".original"))
+                        except OSError:
+                            final = str(raw_path)
+                        extracted.append(ExtractedMedia(
+                            local_path=final,
+                            original_path=original_path,
+                            kind="image",
+                            ext=ext,
+                        ))
+                    continue
+
+                extracted.append(ExtractedMedia(
+                    local_path=str(out_path),
+                    original_path=original_path,
+                    kind=kind,
+                    ext=ext,
+                ))
+            except Exception as e:
+                logger.warning("PPTX 媒体抽取失败", path=original_path, error=str(e))
                 continue
-        
+
         return extracted
 
     # ========== PPT 转换 ==========
@@ -799,9 +916,8 @@ class PptxExtractor(BaseExtractor):
     def _handle_legacy_ppt(self, path, output_dir, include_images):
         """处理旧版 .ppt 文件。
 
-        使用 DispatchEx 创建独立 PowerPoint 进程，避免与系统中已有的
-        PowerPoint 实例互相争抢 COM 锁。SaveAs 后立即 Close + Quit，
-        不轮询等文件锁（实测 Quit() 后立刻可以读，无须等待）。
+        使用 DispatchEx 创建独立 PowerPoint 进程,避免与系统中已有的
+        PowerPoint 实例互相争抢 COM 锁。SaveAs 后立即 Close + Quit。
         """
         result = ExtractionResult()
         try:
@@ -811,13 +927,9 @@ class PptxExtractor(BaseExtractor):
                 pptx_path = os.path.join(tmpdir, pptx_filename)
                 abs_source = str(path.resolve())
                 powerpoint = win32com.client.DispatchEx("PowerPoint.Application")
-                # 不设 Visible：Microsoft COM 不允许隐藏窗口
-                # （Application.Visible: Invalid request. Hiding the application window is not allowed.）
-                # 不设就是默认 Visible=True，会闪一下窗口，但能跑通。
-                # 想完全静默 → 装 LibreOffice 用 unoconv。
                 try:
                     presentation = powerpoint.Presentations.Open(abs_source)
-                    presentation.SaveAs(pptx_path, 24)  # ppSaveAsOpenXMLPresentation
+                    presentation.SaveAs(pptx_path, 24)
                     presentation.Close()
                 finally:
                     powerpoint.Quit()

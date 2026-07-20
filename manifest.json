@@ -138,10 +138,10 @@
           "default": "zh",
           "title": "默认语言（zh/en等）"
         },
-        "includeImages": {
+        "includeMedia": {
           "type": "boolean",
           "default": true,
-          "title": "默认是否提取图片"
+          "title": "默认是否提取媒体（图片/视频/音频）"
         },
         "mineruFlashMaxMB": {
           "type": "number",
@@ -192,7 +192,7 @@
           "type": "number",
           "default": 3,
           "minimum": 2,
-          "title": "文件数阈值：>= 此值时返回结果去掉 markdown/imagePathMap（只保留 metadata + mdPath + imagesDir，省 context）"
+          "title": "文件数阈值：>= 此值时返回结果去掉 markdown/mediaMap（只保留 metadata + mdPath + imagesDir，省 context）"
         },
         "logLevel": {
           "type": "string",

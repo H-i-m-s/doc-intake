@@ -8,7 +8,13 @@ from xml.etree import ElementTree as ET
 
 from .base import BaseExtractor, ExtractionResult
 from .emf_converter import extract_and_convert_media
-from ._utils import local_name as _local_name, element_text as _element_text, markdown_table as _markdown_table
+from ._utils import (
+    ExtractedMedia,
+    format_media_ref,
+    local_name as _local_name,
+    element_text as _element_text,
+    markdown_table as _markdown_table,
+)
 
 
 def _cell_ref_to_col_index(ref: str) -> int:
@@ -69,26 +75,30 @@ class XlsxExtractor(BaseExtractor):
             # 获取工作表列表
             sheets = self._workbook_sheets(zf, names)
 
-            # 提取图片
-            images = []
+            # 抽取所有媒体(图片/视频/音频),按 drawings 中引用顺序排序
+            media_list: list[ExtractedMedia] = []
             if include_images:
-                images = self._extract_media(zf, names, output_dir, path.stem)
-                result.images = images
+                media_files = sorted(name for name in names if name.startswith("xl/media/"))
+                # 优先按 drawings 引用顺序排,保证编号顺序 = 用户视觉顺序
+                media_files = self._sort_media_by_drawings(zf, names, media_files)
+                media_list = extract_and_convert_media(media_files, zf, output_dir or "", path.stem)
+                result.images = [m.local_path for m in media_list]
+                result.media_kinds = [m.kind for m in media_list]
 
-            # 解析图片锚定位置
-            image_anchors = {}
+            # 解析媒体锚定位置(按 1-based 编号)
+            media_anchors: dict[str, int] = {}
             if include_images:
-                image_anchors = self._parse_image_anchors(zf, names, images)
+                media_anchors = self._parse_media_anchors(zf, names, len(media_list))
 
-            # 构建图片映射（图片编号 -> 本地路径）
-            image_path_map = {}
-            if include_images and output_dir:
-                image_path_map = self._build_image_path_map(images, output_dir, path.stem)
+            # 构建媒体映射: media_index (1-based) -> ExtractedMedia
+            media_map: dict[int, ExtractedMedia] = (
+                {i + 1: m for i, m in enumerate(media_list)} if include_images else {}
+            )
 
-            # 提取文本（包含图片引用）
+            # 提取文本（包含媒体引用）
             result.markdown = self._extract_text(
                 zf, sheets, strings, path.name, names, max_rows, max_cols,
-                include_images, image_path_map, image_anchors
+                include_images, media_map, media_anchors, path.stem
             )
 
         result.metadata = {
@@ -98,66 +108,153 @@ class XlsxExtractor(BaseExtractor):
         }
         return result
 
-    def _build_image_path_map(self, images: list[str], output_dir: str, stem: str) -> dict[int, str]:
-        """构建图片编号到本地路径的映射"""
-        image_path_map = {}
-        
-        for i, img_path in enumerate(images, 1):
-            local_filename = Path(img_path).name
-            rel_path = f"{stem}_images/{local_filename}"
-            image_path_map[i] = rel_path
-        
-        return image_path_map
+    def _sort_media_by_drawings(self, zf, names: set, media_files: list[str]) -> list[str]:
+        """按 drawings 中的 anchor 出现顺序排 media_files。
 
-    def _parse_image_anchors(self, zf: zipfile.ZipFile, names: set, images: list[str]) -> dict[str, int]:
-        """解析图片锚定位置，返回 {(sheet_name, row, col): image_index}"""
-        anchors = {}
-        
-        # 查找 drawings 目录下的文件
-        drawing_files = sorted(name for name in names if name.startswith("xl/drawings/") and name.endswith(".xml"))
-        
+        编号顺序 = 用户视觉顺序(同一张图被多 sheet 引用时,取首次出现)。
+        接受 rels Target 两种格式: 'media/xxx' 或 '../media/xxx'。
+        anchor 内含多种媒体引用类型(blip / videoFile / audioFile / p14:media / imgLayer),
+        全部按出现顺序计入。
+        """
+        if not media_files:
+            return media_files
+        try:
+            drawing_files = sorted(
+                name for name in names
+                if name.startswith("xl/drawings/") and name.endswith(".xml")
+            )
+            order: list[str] = []
+            seen: set[str] = set()
+            for df in drawing_files:
+                drawing_xml = zf.read(df)
+                drawing_root = ET.fromstring(drawing_xml)
+                # 通过 blip/imgLayer 的 r:embed 找 rels -> media
+                rels_path = f"xl/drawings/_rels/{Path(df).name}.rels"
+                rid_to_path: dict[str, str] = {}
+                if rels_path in zf.namelist():
+                    rrels = ET.fromstring(zf.read(rels_path))
+                    for rel in rrels:
+                        if _local_name(rel.tag) == "Relationship":
+                            rid = rel.get("Id", "")
+                            target = rel.get("Target", "")
+                            target_normalized = re.sub(r'^\.\./', '', target)
+                            if target_normalized.startswith("media/"):
+                                rid_to_path[rid] = f"xl/{target_normalized}"
+                # 按出现顺序遍历: 收集 anchor 内所有媒体引用 rId(blip/imgLayer 用 r:embed,
+                # videoFile/audioFile/p14:media 用 r:embed 或 r:link)
+                anchor_media_rids: list[str] = []
+                for elem in drawing_root.iter():
+                    tag = _local_name(elem.tag)
+                    if tag == "twoCellAnchor" or tag == "oneCellAnchor":
+                        anchor_media_rids = []  # 每个 anchor 单独计数
+                    elif tag in ("blip", "imgLayer"):
+                        embed = elem.get(
+                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
+                        )
+                        if embed:
+                            anchor_media_rids.append(embed)
+                    elif tag in ("videoFile", "audioFile"):
+                        link = elem.get(
+                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}link", ""
+                        )
+                        if link:
+                            anchor_media_rids.append(link)
+                    elif tag == "media":
+                        embed = elem.get(
+                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
+                        )
+                        if embed:
+                            anchor_media_rids.append(embed)
+                    # 一个 anchor 结束后(下一个 anchor 开始时),处理之前收集的 rId
+                    if tag in ("twoCellAnchor", "oneCellAnchor"):
+                        # 这是开头,但 anchor 还没结束(可能还有子元素)。
+                        # 实际我们用上面的顺序收集,只在这里标记 anchor 结束。
+                        # 为避免重复,只在下一个 anchor 开始时 flush 上一个。
+                        pass
+                # 简化版:直接按出现顺序记录所有引用的 rId 对应 media(去重保留首次)
+                for elem in drawing_root.iter():
+                    tag = _local_name(elem.tag)
+                    rid = ""
+                    if tag in ("blip", "imgLayer", "media"):
+                        rid = elem.get(
+                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
+                        )
+                    elif tag in ("videoFile", "audioFile"):
+                        rid = elem.get(
+                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}link", ""
+                        )
+                    if rid and rid in rid_to_path:
+                        mp = rid_to_path[rid]
+                        if mp in media_files and mp not in seen:
+                            order.append(mp)
+                            seen.add(mp)
+            # 未在 drawings 引用的追加到末尾
+            for mp in media_files:
+                if mp not in seen:
+                    order.append(mp)
+            return order
+        except Exception:
+            return media_files
+
+    def _parse_media_anchors(self, zf: zipfile.ZipFile, names: set, media_count: int) -> dict[str, int]:
+        """解析媒体锚定位置，返回 {R{row}C{col}: media_index (1-based)}。
+
+        按 drawings 中 anchor 出现顺序计数(每个 anchor 一个媒体)。
+        媒体来源: blip / imgLayer (r:embed) / videoFile / audioFile (r:link) / p14:media (r:embed)。
+        """
+        anchors: dict[str, int] = {}
+
+        drawing_files = sorted(
+            name for name in names
+            if name.startswith("xl/drawings/") and name.endswith(".xml")
+        )
+
         for drawing_file in drawing_files:
             try:
                 drawing_xml = zf.read(drawing_file)
                 drawing_root = ET.fromstring(drawing_xml)
-                
-                # 查找所有图片锚定
-                img_index = 0
+
+                media_index = 0
                 for anchor in drawing_root.iter():
                     anchor_tag = _local_name(anchor.tag)
-                    
-                    # 处理两个锚定类型：xdr:twoCellAnchor 和 xdr:oneCellAnchor
                     if anchor_tag in ("twoCellAnchor", "oneCellAnchor"):
-                        img_index += 1
-                        if img_index > len(images):
-                            break
-                        
-                        # 获取锚定位置
-                        from_tag = None
-                        col = 0
-                        row = 0
-                        
-                        for child in anchor:
-                            child_tag = _local_name(child.tag)
-                            if child_tag == "from":
-                                from_tag = child
-                        
-                        if from_tag is not None:
-                            for pos in from_tag:
-                                pos_tag = _local_name(pos.tag)
-                                if pos_tag == "col":
-                                    col = int(pos.text or "0") + 1  # 转为1-based
-                                elif pos_tag == "row":
-                                    row = int(pos.text or "0") + 1  # 转为1-based
-                        
-                        if row > 0 and col > 0:
-                            # 使用位置作为键
-                            key = f"R{row}C{col}"
-                            anchors[key] = img_index
-                            
+                        # 只在 anchor 出现第一个媒体引用时 +1
+                        # 同一个 anchor 内的多个引用都属同一媒体
+                        first_ref_rid = ""
+                        for c in anchor.iter():
+                            t = _local_name(c.tag)
+                            if t in ("blip", "imgLayer", "media"):
+                                first_ref_rid = c.get(
+                                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
+                                )
+                                if first_ref_rid:
+                                    break
+                            elif t in ("videoFile", "audioFile"):
+                                first_ref_rid = c.get(
+                                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}link", ""
+                                )
+                                if first_ref_rid:
+                                    break
+
+                        if first_ref_rid:
+                            media_index += 1
+                            if media_index > media_count:
+                                break
+                            col = 0
+                            row = 0
+                            for child in anchor:
+                                if _local_name(child.tag) == "from":
+                                    for pos in child:
+                                        pos_tag = _local_name(pos.tag)
+                                        if pos_tag == "col":
+                                            col = int(pos.text or "0") + 1
+                                        elif pos_tag == "row":
+                                            row = int(pos.text or "0") + 1
+                            if row > 0 and col > 0:
+                                anchors[f"R{row}C{col}"] = media_index
             except Exception:
                 continue
-        
+
         return anchors
 
     def _shared_strings(self, zf: zipfile.ZipFile) -> list[str]:
@@ -218,79 +315,71 @@ class XlsxExtractor(BaseExtractor):
         max_rows: int,
         max_cols: int,
         include_images: bool = True,
-        image_path_map: dict = None,
-        image_anchors: dict = None,
+        media_map: dict[int, ExtractedMedia] | None = None,
+        media_anchors: dict | None = None,
+        stem: str = "",
     ) -> str:
         """提取 XLSX 文本内容"""
         lines = [f"# {filename}", ""]
-        
-        if image_path_map is None:
-            image_path_map = {}
-        if image_anchors is None:
-            image_anchors = {}
+
+        if media_map is None:
+            media_map = {}
+        if media_anchors is None:
+            media_anchors = {}
 
         for sheet_info in sheets:
             sheet_name = sheet_info["name"]
-            
-            # 查找工作表文件
+
             sheet_file = None
             for name in names:
                 if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
                     sheet_file = name
                     break
-            
+
             if not sheet_file:
                 continue
-            
+
             try:
                 sheet_xml = zf.read(sheet_file)
                 sheet_root = ET.fromstring(sheet_xml)
-                
-                # 解析行和列
+
                 rows_out = []
-                used_rows = set()
-                
+
                 for row in sheet_root.iter():
                     if _local_name(row.tag) != "row":
                         continue
-                    
+
                     row_index = int(row.get("r", "0"))
                     if row_index > max_rows:
                         continue
-                    
+
                     values = [""] * max_cols
-                    
+
                     for cell in row:
                         if _local_name(cell.tag) != "c":
                             continue
-                        
+
                         cell_ref = cell.get("r", "")
                         if not cell_ref:
                             continue
-                        
+
                         col_index = _cell_ref_to_col_index(cell_ref)
                         if col_index > max_cols:
                             continue
-                        
-                        # 获取单元格值
+
                         value = ""
                         for v in cell.iter():
                             if _local_name(v.tag) == "v":
                                 value = v.text or ""
                                 break
-                        
-                        # 检查是否是共享字符串
+
                         cell_type = cell.get("t", "")
                         if cell_type == "s" and value:
                             try:
                                 value = strings[int(value)]
                             except (ValueError, IndexError):
                                 pass
-                        
-                        # 数字 cell（默认 t="" 或 t="n"）: 原始值是数字字符串。
-                        # 原值如 "1.5" 保持 "1.5"；"1.00" / "1.0" 截成 "1"(小数部分全 0)。
-                        # 原逻辑 `display == int(display)` 会把 "1.5" 错误变 "1"(因为 1.5 != int(1.5)=1
-                        # 走 False 分支,但 1.5 != 1 实际不截,只是凑巧;更糟的是 1.50 这种会被错误截断)。
+
                         try:
                             if cell_type not in ("s", "inlineStr") and value:
                                 display: object = float(value)
@@ -307,18 +396,21 @@ class XlsxExtractor(BaseExtractor):
                             display = value
 
                         values[col_index - 1] = str(display) if display else ""
-                        
-                        # 检查该单元格是否有图片
+
+                        # 检查该单元格是否有媒体(图/视/音)
                         cell_key = f"R{row_index}C{col_index}"
-                        if cell_key in image_anchors:
-                            img_idx = image_anchors[cell_key]
-                            if img_idx in image_path_map:
-                                # 在单元格值后添加图片标记
-                                img_ref = image_path_map[img_idx]
-                                values[col_index - 1] = f"{values[col_index - 1]} [📷]({img_ref})" if values[col_index - 1] else f"[📷]({img_ref})"
-                    
+                        if cell_key in media_anchors:
+                            m_idx = media_anchors[cell_key]
+                            if m_idx in media_map:
+                                m = media_map[m_idx]
+                                rel = f"{stem}_media/{Path(m.local_path).name}"
+                                icon = {"image": "📷", "video": "🎬", "audio": "🎵"}.get(m.kind, "📎")
+                                ref = f"[{icon}]({rel})"
+                                values[col_index - 1] = (
+                                    f"{values[col_index - 1]} {ref}" if values[col_index - 1] else ref
+                                )
+
                     if any(values):
-                        used_rows.add(row_index)
                         while len(rows_out) < row_index - 1:
                             rows_out.append([""] * max_cols)
                         rows_out.append(values)
@@ -327,29 +419,30 @@ class XlsxExtractor(BaseExtractor):
                 lines.append("")
 
                 if rows_out:
-                    # 截断到实际使用的列数
                     used_width = max((len(row) for row in rows_out), default=0)
                     for row in rows_out:
                         while len(row) > used_width and not row[-1]:
                             row.pop()
                         while len(row) < used_width:
                             row.append("")
-
-                    # 生成表格
                     lines.append(_markdown_table(rows_out))
                 else:
                     lines.append("[Empty sheet]")
 
-                # 如果有图片但没有锚定位置，在表格后列出
-                if include_images and image_path_map:
-                    unanchored = [i for i in image_path_map.keys() 
-                                  if not any(v == i for v in image_anchors.values())]
+                # 未锚定的媒体在表格后列出
+                if include_images and media_map:
+                    unanchored = [
+                        i for i in media_map.keys()
+                        if i not in media_anchors.values()
+                    ]
                     if unanchored:
                         lines.append("")
-                        lines.append("### 其他图片")
-                        for img_idx in unanchored:
-                            img_path = image_path_map[img_idx]
-                            lines.append(f"![image{img_idx}]({img_path})")
+                        lines.append("### 其他媒体")
+                        for m_idx in unanchored:
+                            m = media_map[m_idx]
+                            rel = f"{stem}_media/{Path(m.local_path).name}"
+                            alt = f"{m.kind}{m_idx}"
+                            lines.append(format_media_ref(rel, m.kind, alt))
 
                 lines.append("")
 
@@ -360,22 +453,3 @@ class XlsxExtractor(BaseExtractor):
                 lines.append("")
 
         return "\n".join(lines).strip() + "\n"
-
-    def _extract_media(
-        self,
-        zf: zipfile.ZipFile,
-        names: set,
-        output_dir: str | None,
-        stem: str,
-    ) -> list[str]:
-        """提取 XLSX 中的嵌入图片"""
-        media_files = sorted(name for name in names if name.startswith("xl/media/"))
-        if not media_files:
-            return []
-
-        if not output_dir:
-            return media_files
-
-        return extract_and_convert_media(
-            media_files, zf, output_dir, stem
-        )

@@ -9,9 +9,16 @@ from typing import Optional
 
 @dataclass
 class ExtractionResult:
-    """提取结果"""
+    """提取结果
+
+    字段约定:
+    - images:          所有媒体的本地路径列表(图片/视频/音频统一放)
+    - media_kinds:     与 images 一一对应的 kind(image/video/audio/other)
+    - images_dir:      输出根目录里的 media 子目录(如 foo_media/),保留字段名仅为向后兼容
+    """
     markdown: str = ""
     images: list[str] = field(default_factory=list)
+    media_kinds: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
     output_dir: Optional[str] = None

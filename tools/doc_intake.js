@@ -2,7 +2,7 @@ import { extractDocument } from "../lib/service.js";
 import { toToolError, toToolResult } from "../lib/tool-output.js";
 import { getSettings } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
-import { appendImageGuide } from "../lib/doc-intake-helpers.js";
+import { appendMediaGuide } from "../lib/doc-intake-helpers.js";
 import { spawn } from "node:child_process";
 import { statSync, readdirSync, rmSync } from "node:fs";
 import { extname, join, dirname } from "node:path";
@@ -196,10 +196,21 @@ async function runOne(chunk, input, ctx) {
 }
 
 function addGuideText(result) {
-  const imgPaths = result.metadata?.imagePaths;
-  const imgCount = Array.isArray(imgPaths) ? imgPaths.length : 0;
-  if (imgCount > 0) {
-    result.markdown = appendImageGuide(result.markdown, imgCount);
+  const mediaPaths = result.metadata?.mediaPaths;
+  const mediaKinds = result.metadata?.mediaKinds;
+  const count = Array.isArray(mediaPaths) ? mediaPaths.length : 0;
+  if (count > 0) {
+    const kindCounts = { image: 0, video: 0, audio: 0, other: 0 };
+    if (Array.isArray(mediaKinds)) {
+      for (const k of mediaKinds) {
+        if (kindCounts[k] === undefined) kindCounts.other += 1;
+        else kindCounts[k] += 1;
+      }
+    } else {
+      // 兜底:没有 kinds 时全当 image
+      kindCounts.image = count;
+    }
+    result.markdown = appendMediaGuide(result.markdown, count, kindCounts);
   }
   return result;
 }
@@ -270,7 +281,8 @@ function buildResult(chunks, results, settings = {}) {
           outputDir: r.result.outputDir ?? null,
           mdPath: m.mdPath ?? null,
           imagesDir: m.imagesDir ?? null,
-          imagePaths: m.imagePaths ?? [],
+          mediaPaths: m.mediaPaths ?? [],
+          mediaKinds: m.mediaKinds ?? [],
           format: m.format ?? null,
           reader: m.reader ?? null,
           backendChain: m.backendChain ?? null,
@@ -316,7 +328,8 @@ function buildResult(chunks, results, settings = {}) {
         outputDir: chunkOutputDir,
         mdPath: chunkMdPath,
         imagesDir: chunkImagesDir,
-        imagePaths: m.imagePaths ?? [],
+        mediaPaths: m.mediaPaths ?? [],
+        mediaKinds: m.mediaKinds ?? [],
         format: m.format ?? null,
         reader: m.reader ?? null,
         backendChain: m.backendChain ?? null,
@@ -331,7 +344,8 @@ function buildResult(chunks, results, settings = {}) {
     // 单文件 / <summaryThreshold：每项含 markdown + chain metadata，无 mdPath/imagesDir。
     const detailFiles = filesOut.map(f => {
       const m = {
-        imagePaths: f.imagePaths ?? [],
+        mediaPaths: f.mediaPaths ?? [],
+        mediaKinds: f.mediaKinds ?? [],
         outputDir: f.outputDir,
         format: f.format,
         reader: f.reader,
@@ -349,7 +363,7 @@ function buildResult(chunks, results, settings = {}) {
     return toToolResult(detailFiles);
   }
 
-  // 批量 (>=summaryThreshold)：顶层 array，每项去掉 markdown/imagePaths，加 mdPath/imagesDir（有图时），省 context。
+  // 批量 (>=summaryThreshold)：顶层 array，每项去掉 markdown/mediaPaths，加 mdPath/imagesDir（有图时），省 context。
   const summary = [];
   for (const f of filesOut) {
     const ok = !f.warnings || f.warnings.length === 0;
@@ -418,9 +432,9 @@ export const parameters = {
       type: "string",
       description: "语言（可选）",
     },
-    includeImages: {
+    includeMedia: {
       type: "boolean",
-      description: "是否提取图片（可选）",
+      description: "是否提取媒体(图片/视频/音频,可选)",
     },
     saveJson: {
       type: "boolean",
