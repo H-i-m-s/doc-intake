@@ -286,9 +286,105 @@ def _flatten_image_paths(image_path_map) -> list[str]:
     return []
 
 
+_DATA_URL_IMG_MD_RE = __import__("re").compile(r'!\[([^\]]*)\]\((data:[^)]+)\)')
+_DATA_URL_IMG_HTML_RE = __import__("re").compile(r'<img[^>]*\bsrc="(data:[^"]+)"[^>]*>', __import__("re").IGNORECASE)
+_DATA_URL_IMG_HTML_ALT_RE = __import__("re").compile(r'\balt="([^"]*)"', __import__("re").IGNORECASE)
+_ANY_IMG_MD_RE = __import__("re").compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+_ANY_IMG_HTML_RE = __import__("re").compile(r'<img\b[^>]*>', __import__("re").IGNORECASE)
+_ANY_IMG_HTML_ALT_RE = __import__("re").compile(r'\balt="([^"]*)"', __import__("re").IGNORECASE)
+
+
+def _replace_image_placeholders(markdown: str, predicate) -> str:
+    """按出现顺序拍平 markdown / HTML 图片标签为占位文本。
+
+    - predicate(match_text) 决定当前 match 要不要被替。一次扫描，二次 sub 交替
+      完成（by merging md / html iterators, sorted by start pos）。
+    - 相同 alt 合并到同一占位符，序号按首次出现计数。
+    """
+    if not markdown or "<img" not in markdown and "![" not in markdown:
+        return markdown
+
+    # 扫描 markdown img 与 HTML img 两种，所有 match 按出现顺序排队。
+    md_iter = _ANY_IMG_MD_RE.finditer(markdown)
+    html_iter = _ANY_IMG_HTML_RE.finditer(markdown)
+
+    pending = []
+    for m in md_iter:
+        if predicate(m.group(0)):
+            pending.append((m.start(), m.end(), m.group(1) or ""))
+    for m in html_iter:
+        if predicate(m.group(0)):
+            alt_match = _ANY_IMG_HTML_ALT_RE.search(m.group(0))
+            alt = alt_match.group(1) if alt_match else ""
+            pending.append((m.start(), m.end(), alt))
+
+    if not pending:
+        return markdown
+
+    pending.sort(key=lambda x: x[0])
+
+    counter = [0]
+    seen_alts: dict[str, int] = {}
+
+    def _new_counter() -> int:
+        counter[0] += 1
+        return counter[0]
+
+    def _placeholder_for(alt: str) -> str:
+        alt = (alt or "").strip()
+        if alt and alt in seen_alts:
+            return f"[图片 {seen_alts[alt]}]"
+        n = _new_counter()
+        if alt:
+            seen_alts[alt] = n
+            return f"[图片 {n}: {alt}]"
+        return f"[图片 {n}]"
+
+    # 先按出现顺序算出每段替换的 placeholder，再从反向拼接 markdown。
+    # 每块都以原 markdown 中的 \n 边界为间隔，所以拼接后不会重复换行。
+    replacements = [(s, e, _placeholder_for(alt)) for s, e, alt in pending]
+
+    pieces = []
+    cursor = len(markdown)
+    for start, end, placeholder in reversed(replacements):
+        pieces.append(placeholder)
+        pieces.append(markdown[end:cursor])
+        cursor = start
+    pieces.append(markdown[:cursor])
+    pieces.reverse()
+    # 最后去紧贴 multiple consecutive newlines（不这里也去一下）
+    result = "".join(pieces)
+    result = __import__("re").sub(r'\n{3,}', '\n\n', result)
+    return result
+
+
+def _strip_data_url_images(markdown: str) -> str:
+    """把 markdown 里 base64 (data URL) 图片标签替换成占位文本。不动非 base64 <img>。"""
+    return _replace_image_placeholders(
+        markdown,
+        predicate=lambda m: "data:" in m,
+    )
+
+
+def _strip_all_images(markdown: str) -> str:
+    """没保存图路径时，抹所有 <img> 标签。防止 base64 / 虚拟路径 / 远程 URL 进 markdown。"""
+    return _replace_image_placeholders(
+        markdown,
+        predicate=lambda m: True,
+    )
+
+
 def format_result(result: ExtractionResult) -> dict:
     """返回给 JS 端的 dict，结构与本地 JSON 的 metadata 对齐（顶层有 name/outputDir/markdown/metadata）。"""
     meta = result.metadata or {}
+
+    # 没保存图路径（output_dir 没设）→ 全部 <img> 抹除，避免 base64 / 虚拟路径 / 远程 URL 全部进 markdown。
+    # 有保存路径 → 只 strip base64，<img src="本地路径"> 保留供 agent 看。
+    raw_markdown = result.markdown or ""
+    if not result.output_dir:
+        cleaned_markdown = _strip_all_images(raw_markdown)
+    else:
+        cleaned_markdown = _strip_data_url_images(raw_markdown)
 
     # 给 JS 端用的结构。metadata 字段顺序与本地 JSON 对齐，多 mdPath/imagesDir 给批量模式用。
     compact_meta = {
@@ -307,7 +403,7 @@ def format_result(result: ExtractionResult) -> dict:
     return {
         "name": result.name,
         "outputDir": result.output_dir,
-        "markdown": result.markdown,
+        "markdown": cleaned_markdown,
         "metadata": compact_meta,
     }
 
@@ -467,6 +563,9 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                      total=len(image_path_map))
 
     try:
+        # base64 图片最后抹除，防止一坨 base64 进 markdown 让人看 / agent 渲染。
+        final_markdown = _strip_data_url_images(final_markdown)
+
         # 保存 Markdown
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(final_markdown)
