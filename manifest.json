@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "doc-intake",
   "name": "Doc Intake",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "trust": "restricted",
   "description": "文档/图片内容提取工具。支持 MinerU（PDF）、PaddleOCR（图片）、本地 Python 库（DOCX/PPTX/XLSX/HTML），输出结构化 Markdown。支持公式转 LaTeX、EMF 转 PNG。",
   "contributes": {
