@@ -253,7 +253,10 @@ class PptxExtractor(BaseExtractor):
     def _kind_priority(kind: str) -> int:
         return {"video": 4, "audio": 3, "image": 2, "other": 1}.get(kind, 0)
 
-    def _scan_media_in_element(self, elem, rid_to_info, used_media, seen):
+    def _scan_media_in_element(
+        self, elem, rid_to_info, used_media, seen,
+        audio_video_pic_icon_rids: set | None = None,
+    ):
         """递归扫描元素中所有媒体引用。
 
         支持:
@@ -263,14 +266,24 @@ class PptxExtractor(BaseExtractor):
         - <p:audioFile r:link="rIdN"> / <a:audioFile r:link="rIdN">  音频
         - <p14:media r:embed="rIdN">  PowerPoint 2010+ 通用媒体扩展(常见于嵌在 pic 里)
         - <mc:AlternateContent><mc:Choice> 优先;Fallback 只收 Equation.3 预览
+
+        音频/视频 pic 节点的装饰图标跳过:
+        PowerPoint 把音视频装在 <p:pic> 节点里,内含:
+        - <a:videoFile>/<a:audioFile>/<p14:media> rId → 实际音视频
+        - <a:blip> rId → PowerPoint 自动给音视频画的「喇叭/齿轮」装饰图标 PNG
+        音视频 pic 节点内的 blip rId 会被收集到 audio_video_pic_icon_rids,
+        扫到时跳过,不抽不渲染。
         """
+        if audio_video_pic_icon_rids is None:
+            audio_video_pic_icon_rids = set()
         tag = _local_name(elem.tag)
 
         if tag == "AlternateContent":
             for child in elem:
                 if _local_name(child.tag) == "Choice":
                     self._scan_media_in_element(
-                        child, rid_to_info, used_media, seen
+                        child, rid_to_info, used_media, seen,
+                        audio_video_pic_icon_rids,
                     )
             for child in elem:
                 if _local_name(child.tag) == "Fallback":
@@ -279,24 +292,36 @@ class PptxExtractor(BaseExtractor):
                     )
             return
 
+        # pic 节点特殊处理:判断是否含音视频上下文。
+        # - 含音视频:pic 内的 blip rId 视为装饰图标,跳过
+        # - 不含音视频:pic 内的 blip rId 视为正常图片,正常抽
+        if tag == "pic":
+            self._scan_pic_node(
+                elem, rid_to_info, used_media, seen,
+                audio_video_pic_icon_rids,
+            )
+            return
+
         # 图片 / HD Photo 都用 r:embed
         # blip / imgLayer 仍要继续递归子元素(<a:blip> 内部可能含
         # <a:extLst><a:ext><a14:imgLayer> 这种 HD Photo 扩展元数据)
         if tag == "blip":
             embed = elem.get(f"{_R_NS}embed", "")
             if embed and embed in rid_to_info:
-                self._add_media(
-                    rid_to_info[embed][0], rid_to_info[embed][1],
-                    seen=seen, used_media=used_media, mtype="main",
-                )
+                if embed not in audio_video_pic_icon_rids:
+                    self._add_media(
+                        rid_to_info[embed][0], rid_to_info[embed][1],
+                        seen=seen, used_media=used_media, mtype="main",
+                    )
             # 继续递归(不 return),子元素里可能含 imgLayer
         elif tag == "imgLayer":
             embed = elem.get(f"{_R_NS}embed", "")
             if embed and embed in rid_to_info:
-                self._add_media(
-                    rid_to_info[embed][0], rid_to_info[embed][1],
-                    seen=seen, used_media=used_media, mtype="main",
-                )
+                if embed not in audio_video_pic_icon_rids:
+                    self._add_media(
+                        rid_to_info[embed][0], rid_to_info[embed][1],
+                        seen=seen, used_media=used_media, mtype="main",
+                    )
             return
 
         # 视频 / 音频文件引用(任意命名空间: a: / p: 都兼容)
@@ -321,8 +346,60 @@ class PptxExtractor(BaseExtractor):
 
         for child in elem:
             self._scan_media_in_element(
-                child, rid_to_info, used_media, seen
+                child, rid_to_info, used_media, seen,
+                audio_video_pic_icon_rids,
             )
+
+    def _scan_pic_node(
+        self, pic_elem, rid_to_info, used_media, seen,
+        audio_video_pic_icon_rids: set,
+    ):
+        """扫描单个 <p:pic> 节点,区分「普通图片 pic」和「音视频 pic」。
+
+        - 若 pic 内含 videoFile/audioFile/p14:media 引用 → 音视频 pic
+          pic 内所有 blip/imgLayer rId 视为装饰图标,加到 audio_video_pic_icon_rids
+        - 若 pic 不含音视频引用 → 普通图片 pic
+          pic 内所有 blip/imgLayer rId 正常处理
+        """
+        # 找音视频引用 rId(真实媒体)
+        av_rids: set[str] = set()
+        for c in pic_elem.iter():
+            t = _local_name(c.tag)
+            if t in ("videoFile", "audioFile"):
+                rid = c.get(f"{_R_NS}link", "")
+                if rid:
+                    av_rids.add(rid)
+            elif t == "media":
+                rid = c.get(f"{_R_NS}embed", "")
+                if rid:
+                    av_rids.add(rid)
+
+        # 找 pic 内所有 blip rId(图片/装饰图标)
+        blip_rids: set[str] = set()
+        for c in pic_elem.iter():
+            t = _local_name(c.tag)
+            if t in ("blip", "imgLayer"):
+                rid = c.get(f"{_R_NS}embed", "")
+                if rid:
+                    blip_rids.add(rid)
+
+        if av_rids:
+            # 音视频 pic:先处理音视频引用,再把 blip rId 标为装饰图标
+            for rid in av_rids:
+                if rid in rid_to_info:
+                    self._add_media(
+                        rid_to_info[rid][0], rid_to_info[rid][1],
+                        seen=seen, used_media=used_media, mtype="main",
+                    )
+            audio_video_pic_icon_rids.update(blip_rids)
+        else:
+            # 普通图片 pic:blip rId 正常处理
+            for rid in blip_rids:
+                if rid in rid_to_info:
+                    self._add_media(
+                        rid_to_info[rid][0], rid_to_info[rid][1],
+                        seen=seen, used_media=used_media, mtype="main",
+                    )
 
     def _scan_fallback_preview(self, elem, rid_to_info, used_media, seen):
         """在 AlternateContent.Fallback 中收集 Equation.3 预览图。"""
