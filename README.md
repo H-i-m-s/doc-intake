@@ -243,6 +243,27 @@ doc-intake/
 | `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF（按 `splitChunkPages` 切分，多路并发可计入 `maxConcurrent`）。 |
 | `splitChunkPages` | `number` | `180` | 切割时每块页数（小于 MinerU 200 页限制）。 |
 
+#### 本地档（PyMuPDF）的限制
+
+`local` 是 PDF 降级链的最末档 — 基于 PyMuPDF 直接读 PDF 内嵌文本和图片。它不调用云端 API，但有以下能力边界：
+
+- **不做 OCR**：扫描版（无文本层）只能拿到空白，需走 PaddleOCR / MinerU
+- **不做公式识别 / 表格识别 / 分栏重排**
+- **Founder 方正 PDF 的 ToUnicode CMap 可能缺失**：这类 PDF（很多国标 GB/T 文件）在 PyMuPDF 提取后会出现「犐犆犛」、「犌犅」之类乱码字符（实际是 ASCII 'I''C''S''G''B' 等被错误 fallback 到 CJK 扩展区）。这是 PDF 文件本身的缺陷，**本地档无法修复**
+
+本地档会在 `warnings` 里检测 Founder 方正特征乱码（Unicode U+7280–U+72FF）并给出明确提示，建议改用云端 OCR 后端重新提取。看到此警告请改传 `backend="mineru"` 或 `backend="paddleocr"`。
+
+#### 本地档的图片按位置插入
+
+本地档会把每页内嵌图片按 `page.get_image_info()` 给出的 y 坐标，插入到对应文字 block 之前 / 之后，输出 markdown 时按视觉顺序拼接：
+
+- 同 y 行的多张图按 x0 升序排（左到右），容忍 ±5px 浮点误差
+- 同一 xref 在一页内只引用一次
+- inline image（xref=0）跳过：PyMuPDF 不暴露原始 bytes，极少出现
+- "纯资源引用"(在 `get_images` 但 `get_image_info` 没显示)不抽
+
+例：GB+4674-2009.pdf 的第 7 页有 7 张图(6 张并排示意图 + 1 张页脚图标)，markdown 输出会按视觉位置穿插在对应段落之间。
+
 ### 图片分割
 
 | 配置项 | 类型 | 默认值 | 说明 |
