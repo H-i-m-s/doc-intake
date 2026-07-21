@@ -20,8 +20,10 @@ def convert_emf_to_png(emf_path: str, png_path: str) -> bool:
     """EMF/WMF 转 PNG。失败返回 False(调用方决定如何处理)。"""
     try:
         from PIL import Image
-        img = Image.open(emf_path)
-        img.save(png_path, "PNG")
+        # 用 with 包裹 Image.open — PIL 持有 file handle 直到 close,
+        # 否则源 EMF/WMF 会被锁到 GC,Windows 下表现为“文件被占用”。
+        with Image.open(emf_path) as img:
+            img.save(png_path, "PNG")
         return True
     except Exception:
         return False

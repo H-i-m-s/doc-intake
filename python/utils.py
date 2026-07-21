@@ -57,9 +57,11 @@ def normalize_images(
             base = Path(virtual_path).name if virtual_path else f"{i:03d}.jpg"
             dest = media_dir / base
             try:
-                response = requests.get(src_url, timeout=30)
-                response.raise_for_status()
-                dest.write_bytes(response.content)
+                # 用 with 让 Response 走完流程后立刻释放连接,
+                # 避免 HTTP 连接池被占满 / 流未释放。
+                with requests.get(src_url, timeout=30) as response:
+                    response.raise_for_status()
+                    dest.write_bytes(response.content)
                 saved_paths.append(str(dest))
             except Exception as e:
                 logger.warning(f"保存图片 {i} 失败", error=str(e), src=src_url[:200])
@@ -81,9 +83,10 @@ def normalize_images(
 
         try:
             if isinstance(img, str) and img.startswith("http"):
-                response = requests.get(img, timeout=30)
-                response.raise_for_status()
-                dest.write_bytes(response.content)
+                # 用 with 让 Response 走完流程后立刻释放连接。
+                with requests.get(img, timeout=30) as response:
+                    response.raise_for_status()
+                    dest.write_bytes(response.content)
 
             elif hasattr(img, "save"):
                 img.save(str(dest))

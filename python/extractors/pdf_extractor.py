@@ -126,127 +126,139 @@ class PdfExtractor(BaseExtractor):
 
         result = ExtractionResult()
         warnings: list[str] = []
+        doc = None
 
-        doc = fitz.open(source)
-        total = len(doc)
-        pages = parse_page_range(page_range, total)
+        # 整个主流程用 try/finally 兜底 doc.close() —
+        # PyMuPDF 用 mmap 持有 PDF，Windows 下 close 才能释放。
+        # 任何中间步骤抛异常(磁盘满、page 访问失败、write_bytes 失败等)
+        # 都会泄漏源 PDF 的 file handle,所以闭进 finally 里。
+        try:
+            doc = fitz.open(source)
+            total = len(doc)
+            pages = parse_page_range(page_range, total)
 
-        if not pages:
-            warnings.append("页码范围筛选后无有效页")
-            result.markdown = "# 提取结果\n\n（页码范围无有效页）"
-            doc.close()
+            if not pages:
+                warnings.append("页码范围筛选后无有效页")
+                result.markdown = "# 提取结果\n\n（页码范围无有效页）"
+                return result
+
+            saved_images: list[str] = []
+            media_dir: Optional[Path] = None
+            stem = Path(source).stem
+            if include_images and output_dir:
+                media_dir = Path(output_dir) / f"{stem}_media"
+                media_dir.mkdir(parents=True, exist_ok=True)
+
+            page_chunks: list[str] = []
+            total_chars = 0
+            empty_pages = 0
+            founder_garb_chars = 0
+            rare_cjk_chars = 0
+            total_non_ws = 0
+
+            for page_num in pages:
+                page = doc[page_num - 1]
+
+                # 拿结构化文字 blocks (y0, y1, text)
+                text_blocks = self._extract_text_blocks(page)
+
+                if not text_blocks:
+                    empty_pages += 1
+                    page_chunks.append(
+                        f"<!-- Page {page_num}: 本地无文本层,需 OCR 才能识别 -->\n"
+                    )
+                    continue
+
+                # 全部文字(用于乱码统计 + 字符总数)
+                page_text = "\n".join(t for _, _, t in text_blocks)
+                total_chars += len(page_text)
+                f, r, t = count_garbled_chars(page_text)
+                founder_garb_chars += f
+                rare_cjk_chars += r
+                total_non_ws += t
+
+                # 抽图 + 拿 y0
+                page_images_with_pos: list[tuple[float, str, str]] = []
+                if include_images:
+                    page_images_with_pos, page_local_paths = self._extract_page_images(
+                        page, page_num, media_dir, doc, stem
+                    )
+                    saved_images.extend(page_local_paths)
+
+                # 文字 + 图片按位置合并
+                body = self._interleave(text_blocks, page_images_with_pos)
+                page_chunks.append(f"## Page {page_num}\n\n{body}\n")
+
+            if not total_chars:
+                warnings.append(
+                    "本地 PyMuPDF 提取到 0 字符 — PDF 可能是扫描版且本档无 OCR 能力,无法降级"
+                )
+
+            if empty_pages and empty_pages < len(pages):
+                warnings.append(
+                    f"本地提取: {empty_pages}/{len(pages)} 页为图片/扫描版,无文本可提取"
+                )
+
+            # 乱码字符警告 — 超过阈值时建议走云端 OCR
+            if total_non_ws:
+                f_ratio = founder_garb_chars / total_non_ws
+                r_ratio = rare_cjk_chars / total_non_ws
+                if f_ratio >= 0.005:
+                    warnings.append(
+                        f"检测到 Founder 方正 PDF 典型乱码字符 {founder_garb_chars} 个 "
+                        f"({f_ratio:.1%},Unicode U+7280–U+72FF 区)。这是 PDF 文件本身 "
+                        "ToUnicode CMap 缺失/错误导致的,本地档无法修复;建议用云端 OCR 后端 "
+                        "(MinerU / PaddleOCR) 重新提取。"
+                    )
+                elif r_ratio >= 0.005:
+                    warnings.append(
+                        f"检测到罕见 CJK 扩展区字符 {rare_cjk_chars} 个 ({r_ratio:.1%}),"
+                        "可能为字体 fallback 乱码,建议走云端 OCR 后端重新提取。"
+                    )
+
+            result.markdown = (
+                f"# PDF 本地提取结果\n\n"
+                + f"源文件: {source}\n"
+                + f"提取页: {len(pages)}/{total}\n"
+                + f"字符总数: {total_chars}\n\n"
+                + "\n".join(page_chunks)
+            )
+            result.images = saved_images
+            # PDF 本地档只抽图(视频音频在 PDF 中概念上不常见,本地档不强抽)
+            result.media_kinds = ["image"] * len(saved_images)
+            result.warnings = warnings
+            result.metadata = {
+                "format": "pdf",
+                "reader": "pymupdf-fallback",
+                "pages": {"selected": len(pages), "total": total},
+                "chars": total_chars,
+                "empty_pages": empty_pages,
+                "founder_garb_chars": founder_garb_chars,
+                "rare_cjk_chars": rare_cjk_chars,
+                "total_non_ws": total_non_ws,
+            }
+            result.output_dir = str(output_dir) if output_dir else None
+
+            logger.info(
+                "PDF 本地兜底提取完成",
+                source=source,
+                pages=f"{len(pages)}/{total}",
+                chars=total_chars,
+                images=len(saved_images),
+                empty_pages=empty_pages,
+                founder_garb_chars=founder_garb_chars,
+                rare_cjk_chars=rare_cjk_chars,
+            )
             return result
-
-        saved_images: list[str] = []
-        media_dir: Optional[Path] = None
-        stem = Path(source).stem
-        if include_images and output_dir:
-            media_dir = Path(output_dir) / f"{stem}_media"
-            media_dir.mkdir(parents=True, exist_ok=True)
-
-        page_chunks: list[str] = []
-        total_chars = 0
-        empty_pages = 0
-        founder_garb_chars = 0
-        rare_cjk_chars = 0
-        total_non_ws = 0
-
-        for page_num in pages:
-            page = doc[page_num - 1]
-
-            # 拿结构化文字 blocks (y0, y1, text)
-            text_blocks = self._extract_text_blocks(page)
-
-            if not text_blocks:
-                empty_pages += 1
-                page_chunks.append(
-                    f"<!-- Page {page_num}: 本地无文本层,需 OCR 才能识别 -->\n"
-                )
-                continue
-
-            # 全部文字(用于乱码统计 + 字符总数)
-            page_text = "\n".join(t for _, _, t in text_blocks)
-            total_chars += len(page_text)
-            f, r, t = count_garbled_chars(page_text)
-            founder_garb_chars += f
-            rare_cjk_chars += r
-            total_non_ws += t
-
-            # 抽图 + 拿 y0
-            page_images_with_pos: list[tuple[float, str, str]] = []
-            if include_images:
-                page_images_with_pos, page_local_paths = self._extract_page_images(
-                    page, page_num, media_dir, doc, stem
-                )
-                saved_images.extend(page_local_paths)
-
-            # 文字 + 图片按位置合并
-            body = self._interleave(text_blocks, page_images_with_pos)
-            page_chunks.append(f"## Page {page_num}\n\n{body}\n")
-
-        doc.close()
-
-        if not total_chars:
-            warnings.append(
-                "本地 PyMuPDF 提取到 0 字符 — PDF 可能是扫描版且本档无 OCR 能力,无法降级"
-            )
-
-        if empty_pages and empty_pages < len(pages):
-            warnings.append(
-                f"本地提取: {empty_pages}/{len(pages)} 页为图片/扫描版,无文本可提取"
-            )
-
-        # 乱码字符警告 — 超过阈值时建议走云端 OCR
-        if total_non_ws:
-            f_ratio = founder_garb_chars / total_non_ws
-            r_ratio = rare_cjk_chars / total_non_ws
-            if f_ratio >= 0.005:
-                warnings.append(
-                    f"检测到 Founder 方正 PDF 典型乱码字符 {founder_garb_chars} 个 "
-                    f"({f_ratio:.1%},Unicode U+7280–U+72FF 区)。这是 PDF 文件本身 "
-                    "ToUnicode CMap 缺失/错误导致的,本地档无法修复;建议用云端 OCR 后端 "
-                    "(MinerU / PaddleOCR) 重新提取。"
-                )
-            elif r_ratio >= 0.005:
-                warnings.append(
-                    f"检测到罕见 CJK 扩展区字符 {rare_cjk_chars} 个 ({r_ratio:.1%}),"
-                    "可能为字体 fallback 乱码,建议走云端 OCR 后端重新提取。"
-                )
-
-        result.markdown = (
-            f"# PDF 本地提取结果\n\n"
-            + f"源文件: {source}\n"
-            + f"提取页: {len(pages)}/{total}\n"
-            + f"字符总数: {total_chars}\n\n"
-            + "\n".join(page_chunks)
-        )
-        result.images = saved_images
-        # PDF 本地档只抽图(视频音频在 PDF 中概念上不常见,本地档不强抽)
-        result.media_kinds = ["image"] * len(saved_images)
-        result.warnings = warnings
-        result.metadata = {
-            "format": "pdf",
-            "reader": "pymupdf-fallback",
-            "pages": {"selected": len(pages), "total": total},
-            "chars": total_chars,
-            "empty_pages": empty_pages,
-            "founder_garb_chars": founder_garb_chars,
-            "rare_cjk_chars": rare_cjk_chars,
-            "total_non_ws": total_non_ws,
-        }
-        result.output_dir = str(output_dir) if output_dir else None
-
-        logger.info(
-            "PDF 本地兜底提取完成",
-            source=source,
-            pages=f"{len(pages)}/{total}",
-            chars=total_chars,
-            images=len(saved_images),
-            empty_pages=empty_pages,
-            founder_garb_chars=founder_garb_chars,
-            rare_cjk_chars=rare_cjk_chars,
-        )
-        return result
+        finally:
+            # PyMuPDF 用 mmap,close 才能释放源 PDF 的 file handle。
+            # 兜底任何异常路径(磁盘满 / page 访问失败 / write_bytes 失败等),
+            # 避免源文件被锁到进程退出。
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
 
     # ─────────────────────────────────────────────────────────────────
     # 内部工具

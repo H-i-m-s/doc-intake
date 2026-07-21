@@ -165,26 +165,28 @@ class ImageSplitter:
         """
         分割图片并保存
         """
-        image = Image.open(image_path)
-        chunks = self.split(image)
+        # 用 with 包裹 Image.open — PIL 内部 lazy-load,持有 file handle 直到 close。
+        # 不 close 会锁住源文件到 GC,Windows 上拖长占用窗口。
+        with Image.open(image_path) as image:
+            chunks = self.split(image)
 
-        if len(chunks) == 1:
-            return [image_path]
+            if len(chunks) == 1:
+                return [image_path]
 
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
 
-        saved_paths = []
-        stem = Path(image_path).stem
-        suffix = Path(image_path).suffix or ".png"
+            saved_paths = []
+            stem = Path(image_path).stem
+            suffix = Path(image_path).suffix or ".png"
 
-        for i, chunk in enumerate(chunks):
-            filename = f"{prefix}_{stem}_{i:03d}{suffix}"
-            filepath = output_path / filename
-            chunk.save(str(filepath))
-            saved_paths.append(str(filepath))
+            for i, chunk in enumerate(chunks):
+                filename = f"{prefix}_{stem}_{i:03d}{suffix}"
+                filepath = output_path / filename
+                chunk.save(str(filepath))
+                saved_paths.append(str(filepath))
 
-        return saved_paths
+            return saved_paths
 
 
 def merge_markdown_deduplicate(markdowns: List[str]) -> str:

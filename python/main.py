@@ -389,35 +389,39 @@ def _run(args) -> dict:
             output_dir = settings.get("savePath")
 
         img = Image.open(args.source)
-        splitter = ImageSplitter(
-            enable_threshold=settings.get("splitImageThreshold") or 1.2,
-            color_tolerance=settings.get("splitImageTolerance") or 15.0,
-            blank_ratio=settings.get("splitImageBlankRatio") or 0.98,
-            min_continuous_blank=settings.get("splitImageMinBlank") or 5,
-        )
-        chunks = splitter.split(img)
+        # 用 with 包裹 — PIL 持有源图 file handle,Windows 不 close 会锁到 GC。
+        try:
+            splitter = ImageSplitter(
+                enable_threshold=settings.get("splitImageThreshold") or 1.2,
+                color_tolerance=settings.get("splitImageTolerance") or 15.0,
+                blank_ratio=settings.get("splitImageBlankRatio") or 0.98,
+                min_continuous_blank=settings.get("splitImageMinBlank") or 5,
+            )
+            chunks = splitter.split(img)
 
-        split_dir = Path(output_dir) / f"{Path(args.source).name}_split"
-        split_dir.mkdir(parents=True, exist_ok=True)
+            split_dir = Path(output_dir) / f"{Path(args.source).name}_split"
+            split_dir.mkdir(parents=True, exist_ok=True)
 
-        saved = []
-        for i, chunk in enumerate(chunks):
-            path = split_dir / f"{Path(args.source).stem}_块{i+1:02d}{Path(args.source).suffix or '.png'}"
-            chunk.save(str(path))
-            saved.append(str(path))
+            saved = []
+            for i, chunk in enumerate(chunks):
+                path = split_dir / f"{Path(args.source).stem}_块{i+1:02d}{Path(args.source).suffix or '.png'}"
+                chunk.save(str(path))
+                saved.append(str(path))
 
-        result = ExtractionResult()
-        result.markdown = f"# 图片分割结果\n\n源文件: {args.source}\n"
-        result.markdown += f"原图大小: {img.size[0]}x{img.size[1]} 像素\n"
-        result.markdown += f"高宽比: {img.size[1]/img.size[0]:.2f}\n"
-        result.markdown += f"拆分成 {len(chunks)} 块\n\n"
-        if settings.get("splitImageMinBlank"):
-            result.markdown += f"参数: 连续 {settings.get('splitImageMinBlank')} 行空白切一刀\n\n"
-        for i, p in enumerate(saved):
-            result.markdown += f"![块{i+1}]({p})\n"
-        result.images = saved
-        result.metadata = {"format": "split_test"}
-        result.output_dir = str(split_dir)
+            result = ExtractionResult()
+            result.markdown = f"# 图片分割结果\n\n源文件: {args.source}\n"
+            result.markdown += f"原图大小: {img.size[0]}x{img.size[1]} 像素\n"
+            result.markdown += f"高宽比: {img.size[1]/img.size[0]:.2f}\n"
+            result.markdown += f"拆分成 {len(chunks)} 块\n\n"
+            if settings.get("splitImageMinBlank"):
+                result.markdown += f"参数: 连续 {settings.get('splitImageMinBlank')} 行空白切一刀\n\n"
+            for i, p in enumerate(saved):
+                result.markdown += f"![块{i+1}]({p})\n"
+            result.images = saved
+            result.metadata = {"format": "split_test"}
+            result.output_dir = str(split_dir)
+        finally:
+            img.close()
 
         duration = time.time() - start_time
         log.log_response(markdown_length=len(result.markdown), image_count=len(result.images), duration=duration)

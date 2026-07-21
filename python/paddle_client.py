@@ -90,19 +90,20 @@ class PaddleClient:
         # 这一档只是 chain 上的降级档（Mineru 替代），过度设计已经被清掉。
         if not source.startswith("http") and self._is_image(source):
             from PIL import Image
-            img = Image.open(source)
-            splitter = ImageSplitter(
-                enable_threshold=self.settings.get("splitImageThreshold"),
-                color_tolerance=self.settings.get("splitImageTolerance"),
-                blank_ratio=self.settings.get("splitImageBlankRatio"),
-                min_continuous_blank=self.settings.get("splitImageMinBlank"),
-            )
-            if splitter.need_split(img):
-                # 用系统 temp 目录而不是 output_dir，处理完自动清理
-                split_temp_dir = tempfile.mkdtemp(prefix="doc-intake-paddle-split-")
-                files_to_process = splitter.split_and_save(source, split_temp_dir)
-                is_split = len(files_to_process) > 1
-                self.logger.info("图片已分割", count=len(files_to_process))
+            # 用 with 包裹 — PIL 持有源图 file handle,Windows 不 close 会锁到 GC。
+            with Image.open(source) as img:
+                splitter = ImageSplitter(
+                    enable_threshold=self.settings.get("splitImageThreshold"),
+                    color_tolerance=self.settings.get("splitImageTolerance"),
+                    blank_ratio=self.settings.get("splitImageBlankRatio"),
+                    min_continuous_blank=self.settings.get("splitImageMinBlank"),
+                )
+                if splitter.need_split(img):
+                    # 用系统 temp 目录而不是 output_dir，处理完自动清理
+                    split_temp_dir = tempfile.mkdtemp(prefix="doc-intake-paddle-split-")
+                    files_to_process = splitter.split_and_save(source, split_temp_dir)
+                    is_split = len(files_to_process) > 1
+                    self.logger.info("图片已分割", count=len(files_to_process))
 
         optional_params = self._build_optional_params()
 
