@@ -46,9 +46,6 @@ class BaseExtractor:
     ) -> ExtractionResult:
         raise NotImplementedError
 
-    def _get_python_path(self) -> str:
-        return self.settings.get("pythonPath", "") or "python"
-
     def _check_file_exists(self, path: str) -> Path:
         p = Path(path)
         if not p.exists():

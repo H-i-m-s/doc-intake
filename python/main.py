@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re as _re
 import sys
 import time
 from contextlib import contextmanager
@@ -275,27 +276,16 @@ def _extract_with_backend(
         raise ValueError(f"不支持的后端: {backend}")
 
 
-def _flatten_media_paths(media_paths) -> list[str]:
-    """把 mediaPathMap (dict 或 list) 拍平成完整路径字符串数组。key (虚拟路径) 丢掉，只留 value。"""
-    if not media_paths:
-        return []
-    if isinstance(media_paths, dict):
-        return list(media_paths.values())
-    if isinstance(media_paths, list):
-        return list(media_paths)
-    return []
-
-
 # 媒体标签 / Markdown 图片 / base64 data URL 三类模式
-_DATA_URL_IMG_MD_RE = __import__("re").compile(r'!\[([^\]]*)\]\((data:[^)]+)\)')
-_DATA_URL_IMG_HTML_RE = __import__("re").compile(r'<img[^>]*\bsrc="(data:[^"]+)"[^>]*>', __import__("re").IGNORECASE)
-_ANY_IMG_MD_RE = __import__("re").compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+_DATA_URL_IMG_MD_RE = _re.compile(r'!\[([^\]]*)\]\((data:[^)]+)\)')
+_DATA_URL_IMG_HTML_RE = _re.compile(r'<img[^>]*\bsrc="(data:[^"]+)"[^>]*>', _re.IGNORECASE)
+_ANY_IMG_MD_RE = _re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
 # <img ...> 整体匹配(为了判断是否要保留 / 抹除)
-_ANY_IMG_HTML_RE = __import__("re").compile(r'<img\b[^>]*>', __import__("re").IGNORECASE)
-_ANY_IMG_HTML_ALT_RE = __import__("re").compile(r'\balt="([^"]*)"', __import__("re").IGNORECASE)
+_ANY_IMG_HTML_RE = _re.compile(r'<img\b[^>]*>', _re.IGNORECASE)
+_ANY_IMG_HTML_ALT_RE = _re.compile(r'\balt="([^"]*)"', _re.IGNORECASE)
 # <video> / <audio> 整标签 — 不抹除,只动 base64 图片
-_VIDEO_TAG_RE = __import__("re").compile(r'<video\b[^>]*>.*?</video>|<video\b[^>]*/>', __import__("re").IGNORECASE | __import__("re").DOTALL)
-_AUDIO_TAG_RE = __import__("re").compile(r'<audio\b[^>]*>.*?</audio>|<audio\b[^>]*/>', __import__("re").IGNORECASE | __import__("re").DOTALL)
+_VIDEO_TAG_RE = _re.compile(r'<video\b[^>]*>.*?</video>|<video\b[^>]*/>', _re.IGNORECASE | _re.DOTALL)
+_AUDIO_TAG_RE = _re.compile(r'<audio\b[^>]*>.*?</audio>|<audio\b[^>]*/>', _re.IGNORECASE | _re.DOTALL)
 
 
 def _strip_data_url_images(markdown: str) -> str:
@@ -306,7 +296,7 @@ def _strip_data_url_images(markdown: str) -> str:
     markdown = _DATA_URL_IMG_MD_RE.sub(r'[图片]', markdown)
     # 抹除 HTML 格式的 base64 图片: <img src="data:...">
     markdown = _DATA_URL_IMG_HTML_RE.sub(r'', markdown)
-    return __import__("re").sub(r'\n{3,}', '\n\n', markdown)
+    return _re.sub(r'\n{3,}', '\n\n', markdown)
 
 
 def _strip_all_image_tags(markdown: str) -> str:
@@ -317,51 +307,7 @@ def _strip_all_image_tags(markdown: str) -> str:
         return markdown
     markdown = _DATA_URL_IMG_MD_RE.sub(r'[图片]', markdown)
     markdown = _ANY_IMG_HTML_RE.sub('', markdown)
-    return __import__("re").sub(r'\n{3,}', '\n\n', markdown)
-
-
-def _replace_image_placeholders(markdown: str, predicate) -> str:
-    """(保留旧 API 用于 batch output 警告文案场景)按出现顺序替换 <img> / ![](url) 为占位文本。"""
-    if not markdown or "<img" not in markdown and "![" not in markdown:
-        return markdown
-    md_iter = _ANY_IMG_MD_RE.finditer(markdown)
-    html_iter = _ANY_IMG_HTML_RE.finditer(markdown)
-    pending = []
-    for m in md_iter:
-        if predicate(m.group(0)):
-            pending.append((m.start(), m.end(), m.group(1) or ""))
-    for m in html_iter:
-        if predicate(m.group(0)):
-            alt_match = _ANY_IMG_HTML_ALT_RE.search(m.group(0))
-            alt = alt_match.group(1) if alt_match else ""
-            pending.append((m.start(), m.end(), alt))
-    if not pending:
-        return markdown
-    pending.sort(key=lambda x: x[0])
-    counter = [0]
-    seen_alts: dict[str, int] = {}
-    def _new_counter() -> int:
-        counter[0] += 1
-        return counter[0]
-    def _placeholder_for(alt: str) -> str:
-        alt = (alt or "").strip()
-        if alt and alt in seen_alts:
-            return f"[图片 {seen_alts[alt]}]"
-        n = _new_counter()
-        if alt:
-            seen_alts[alt] = n
-            return f"[图片 {n}: {alt}]"
-        return f"[图片 {n}]"
-    replacements = [(s, e, _placeholder_for(alt)) for s, e, alt in pending]
-    pieces = []
-    cursor = len(markdown)
-    for start, end, placeholder in reversed(replacements):
-        pieces.append(placeholder)
-        pieces.append(markdown[end:cursor])
-        cursor = start
-    pieces.append(markdown[:cursor])
-    pieces.reverse()
-    return __import__("re").sub(r'\n{3,}', '\n\n', "".join(pieces))
+    return _re.sub(r'\n{3,}', '\n\n', markdown)
 
 
 def format_result(result: ExtractionResult) -> dict:
@@ -488,7 +434,7 @@ def _run(args) -> dict:
         settings=settings,
         page_range=args.page_range,
         language=settings.get("defaultLanguage", "zh"),
-        include_images=settings.get("includeImages", False),
+        include_images=settings.get("includeMedia", settings.get("includeImages", True)),
         available_credentials=available_credentials,
     )
 
@@ -539,7 +485,6 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
     meta = result.metadata or {}
     media_map_for_rewrite = meta.get("mediaMap") or meta.get("imagePathMap")
     if media_map_for_rewrite:
-        import re as _re
         for virtual_path, local_info in media_map_for_rewrite.items():
             # 兼容旧 PaddleOCR dict{local}和新 dict{original: {local_path, kind}}
             if isinstance(local_info, dict) and "local_path" in local_info:

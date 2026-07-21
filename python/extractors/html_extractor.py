@@ -329,11 +329,24 @@ def _process_base64_media(markdown: str, output_dir: str, stem: str) -> tuple[st
             ext = ".svg"
         elif 'video' in mime_type:
             kind = "video"
-            ext_map = {'mp4': '.mp4', 'webm': '.webm', 'ogg': '.ogv', 'quicktime': '.mov'}
+            # mime 子串 → 扩展名。需要覆盖 video/webm、video/ogg、video/quicktime。
+            # key 用 mime 子串中的独特字串,确保 'webm' 不会误伤 'image/webp' 等场景。
+            ext_map = {
+                'webm': '.webm',
+                'ogg': '.ogv',
+                'quicktime': '.mov',
+                'mp4': '.mp4',
+            }
             ext = next((v for k, v in ext_map.items() if k in mime_type), '.mp4')
         elif 'audio' in mime_type:
             kind = "audio"
-            ext_map = {'mpeg': '.mp3', 'mp3': '.mp3', 'ogg': '.ogg', 'wav': '.wav', 'aac': '.aac'}
+            ext_map = {
+                'mpeg': '.mp3',
+                'mp3': '.mp3',
+                'ogg': '.ogg',
+                'wav': '.wav',
+                'aac': '.aac',
+            }
             ext = next((v for k, v in ext_map.items() if k in mime_type), '.mp3')
         elif 'png' in mime_type:
             kind = "image"

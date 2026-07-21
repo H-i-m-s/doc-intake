@@ -148,7 +148,7 @@ class PdfExtractor(BaseExtractor):
 
     def _extract_page_images(self, page, page_num: int, media_dir, doc, source: str) -> list[str]:
         """从单页提取内嵌图片。已提取过的不重复。"""
-        if images_dir is None:
+        if media_dir is None:
             return []
 
         saved: list[str] = []

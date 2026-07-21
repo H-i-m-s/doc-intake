@@ -600,7 +600,7 @@ class PptxExtractor(BaseExtractor):
             child_tag = _local_name(child.tag)
             if child_tag in ("videoFile", "audioFile"):
                 ref = self._extract_link_media(
-                    child, media_records, zf, stem, slide_path, link_attr="link"
+                    child, media_records, zf, stem, slide_path
                 )
                 if ref:
                     parts.append(ref)
@@ -736,13 +736,13 @@ class PptxExtractor(BaseExtractor):
             tag = _local_name(child.tag)
             if tag == "videoFile":
                 ref = self._extract_link_media(
-                    child, media_records, zf, stem, slide_path, link_attr="link"
+                    child, media_records, zf, stem, slide_path
                 )
                 if ref:
                     parts.append(ref)
             elif tag == "audioFile":
                 ref = self._extract_link_media(
-                    child, media_records, zf, stem, slide_path, link_attr="link"
+                    child, media_records, zf, stem, slide_path
                 )
                 if ref:
                     parts.append(ref)
@@ -860,9 +860,9 @@ class PptxExtractor(BaseExtractor):
                     )
         return None
 
-    def _extract_link_media(self, elem, media_records, zf, stem, slide_path, link_attr="link"):
+    def _extract_link_media(self, elem, media_records, zf, stem, slide_path):
         """处理 videoFile / audioFile 节点,按 r:link 找 rels 中的媒体。"""
-        rid = elem.get(f"{_R_NS}{link_attr}", "")
+        rid = elem.get(f"{_R_NS}link", "")
         if rid and zf and slide_path:
             return self._resolve_media_ref(rid, media_records, zf, stem, slide_path, use_link=True)
         return None
@@ -943,7 +943,6 @@ class PptxExtractor(BaseExtractor):
 
                 # EMF/WMF:原扩展名存为 raw_,然后尝试转 PNG,失败则保留原 EMF/WMF
                 if ext in (".emf", ".wmf"):
-                    png_path = media_dir / media_filename("image", 0, ".png")  # 占位
                     # 用 new_name 已定为 .png,直接把 out_path 当 raw 转
                     raw_path = out_path.with_suffix(ext)
                     try:
