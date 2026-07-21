@@ -83,7 +83,6 @@ class XlsxExtractor(BaseExtractor):
                 media_files = self._sort_media_by_drawings(zf, names, media_files)
                 media_list = extract_and_convert_media(media_files, zf, output_dir or "", path.stem)
                 result.images = [m.local_path for m in media_list]
-                result.media_kinds = [m.kind for m in media_list]
 
             # 解析媒体锚定位置(按 1-based 编号,按 sheet 分组)
             media_anchors: dict[str, dict[str, int]] = {}

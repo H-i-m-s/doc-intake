@@ -197,22 +197,37 @@ async function runOne(chunk, input, ctx) {
 
 function addGuideText(result) {
   const mediaPaths = result.metadata?.mediaPaths;
-  const mediaKinds = result.metadata?.mediaKinds;
   const count = Array.isArray(mediaPaths) ? mediaPaths.length : 0;
   if (count > 0) {
+    // 按文件扩展名推断 kind — 不依赖上游传 kind 字段
     const kindCounts = { image: 0, video: 0, audio: 0, other: 0 };
-    if (Array.isArray(mediaKinds)) {
-      for (const k of mediaKinds) {
-        if (kindCounts[k] === undefined) kindCounts.other += 1;
-        else kindCounts[k] += 1;
-      }
-    } else {
-      // 兜底:没有 kinds 时全当 image
-      kindCounts.image = count;
+    for (const p of mediaPaths) {
+      const k = classifyByExt(p);
+      kindCounts[k] += 1;
     }
     result.markdown = appendMediaGuide(result.markdown, count, kindCounts);
   }
   return result;
+}
+
+const _IMAGE_EXT = new Set([
+  "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg",
+  "tif", "tiff", "emf", "wmf", "wdp",
+]);
+const _VIDEO_EXT = new Set([
+  "mp4", "mov", "webm", "m4v", "avi", "wmv",
+]);
+const _AUDIO_EXT = new Set([
+  "mp3", "wav", "m4a", "ogg", "flac", "aac",
+]);
+
+function classifyByExt(path) {
+  const m = String(path).toLowerCase().match(/\.([a-z0-9]+)$/);
+  const ext = m ? m[1] : "";
+  if (_IMAGE_EXT.has(ext)) return "image";
+  if (_VIDEO_EXT.has(ext)) return "video";
+  if (_AUDIO_EXT.has(ext)) return "audio";
+  return "other";
 }
 
 async function processFiles(chunks, input, ctx, settings) {
@@ -282,7 +297,6 @@ function buildResult(chunks, results, settings = {}) {
           mdPath: m.mdPath ?? null,
           imagesDir: m.imagesDir ?? null,
           mediaPaths: m.mediaPaths ?? [],
-          mediaKinds: m.mediaKinds ?? [],
           format: m.format ?? null,
           reader: m.reader ?? null,
           backendChain: m.backendChain ?? null,
@@ -329,7 +343,6 @@ function buildResult(chunks, results, settings = {}) {
         mdPath: chunkMdPath,
         imagesDir: chunkImagesDir,
         mediaPaths: m.mediaPaths ?? [],
-        mediaKinds: m.mediaKinds ?? [],
         format: m.format ?? null,
         reader: m.reader ?? null,
         backendChain: m.backendChain ?? null,
@@ -345,7 +358,6 @@ function buildResult(chunks, results, settings = {}) {
     const detailFiles = filesOut.map(f => {
       const m = {
         mediaPaths: f.mediaPaths ?? [],
-        mediaKinds: f.mediaKinds ?? [],
         outputDir: f.outputDir,
         format: f.format,
         reader: f.reader,

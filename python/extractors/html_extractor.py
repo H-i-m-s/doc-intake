@@ -475,7 +475,6 @@ class HtmlExtractor(BaseExtractor):
             )
             for m in base64_media:
                 result.images.append(m.local_path)
-                result.media_kinds.append(m.kind)
 
         # 下载远程媒体(图/音视频)
         if include_images and output_dir:
@@ -484,7 +483,6 @@ class HtmlExtractor(BaseExtractor):
             )
             for m in downloaded:
                 result.images.append(m.local_path)
-                result.media_kinds.append(m.kind)
 
             # 把 markdown 中 <video src="URL"> / <audio src="URL"> 的 URL 替换为本地路径
             if downloaded:

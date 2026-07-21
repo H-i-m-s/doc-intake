@@ -317,7 +317,6 @@ doc-intake/
   "markdown": "# report.pdf\n\n提取的完整内容...",
   "metadata": {
     "mediaPaths": ["/path/to/report_media/image_001.png"],
-    "mediaKinds": ["image"],
     "format": "pdf",
     "reader": "mineru",
     "backendChain": ["mineru", "paddleocr", "local"],

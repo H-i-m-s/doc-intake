@@ -324,10 +324,9 @@ def format_result(result: ExtractionResult) -> dict:
         cleaned_markdown = _strip_data_url_images(raw_markdown)
 
     # 给 JS 端用的结构。metadata 字段顺序与本地 JSON 对齐，多 mdPath/imagesDir 给批量模式用。
-    # mediaPaths / mediaKinds 与 result.images / result.media_kinds 对齐。
+    # mediaPaths 与 result.images 对齐。JS 端按文件扩展名推断 kind。
     compact_meta = {
         "mediaPaths": list(result.images or []),
-        "mediaKinds": list(result.media_kinds or []),
         "format": meta.get("format"),
         "reader": meta.get("reader"),
         "backendChain": meta.get("backendChain"),
@@ -528,7 +527,6 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                 "content": final_markdown,
                 "metadata": {
                     "mediaPaths": list(result.images or []),
-                    "mediaKinds": list(result.media_kinds or []),
                     "format": meta.get("format"),
                     "reader": meta.get("reader"),
                     "backendChain": meta.get("backendChain"),

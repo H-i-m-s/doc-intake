@@ -110,7 +110,6 @@ class PptxExtractor(BaseExtractor):
                     media_records, zf, output_dir, path.stem
                 )
                 result.images = [m.local_path for m in extracted]
-                result.media_kinds = [m.kind for m in extracted]
 
         result.metadata = {
             "format": "pptx",
@@ -922,7 +921,7 @@ class PptxExtractor(BaseExtractor):
     def _extract_files(self, media_records, zf, output_dir, stem):
         """从 zip 抽所有媒体文件到 {stem}_media/ 目录,EMF/WMF 转 PNG。
 
-        返回 list[ExtractedMedia],用于填 result.images / result.media_kinds。
+        返回 list[ExtractedMedia],用于填 result.images。
         """
         media_dir = Path(output_dir) / f"{stem}_media"
         media_dir.mkdir(parents=True, exist_ok=True)

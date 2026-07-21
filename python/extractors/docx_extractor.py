@@ -72,7 +72,6 @@ class DocxExtractor(BaseExtractor):
                 media_files = self._sort_media_by_refs(zf, media_files)
                 media_list = extract_and_convert_media(media_files, zf, output_dir or "", path.stem)
                 result.images = [m.local_path for m in media_list]
-                result.media_kinds = [m.kind for m in media_list]
 
             # 构建媒体映射: original zip 路径 -> ExtractedMedia
             media_map: dict[str, ExtractedMedia] = (

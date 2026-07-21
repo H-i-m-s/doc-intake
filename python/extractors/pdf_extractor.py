@@ -224,8 +224,6 @@ class PdfExtractor(BaseExtractor):
                 + "\n".join(page_chunks)
             )
             result.images = saved_images
-            # PDF 本地档只抽图(视频音频在 PDF 中概念上不常见,本地档不强抽)
-            result.media_kinds = ["image"] * len(saved_images)
             result.warnings = warnings
             result.metadata = {
                 "format": "pdf",
