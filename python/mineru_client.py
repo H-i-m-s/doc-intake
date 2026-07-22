@@ -209,8 +209,11 @@ class MinerUClient:
                 raw_images = list(extract_result.images)
                 self.logger.debug("收集图片", count=len(raw_images))
 
-            stem = Path(source).stem
-            normalized_images = normalize_images(raw_images, output_dir, stem)
+            stem = self.settings.get("outputStem") or Path(source).stem
+            media_prefix = self.settings.get("mediaPrefix", "")
+            normalized_images = normalize_images(
+                raw_images, output_dir, stem, media_prefix=media_prefix
+            )
             result.images = normalized_images
 
             # 构建虚拟路径 → 本地路径 映射，供 main.py 重写 markdown <img src>

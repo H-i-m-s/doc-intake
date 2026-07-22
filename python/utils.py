@@ -18,6 +18,7 @@ def normalize_images(
     output_dir: str,
     stem: str,
     cleanup_temps: bool = True,
+    media_prefix: str = "",
 ) -> List[str]:
     """
     归一化媒体路径：统一放到 {stem}_media/ 目录
@@ -30,6 +31,7 @@ def normalize_images(
         output_dir: 输出目录
         stem: 文件名前缀（不含扩展名）
         cleanup_temps: 是否清理临时文件（分割产生的）
+        media_prefix: 媒体文件名前缀，用于并发分块结果去重
 
     Returns:
         归一化后的本地路径列表
@@ -55,7 +57,7 @@ def normalize_images(
                 continue
             # 用 virtual_path 的 basename 当文件名，避免重名覆盖
             base = Path(virtual_path).name if virtual_path else f"{i:03d}.jpg"
-            dest = media_dir / base
+            dest = media_dir / f"{media_prefix}{base}"
             try:
                 # 用 with 让 Response 走完流程后立刻释放连接,
                 # 避免 HTTP 连接池被占满 / 流未释放。
@@ -70,7 +72,7 @@ def normalize_images(
         # mineru.Image 对象（name, data, path）—— 用 Image.name 当文件名（保留原扩展名）
         if hasattr(img, "data") and hasattr(img, "path") and hasattr(img, "name"):
             try:
-                dest = media_dir / img.name
+                dest = media_dir / f"{media_prefix}{Path(img.name).name}"
                 img.save(str(dest))
                 saved_paths.append(str(dest))
             except Exception as e:
@@ -79,7 +81,7 @@ def normalize_images(
 
         # string/Path 格式（保留原逻辑）
         filename = f"{i:03d}.png"
-        dest = media_dir / filename
+        dest = media_dir / f"{media_prefix}{filename}"
 
         try:
             if isinstance(img, str) and img.startswith("http"):

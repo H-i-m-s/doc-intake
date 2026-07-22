@@ -183,9 +183,14 @@ class PaddleClient:
                 shutil.rmtree(split_temp_dir, ignore_errors=True)
 
         # 归一化图片路径
-        stem = Path(source).stem
+        stem = self.settings.get("outputStem") or Path(source).stem
+        media_prefix = self.settings.get("mediaPrefix", "")
         normalized_images = normalize_images(
-            all_raw_images, output_dir, stem, cleanup_temps=is_split
+            all_raw_images,
+            output_dir,
+            stem,
+            cleanup_temps=is_split,
+            media_prefix=media_prefix,
         )
 
         # 构建虚拟路径 -> 本地路径 映射，供 main.py 重写 markdown <img src>

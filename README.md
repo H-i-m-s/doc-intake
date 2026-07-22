@@ -320,6 +320,8 @@ doc-intake/
 | `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF（按 `splitChunkPages` 切分，多路并发可计入 `maxConcurrent`）。 |
 | `splitChunkPages` | `number` | `180` | 切割时每块页数（小于 MinerU 200 页限制）。 |
 
+大 PDF 的切割只用于云端上传，chunk 不会作为用户输出文件。所有 chunk 的识别结果会在插件内部按原 PDF 顺序合并后，再统一保存为一个 Markdown/JSON 文件；媒体也会直接写入原 PDF 对应的唯一 `{原文件名}_media/` 目录，并使用 chunk 前缀避免重名。插件不会先生成 chunk Markdown/JSON 再做文件级后处理。
+
 #### 本地档（PyMuPDF）的限制
 
 `local` 是 PDF 降级链的最末档 — 基于 PyMuPDF 直接读 PDF 内嵌文本和图片。它不调用云端 API，但有以下能力边界：
@@ -421,16 +423,16 @@ doc-intake/
 
 ```
 outputDir/
-├── 文件名.md              ← Markdown 内容
-├── 文件名.json            ← 结构化 JSON（仅 saveJson=true）
-└── 文件名_media/          ← 媒体目录
+├── 文件名.pdf.md          ← 完整合并后的 Markdown
+├── 文件名.pdf.json        ← 完整合并后的 JSON（仅 saveJson=true 时）
+└── 文件名_media/          ← 唯一媒体目录
     ├── image_001.png
     ├── image_002.jpg
     ├── video_001.mp4
     └── audio_001.flac
 ```
 
-媒体命名规则：按类型分别连续编号，`image_NNN.ext` / `video_NNN.ext` / `audio_NNN.ext`。
+媒体命名规则：普通文档按类型分别连续编号，`image_NNN.ext` / `video_NNN.ext` / `audio_NNN.ext`；分块 PDF 会增加 `chunk_NNN_` 前缀，例如 `chunk_001_image_001.jpg`，避免并发分块之间覆盖。
 
 ### Markdown 中的媒体引用格式
 

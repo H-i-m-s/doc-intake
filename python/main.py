@@ -310,7 +310,35 @@ def _strip_all_image_tags(markdown: str) -> str:
     return _re.sub(r'\n{3,}', '\n\n', markdown)
 
 
-def format_result(result: ExtractionResult) -> dict:
+def _rewrite_media_paths(markdown: str, metadata: dict, stem: str) -> str:
+    """将后端虚拟媒体路径改成统一输出目录下的相对路径。"""
+    if not markdown:
+        return markdown
+    media_map = metadata.get("mediaMap") or metadata.get("imagePathMap") or {}
+    if not media_map:
+        return markdown
+
+    for virtual_path, local_info in media_map.items():
+        if isinstance(local_info, dict) and "local_path" in local_info:
+            local_name = Path(local_info["local_path"]).name
+        else:
+            local_name = Path(str(local_info)).name
+        rel = f"{stem}_media/{local_name}"
+        vp_escaped = _re.escape(virtual_path)
+        markdown = _re.sub(
+            rf'src="{vp_escaped}"',
+            f'src="{rel}"',
+            markdown,
+        )
+        markdown = _re.sub(
+            rf'\]\({vp_escaped}(\s+[^)]*)?\)',
+            f']({rel}\\1)',
+            markdown,
+        )
+    return markdown
+
+
+def format_result(result: ExtractionResult):
     """返回给 JS 端的 dict，结构与本地 JSON 的 metadata 对齐（顶层有 name/outputDir/markdown/metadata）。"""
     meta = result.metadata or {}
 
@@ -352,6 +380,9 @@ def main():
     parser.add_argument("--output-dir", help="输出目录")
     parser.add_argument("--page-range", help="PDF 页码范围")
     parser.add_argument("--split-only", action="store_true", help="仅做图片分割，不调用后端")
+    parser.add_argument("--defer-save", action="store_true", help="延迟保存，由 JS 聚合后统一落盘")
+    parser.add_argument("--output-stem", help="统一输出文件 stem（用于分块结果）")
+    parser.add_argument("--media-prefix", default="", help="媒体文件名前缀（用于分块结果去重）")
 
     args = parser.parse_args()
 
@@ -378,6 +409,10 @@ def _run(args) -> dict:
 
     file_type = detect_file_type(args.source)
     output_dir = determine_output_dir(args, settings)
+    if args.defer_save and args.output_stem:
+        settings["outputStem"] = args.output_stem
+    if args.media_prefix:
+        settings["mediaPrefix"] = args.media_prefix
 
     # 仅做图片分割，不调用后端
     if args.split_only:
@@ -441,9 +476,19 @@ def _run(args) -> dict:
         available_credentials=available_credentials,
     )
 
-    if output_dir and result.markdown:
+    if output_dir and settings.get("outputStem"):
+        result.markdown = _rewrite_media_paths(
+            result.markdown,
+            result.metadata or {},
+            settings["outputStem"],
+        )
+
+    if output_dir and result.markdown and not args.defer_save:
         result.name = args.source
         save_result(result, args.source, output_dir, settings.get("saveJson", False))
+    elif args.defer_save:
+        result.output_dir = output_dir
+        result.name = args.source
 
     duration = time.time() - start_time
     log.log_response(

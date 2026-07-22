@@ -144,7 +144,8 @@ class PdfExtractor(BaseExtractor):
 
             saved_images: list[str] = []
             media_dir: Optional[Path] = None
-            stem = Path(source).stem
+            stem = self.settings.get("outputStem") or Path(source).stem
+            media_prefix = self.settings.get("mediaPrefix", "")
             if include_images and output_dir:
                 media_dir = Path(output_dir) / f"{stem}_media"
                 media_dir.mkdir(parents=True, exist_ok=True)
@@ -181,7 +182,7 @@ class PdfExtractor(BaseExtractor):
                 page_images_with_pos: list[tuple[float, str, str]] = []
                 if include_images:
                     page_images_with_pos, page_local_paths = self._extract_page_images(
-                        page, page_num, media_dir, doc, stem
+                        page, page_num, media_dir, doc, stem, media_prefix
                     )
                     saved_images.extend(page_local_paths)
 
@@ -291,6 +292,7 @@ class PdfExtractor(BaseExtractor):
         media_dir: Optional[Path],
         doc,
         stem: str,
+        media_prefix: str = "",
     ) -> tuple[list[tuple[float, str, str]], list[str]]:
         """从单页提取实际显示的内嵌图片。
 
@@ -335,7 +337,7 @@ class PdfExtractor(BaseExtractor):
                 )
                 continue
 
-            out_name = f"page{page_num:03d}_xref{xref}.{ext}"
+            out_name = f"{media_prefix}page{page_num:03d}_xref{xref}.{ext}"
             out_path = media_dir / out_name
             out_path.write_bytes(img_bytes)
             rel = f"{stem}_media/{out_name}"

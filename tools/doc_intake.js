@@ -4,7 +4,7 @@ import { getSettings } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
 import { appendMediaGuide } from "../lib/doc-intake-helpers.js";
 import { spawn } from "node:child_process";
-import { statSync, readdirSync, rmSync } from "node:fs";
+import { statSync, readdirSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { extname, join, dirname } from "node:path";
 
 const SUPPORTED_EXTS = new Set([
@@ -112,8 +112,16 @@ async function preflightSplit(sources, settings, ctx) {
       continue;
     }
     const stem = src.replace(/\\/g, "/").split("/").pop().replace(/\.pdf$/i, "");
-    for (const p of splitPaths) {
-      chunks.push({ source: p, parentStem: stem, parentSource: src });
+    for (let i = 0; i < splitPaths.length; i++) {
+      const p = splitPaths[i];
+      chunks.push({
+        source: p,
+        parentStem: stem,
+        parentSource: src,
+        deferSave: true,
+        outputStem: stem,
+        mediaPrefix: `chunk_${String(i + 1).padStart(3, "0")}_`,
+      });
     }
   }
   return { chunks, splitInvoked: true };
@@ -176,7 +184,13 @@ function runSplitCli(pdfSources, pagesPerChunk, settings) {
 
 async function runOne(chunk, input, ctx) {
   try {
-    const r = await extractDocument({ ...input, source: chunk.source }, ctx);
+    const r = await extractDocument({
+      ...input,
+      source: chunk.source,
+      _deferSave: chunk.deferSave,
+      _outputStem: chunk.outputStem,
+      _mediaPrefix: chunk.mediaPrefix,
+    }, ctx);
     return {
       ok: true,
       source: chunk.source,
@@ -196,7 +210,9 @@ async function runOne(chunk, input, ctx) {
 }
 
 function addGuideText(result) {
-  const mediaPaths = result.metadata?.mediaPaths;
+  const mediaPaths = Array.isArray(result.mediaPaths)
+    ? result.mediaPaths
+    : result.metadata?.mediaPaths;
   const count = Array.isArray(mediaPaths) ? mediaPaths.length : 0;
   if (count > 0) {
     // 按文件扩展名推断 kind — 不依赖上游传 kind 字段
@@ -230,6 +246,57 @@ function classifyByExt(path) {
   return "other";
 }
 
+function replaceChunkSource(markdown, chunkSource, parentSource) {
+  if (!markdown || !chunkSource || !parentSource) return markdown;
+  const variants = new Set([
+    String(chunkSource),
+    String(chunkSource).replace(/\\/g, "/"),
+  ]);
+  let rewritten = markdown;
+  for (const variant of variants) {
+    rewritten = rewritten.split(variant).join(parentSource);
+  }
+  return rewritten;
+}
+
+function persistMergedOutput(file, saveJson) {
+  if (!file.outputDir || !file.markdown) return;
+
+  const outputDir = file.outputDir;
+  const filename = String(file.name).replace(/\\/g, "/").split("/").pop();
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const mdPath = join(outputDir, `${filename}.md`);
+  const imagesDir = file.mediaPaths?.length > 0
+    ? join(outputDir, `${stem}_media`)
+    : null;
+
+  mkdirSync(outputDir, { recursive: true });
+  writeFileSync(mdPath, file.markdown, "utf8");
+
+  file.mdPath = mdPath;
+  file.imagesDir = imagesDir;
+
+  if (saveJson) {
+    const jsonPath = join(outputDir, `${filename}.json`);
+    const jsonData = {
+      content: file.markdown,
+      metadata: {
+        mediaPaths: file.mediaPaths ?? [],
+        format: file.format ?? null,
+        reader: file.reader ?? null,
+        backendChain: file.backendChain ?? null,
+        warnings: file.warnings ?? [],
+        usedBackendInChain: file.usedBackendInChain ?? null,
+        mdPath,
+        imagesDir,
+        chunkCount: file.chunkCount ?? null,
+      },
+    };
+    writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2), "utf8");
+    file.jsonPath = jsonPath;
+  }
+}
+
 async function processFiles(chunks, input, ctx, settings) {
   // 双池并发：API 池 + Local 池，按 entryBackendKind 分类
   const apiSem = new Semaphore(input._apiConcurrency ?? 4);
@@ -248,167 +315,164 @@ async function processFiles(chunks, input, ctx, settings) {
   });
 }
 
-function buildResult(chunks, results, settings = {}) {
-  // 同 parentStem 的 chunks 合并输出：按 chunk index 排序拼 markdown + 拼 images
-  const bySource = new Map();
-  for (const r of results) {
-    bySource.set(r.source, r);
-  }
-
-  // 合并后的"虚拟 file list"：每个 parentSource 出现一次（如果它有 chunks），原 file 也算
+function buildResult(chunks, results, settings = {}, saveJson = false) {
+  // 每个 parentSource 只生成一个逻辑文件；chunk 仅参与云端传输和内存结果聚合。
   const fileOrder = [];
   const seen = new Set();
-  for (const c of chunks) {
-    const key = c.parentSource ?? c.source;
+  const mergedByFile = new Map();
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const key = chunk.parentSource ?? chunk.source;
     if (!seen.has(key)) {
       seen.add(key);
       fileOrder.push(key);
     }
-  }
-
-  // 对每个 parent source：合并 chunks markdown、按顺序串 images
-  const mergedByFile = new Map();
-  for (let i = 0; i < chunks.length; i++) {
-    const c = chunks[i];
-    const r = results[i];
-    const key = c.parentSource ?? c.source;
     if (!mergedByFile.has(key)) {
       mergedByFile.set(key, { chunks: [], results: [] });
     }
-    const e = mergedByFile.get(key);
-    e.chunks.push(c);
-    e.results.push(r);
+    const group = mergedByFile.get(key);
+    group.chunks.push(chunk);
+    group.results.push(results[i]);
   }
 
-  const summaryThreshold = settings.summaryThreshold ?? 3;
-  const isBatch = fileOrder.length >= summaryThreshold;
   const filesOut = [];
-  for (const f of fileOrder) {
-    const grp = mergedByFile.get(f);
-    if (grp.chunks.length === 1 && !grp.chunks[0].parentStem) {
-      // 单文件，无 split
-      const r = grp.results[0];
-      if (r.ok) {
-        const m = r.result.metadata ?? {};
-        const r2 = addGuideText(r.result);
+  for (const source of fileOrder) {
+    const group = mergedByFile.get(source);
+    const isSplit = group.chunks.some((chunk) => chunk.parentStem);
+
+    if (!isSplit) {
+      const item = group.results[0];
+      if (!item.ok) {
+        const errMsg = item.error?.message ?? "未知错误";
         filesOut.push({
-          name: f,
-          outputDir: r.result.outputDir ?? null,
-          mdPath: m.mdPath ?? null,
-          imagesDir: m.imagesDir ?? null,
-          mediaPaths: m.mediaPaths ?? [],
-          format: m.format ?? null,
-          reader: m.reader ?? null,
-          backendChain: m.backendChain ?? null,
-          warnings: m.warnings ?? [],
-          usedBackendInChain: m.usedBackendInChain ?? null,
-          markdown: r2.markdown ?? "",
-        });
-      } else {
-        const errMsg = r.error?.message ?? "未知错误";
-        filesOut.push({
-          name: f,
+          name: source,
           status: "failed",
           error: errMsg,
           warnings: [errMsg],
           markdown: `❌ 解析失败: ${errMsg}`,
         });
+        continue;
       }
-    } else {
-      // 多 chunk 合并
-      const mk = [];
-      const ws = [];
-      let meta = null;
-      let chunkOutputDir = null;
-      let chunkMdPath = null;
-      let chunkImagesDir = null;
-      for (const r of grp.results) {
-        if (r.ok) {
-          mk.push(r.result.markdown ?? "");
-          const rm = r.result.metadata ?? {};
-          ws.push(...(rm.warnings ?? []));
-          meta = r.result.metadata ?? meta;
-          if (!chunkOutputDir) chunkOutputDir = r.result.outputDir ?? null;
-          if (!chunkMdPath) chunkMdPath = rm.mdPath ?? null;
-          if (!chunkImagesDir) chunkImagesDir = rm.imagesDir ?? null;
-        } else {
-          ws.push(`chunk ${r.source}: ${r.error?.message ?? "未知错误"}`);
-        }
-      }
-      const mergedMarkdown = mk.filter(Boolean).join("\n\n---\n\n");
-      const m = meta ?? {};
+
+      const metadata = item.result.metadata ?? {};
+      const result = addGuideText(item.result);
       filesOut.push({
-        name: f,
-        outputDir: chunkOutputDir,
-        mdPath: chunkMdPath,
-        imagesDir: chunkImagesDir,
-        mediaPaths: m.mediaPaths ?? [],
-        format: m.format ?? null,
-        reader: m.reader ?? null,
-        backendChain: m.backendChain ?? null,
-        warnings: ws,
-        usedBackendInChain: m.usedBackendInChain ?? null,
-        markdown: mergedMarkdown,
+        name: source,
+        outputDir: result.outputDir ?? null,
+        mdPath: metadata.mdPath ?? null,
+        imagesDir: metadata.imagesDir ?? null,
+        mediaPaths: metadata.mediaPaths ?? [],
+        format: metadata.format ?? null,
+        reader: metadata.reader ?? null,
+        backendChain: metadata.backendChain ?? null,
+        warnings: metadata.warnings ?? [],
+        usedBackendInChain: metadata.usedBackendInChain ?? null,
+        markdown: result.markdown ?? "",
       });
+      continue;
     }
+
+    const markdownParts = [];
+    const warnings = [];
+    const mediaPaths = [];
+    let outputDir = null;
+    let format = null;
+    let reader = null;
+    let backendChain = null;
+    let usedBackendInChain = null;
+
+    for (const item of group.results) {
+      if (!item.ok) {
+        warnings.push(`chunk ${item.source}: ${item.error?.message ?? "未知错误"}`);
+        continue;
+      }
+      const result = item.result;
+      const metadata = result.metadata ?? {};
+      if (result.markdown) {
+        markdownParts.push(
+          replaceChunkSource(result.markdown, item.source, source),
+        );
+      }
+      warnings.push(...(metadata.warnings ?? []));
+      mediaPaths.push(...(metadata.mediaPaths ?? []));
+      outputDir ??= result.outputDir ?? null;
+      format ??= metadata.format ?? null;
+      reader ??= metadata.reader ?? null;
+      backendChain ??= metadata.backendChain ?? null;
+      usedBackendInChain ??= metadata.usedBackendInChain ?? null;
+    }
+
+    const merged = {
+      name: source,
+      outputDir,
+      format,
+      reader,
+      backendChain,
+      warnings,
+      usedBackendInChain,
+      mediaPaths,
+      chunkCount: group.chunks.length,
+      markdown: markdownParts.filter(Boolean).join("\n\n---\n\n"),
+    };
+    addGuideText(merged);
+
+    // 分块结果在这里才第一次落盘，Python 阶段不会生成 chunk 级 md/json。
+    persistMergedOutput(merged, saveJson);
+    filesOut.push(merged);
   }
+
+  const summaryThreshold = settings.summaryThreshold ?? 3;
+  const isBatch = fileOrder.length >= summaryThreshold;
 
   if (!isBatch) {
-    // 单文件 / <summaryThreshold：每项含 markdown + chain metadata，无 mdPath/imagesDir。
-    const detailFiles = filesOut.map(f => {
-      const m = {
-        mediaPaths: f.mediaPaths ?? [],
-        outputDir: f.outputDir,
-        format: f.format,
-        reader: f.reader,
-        backendChain: f.backendChain,
-        warnings: f.warnings,
-        usedBackendInChain: f.usedBackendInChain,
+    const detailFiles = filesOut.map((file) => {
+      const metadata = {
+        mediaPaths: file.mediaPaths ?? [],
+        outputDir: file.outputDir ?? null,
+        format: file.format ?? null,
+        reader: file.reader ?? null,
+        backendChain: file.backendChain ?? null,
+        warnings: file.warnings ?? [],
+        usedBackendInChain: file.usedBackendInChain ?? null,
       };
-      return { name: f.name, markdown: f.markdown ?? "", metadata: m };
+      if (file.mdPath) metadata.mdPath = file.mdPath;
+      if (file.imagesDir) metadata.imagesDir = file.imagesDir;
+      if (file.jsonPath) metadata.jsonPath = file.jsonPath;
+      return { name: file.name, markdown: file.markdown ?? "", metadata };
     });
-    // 单文件：顶层直接是 object（不走 array 包装，与本地 JSON 形式对齐）
-    if (detailFiles.length === 1) {
-      return toToolResult(detailFiles[0]);
-    }
-    // 多文件 (<summaryThreshold)：顶层 array，每项同单文件结构
-    return toToolResult(detailFiles);
+    return detailFiles.length === 1
+      ? toToolResult(detailFiles[0])
+      : toToolResult(detailFiles);
   }
 
-  // 批量 (>=summaryThreshold)：顶层 array，每项去掉 markdown/mediaPaths，加 mdPath/imagesDir（有图时），省 context。
-  const summary = [];
-  for (const f of filesOut) {
-    const ok = !f.warnings || f.warnings.length === 0;
-    summary.push(
-      `${ok ? "✅" : "❌"} ${f.name}${ok ? "" : " — " + (f.warnings[0] ?? "失败")}`,
-    );
-  }
-  const successCount = filesOut.filter((f) => !f.warnings || f.warnings.length === 0).length;
-  const summaryMarkdown = [
-    `处理完成：${successCount}/${filesOut.length} 个文件成功`,
-    "",
-    ...summary,
-  ].join("\n");
-  const summaryFiles = filesOut.map(f => {
-    const m = {
-      outputDir: f.outputDir,
-      mdPath: f.mdPath,
-      format: f.format,
-      reader: f.reader,
-      backendChain: f.backendChain,
-      warnings: f.warnings,
-      usedBackendInChain: f.usedBackendInChain,
-    };
-    if (f.imagesDir) m.imagesDir = f.imagesDir;
-    return { name: f.name, metadata: m };
+  const summary = filesOut.map((file) => {
+    const ok = !file.warnings || file.warnings.length === 0;
+    return `${ok ? "✅" : "❌"} ${file.name}${ok ? "" : " — " + (file.warnings[0] ?? "失败")}`;
   });
+  const successCount = filesOut.filter((file) => !file.warnings || file.warnings.length === 0).length;
+  const summaryFiles = filesOut.map((file) => {
+    const metadata = {
+      outputDir: file.outputDir ?? null,
+      mdPath: file.mdPath ?? null,
+      format: file.format ?? null,
+      reader: file.reader ?? null,
+      backendChain: file.backendChain ?? null,
+      warnings: file.warnings ?? [],
+      usedBackendInChain: file.usedBackendInChain ?? null,
+    };
+    if (file.imagesDir) metadata.imagesDir = file.imagesDir;
+    if (file.jsonPath) metadata.jsonPath = file.jsonPath;
+    return { name: file.name, metadata };
+  });
+
   return toToolResult({
-    markdown: summaryMarkdown,
+    markdown: [`处理完成：${successCount}/${filesOut.length} 个文件成功`, "", ...summary].join("\n"),
     metadata: {
       batch: true,
       count: filesOut.length,
       success: successCount,
-      preflightSplit: chunks.some((c) => c.parentStem) ? true : false,
+      preflightSplit: chunks.some((chunk) => chunk.parentStem),
       summaryThreshold,
     },
     files: summaryFiles,
@@ -480,9 +544,12 @@ export async function execute(input = {}, ctx) {
     const chunks = preflight.chunks;
 
     const results = await processFiles(chunks, enrichedInput, ctx, settings);
+    const shouldSaveJson = input.saveJson !== undefined
+      ? input.saveJson
+      : settings.saveJson;
     let builtResult;
     try {
-      builtResult = buildResult(chunks, results, settings);
+      builtResult = buildResult(chunks, results, settings, shouldSaveJson);
     } finally {
       // 总是清理 preflight 出去的 chunks（即使 buildResult 抛错）。
       // 只清 chunks（parentStem 非空的），不动用户原始文件。

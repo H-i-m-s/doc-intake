@@ -63,22 +63,24 @@ PDF / DOCX / PPTX / PPT / XLSX / XLSM / HTML / HTM / JPG / JPEG / PNG / BMP / TI
 
 **批量（≥ 3 个文件 / 用户设置 `summaryThreshold`）**：只返回文件列表和处理结果概览，**不返回具体 markdown**——具体内容需查看本地保存的文件。
 
+大 PDF 的分块只用于云端上传；插件会在内部按原 PDF 顺序合并所有 chunk 结果，再统一生成一个原文件对应的 Markdown/JSON 和唯一媒体目录，不会把 chunk 结果作为本地输出文件。
+
 > 上面这条很重要。批量场景下不要期待 agent 拿到内容。
 
 ### 输出文件结构（保存到本地时）
 
 ```
 outputDir/
-├── 文件名.md          ← markdown（原始文件名 + .md 后缀）
-├── 文件名.json        ← JSON（仅 saveJson=true 时）
-└── 文件名_media/      ← 媒体目录（图/视频/音频都在这里）
+├── 文件名.pdf.md      ← 完整合并后的 markdown（原始 PDF 文件名 + .md 后缀）
+├── 文件名.pdf.json    ← 完整合并后的 JSON（仅 saveJson=true 时）
+└── 文件名_media/      ← 唯一媒体目录（图/视频/音频都在这里）
     ├── image_001.png
     ├── video_001.mp4
     ├── audio_001.flac
     └── ...
 ```
 
-媒体命名按类型分别连续编号：`image_001.png` / `video_001.mp4` / `audio_001.flac`。
+媒体命名按类型分别连续编号：普通文件使用 `image_001.png` / `video_001.mp4` / `audio_001.flac`；分块 PDF 会增加 `chunk_NNN_` 前缀，避免并发分块之间覆盖。
 
 ### markdown 中的媒体引用
 
