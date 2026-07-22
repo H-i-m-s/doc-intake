@@ -52,6 +52,83 @@
 
 ---
 
+## 适用人群
+
+| 人群 | 典型场景 |
+|------|----------|
+| **学术研究者** | 扫描版论文 PDF 提取、国标 GB/T 文件解析（Founder 方正字体乱码修复）、公式转 LaTeX、表格结构识别 |
+| **技术文档维护者** | 批量提取 Word/PPT/Excel 内容转 Markdown 归档、提取文档内嵌图片和音视频 |
+| **Hana 插件/Skill 开发者** | 在自己的插件中调用 `doc_intake` 获取文档内容，无需重复造轮子 |
+| **数据采集与知识管理** | 网页 HTML 完整提取（元数据/链接/代码块/远程媒体）、长截图文字识别 |
+| **经常处理中文 PDF 的用户** | 中文 OCR（109+ 语言）、扫描件表格识别、公式识别，覆盖 MinerU / PaddleOCR 双引擎 |
+
+如果你只是偶尔读个 Word 纯文本，Hana 内置的 `office_read-document` 够用，不需要装这个插件。
+
+---
+
+## 安装 & 配置
+### 前置条件
+
+1. **Python 环境**：在插件设置面板的 `pythonPath` 填写 conda 环境的 `python.exe` 路径
+2. **Python 依赖**：
+
+```bash
+pip install -r python/requirements.txt
+```
+
+核心依赖：
+- `pypdf` / `pdfplumber` — PDF 本地解析
+- `Pillow` — 图片处理、EMF/WMF 转换
+- `mineru-open-sdk` — MinerU 云端 API（可选）
+- `requests` — PaddleOCR HTTP API（可选）
+
+3. **云端 Token**（可选）：
+   - MinerU Token：https://mineru.net/apiManage/token
+   - PaddleOCR Token：https://aistudio.baidu.com/account/accessToken
+
+没有 Token 也能用：PDF 会走 Flash 模式（无 Token 的 MinerU），图片 OCR 则不可用。
+
+### 后续推荐操作
+
+#### 1. 配置云端 Token
+
+插件的 PDF 降级链是 `MinerU → PaddleOCR → 本地 PyMuPDF`，图片 OCR 只有 PaddleOCR 一档。要让降级链完整覆盖扫描件和图片，需要配置云端 Token：
+
+- **MinerU Token**：[获取地址](https://mineru.net/apiManage/token) → 填入插件设置面板的 `mineruCredentials`（多个用分号分隔）
+- **PaddleOCR Token**：[获取地址](https://aistudio.baidu.com/account/accessToken) → 填入插件设置面板的 `paddleTokens`（多个用分号分隔）
+
+> ⚠️ MinerU Token 有效期 **90 天**，到期后提取会失败并自动降级到 PaddleOCR / 本地档。建议日历提醒自己续期。
+
+没有 Token 也能用：PDF 会走 MinerU Flash 模式（无需认证，但精度低于 Precision 模式），图片 OCR 则不可用。
+
+#### 2. 验证 Token 是否生效
+
+配置完 Token 后，调用一次验证：
+
+```
+doc_intake_validate()
+```
+
+返回每个 Token 的有效性。全部通过说明降级链三档齐全，覆盖面最广。
+
+#### 3. 清理自带的 `office-documents` skill
+
+Hana 自带 `office-documents` skill，它的设计思路是「一个 skill 干所有事」——读、写、转换、格式化全包。结果是每个场景都只能做到「能用」级别：扫描件是空白、公式丢失、媒体不提取、批量无并发。
+
+`doc-intake` 和 `office-cli` 是反过来的思路：**把读和写拆成两个独立工具，各自做到专精**。
+
+| | `office-documents` | `doc-intake` + `office-cli` |
+|---|---|---|
+| 读文档 | 能读，但不支持 OCR/公式/媒体 | `doc-intake`：扫描件 OCR、公式转 LaTeX、媒体提取全覆盖 |
+| 写文档 | 能写，但格式控制粗糙 | `office-cli`：格式精确、排版可控 |
+| 格式转换 | 基础转换 | `office-cli`：支持更多格式和高级选项 |
+| 并发 | 无 | `doc-intake`：双池并发 + 多 Token 轮询 |
+
+**操作**：在 Hana 的 Skills 管理界面中卸载 `office-documents`。卸载后 Agent 不会再优先调用它，文档请求会走 `doc-intake`。
+
+---
+
+
 ## 架构
 
 ```
@@ -441,30 +518,6 @@ doc_intake(source=["document.pdf"], backend="local")
 
 ---
 
-## 安装 & 配置
-
-### 前置条件
-
-1. **Python 环境**：在插件设置面板的 `pythonPath` 填写 conda 环境的 `python.exe` 路径
-2. **Python 依赖**：
-
-```bash
-pip install -r python/requirements.txt
-```
-
-核心依赖：
-- `pypdf` / `pdfplumber` — PDF 本地解析
-- `Pillow` — 图片处理、EMF/WMF 转换
-- `mineru-open-sdk` — MinerU 云端 API（可选）
-- `requests` — PaddleOCR HTTP API（可选）
-
-3. **云端 Token**（可选）：
-   - MinerU Token：https://mineru.net/apiManage/token
-   - PaddleOCR Token：https://aistudio.baidu.com/account/accessToken
-
-没有 Token 也能用：PDF 会走 Flash 模式（无 Token 的 MinerU），图片 OCR 则不可用。
-
----
 
 ## 错误处理
 

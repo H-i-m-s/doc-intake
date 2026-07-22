@@ -1,13 +1,25 @@
 # doc-intake Python 依赖
-# 本地提取（必须）
-pypdf>=3.0.0
-pdfplumber>=0.9.0
+# 安装: pip install -r requirements.txt
 
-# 图片处理（必须）
-Pillow>=9.0.0
+# ===== 核心依赖（必装，缺任何一个主要功能都跑不起来）=====
 
-# MinerU 云端 API（可选，PDF 提取）
+Pillow>=9.0.0           # 图片处理：长图分割、EMF→PNG 转换、图片读写
+PyMuPDF>=1.23.0         # PDF 本地兜底提取 + 大 PDF 按页切分（import fitz）
+requests>=2.28.0        # HTTP 请求：MinerU / PaddleOCR 云端 API、远程图片下载、HTML 抓取
+
+# ===== 可选依赖（缺了对应功能会降级，不阻塞主流程）=====
+
+# MinerU 云端 PDF 提取（不装则 PDF 降级链跳过 mineru 档）
 mineru-open-sdk>=0.2.0
 
-# PaddleOCR 云端 API（可选，图片 OCR）
-# requests>=2.28.0  # PaddleOCR 直接调用 API 需要
+# HTML → Markdown 转换（不装则 HTML 解析返回错误提示）
+html-to-markdown>=0.5.0
+
+# MathType 公式提取（不装则 MathType 公式退化为图片，OMML 公式不受影响）
+mtef-py>=1.0.0
+
+# ===== Windows 专用（仅 .ppt 旧格式需要）=====
+
+# 旧版 .ppt 文件转 .pptx（通过 PowerPoint COM 自动化）
+# 不装则 .ppt 文件返回错误提示，.pptx 不受影响
+pywin32>=300; sys_platform == "win32"
