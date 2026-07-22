@@ -1,11 +1,13 @@
-"""PDF splitter - PyMuPDF 实现的大 PDF 按页数切分。
+"""PDF 分块工具。
 
-仅做 PDF 内部切分(纯本地),不调任何云端 API。
+插件运行时使用内存分块：PyMuPDF 生成 PDF bytes 后直接交给云端后端，
+不在源文件目录创建 chunk PDF 或 *_chunks 目录。
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import Iterator, List
 import shutil
 
 import fitz  # PyMuPDF
@@ -15,69 +17,123 @@ from logger import get_logger
 logger = get_logger("pdf_splitter")
 
 
+@dataclass(frozen=True)
+class PdfMemoryChunk:
+    """一个仅存在于内存中的 PDF 分块。"""
+
+    index: int
+    start_page: int  # 1-based, inclusive
+    end_page: int  # 1-based, inclusive
+    name: str
+    data: bytes
+
+
+def iter_pdf_memory_chunks(
+    source: str | Path,
+    pages_per_chunk: int = 180,
+) -> Iterator[PdfMemoryChunk]:
+    """按页数生成内存 PDF 分块。
+
+    每次 yield 一个独立的 PDF bytes，调用方消费后即可释放该分块。
+    源文件只以只读方式打开，整个流程不会创建 chunk 文件。
+    """
+    source = Path(source)
+    if not source.exists():
+        raise FileNotFoundError(f"PDF 不存在: {source}")
+    if pages_per_chunk <= 0:
+        raise ValueError("pages_per_chunk 必须大于 0")
+
+    src_doc = fitz.open(source)
+    try:
+        total = len(src_doc)
+        stem = source.stem
+        if total <= pages_per_chunk:
+            logger.info("PDF 不超阈值,不切", source=str(source), pages=total)
+            data = source.read_bytes()
+            yield PdfMemoryChunk(
+                index=1,
+                start_page=1,
+                end_page=total,
+                name=source.name,
+                data=data,
+            )
+            return
+
+        page_index = 0
+        chunk_idx = 0
+        while page_index < total:
+            chunk_idx += 1
+            end_index = min(page_index + pages_per_chunk, total)
+            chunk_doc = fitz.open()
+            try:
+                chunk_doc.insert_pdf(
+                    src_doc,
+                    from_page=page_index,
+                    to_page=end_index - 1,
+                )
+                data = chunk_doc.tobytes()
+            finally:
+                chunk_doc.close()
+
+            chunk_name = f"{stem}_chunk_{chunk_idx:03d}.pdf"
+            logger.info(
+                "PDF 内存分块",
+                source=str(source),
+                chunk_index=chunk_idx,
+                pages=f"{page_index + 1}-{end_index}",
+                bytes=len(data),
+            )
+            yield PdfMemoryChunk(
+                index=chunk_idx,
+                start_page=page_index + 1,
+                end_page=end_index,
+                name=chunk_name,
+                data=data,
+            )
+            page_index = end_index
+    finally:
+        src_doc.close()
+
+
+def pdf_page_count(source: str | Path) -> int:
+    """读取 PDF 页数，不创建任何中间文件。"""
+    source = Path(source)
+    doc = fitz.open(source)
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
+# 兼容旧版 split_cli。插件主流程不再调用此函数；外部手动调用时仍保留旧行为。
 def split_pdf(
     source: str | Path,
     output_dir: str | Path,
     pages_per_chunk: int = 180,
 ) -> List[Path]:
-    """按页数切分 PDF。返回 chunk 文件路径列表。
-
-    Args:
-        source: 源 PDF 路径
-        output_dir: chunk 文件输出目录(每个 source 一个子目录)
-        pages_per_chunk: 每块最大页数,小于等于此值不切
-
-    Returns:
-        chunk 文件路径列表。空 / 非 PDF 抛错。
-        切分后的文件名约定: <stem>_chunk_NNN.pdf
-    """
+    """将 PDF 写入指定目录的旧版兼容接口。"""
     source = Path(source)
     if not source.exists():
         raise FileNotFoundError(f"PDF 不存在: {source}")
 
     stem = source.stem
-    src_dir = source.parent
-
-    src_doc = fitz.open(source)
-    total = len(src_doc)
-
-    if total <= pages_per_chunk:
-        src_doc.close()
-        logger.info("PDF 不超阈值,不切", source=str(source), pages=total)
-        return [source]
-
-    # chunk 跟原 PDF 同目录放,避免不同挂载盘 IO,clean-up 也方便
-    chunk_dir = src_dir / f"{stem}_chunks"
+    output_dir = Path(output_dir)
+    chunk_dir = output_dir / f"{stem}_chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
     chunks: List[Path] = []
-    page_index = 0
-    chunk_idx = 0
-    while page_index < total:
-        chunk_idx += 1
-        end_index = min(page_index + pages_per_chunk, total)
-        # 创建切片 doc:导入 [page_index, end_index)
-        chunk_doc = fitz.open()
-        chunk_doc.insert_pdf(src_doc, from_page=page_index, to_page=end_index - 1)
-        chunk_path = chunk_dir / f"{stem}_chunk_{chunk_idx:03d}.pdf"
-        chunk_doc.save(str(chunk_path))
-        chunk_doc.close()
+    for chunk in iter_pdf_memory_chunks(source, pages_per_chunk):
+        if chunk.start_page == 1 and chunk.end_page == pdf_page_count(source):
+            chunks.append(source)
+            break
+        chunk_path = chunk_dir / chunk.name
+        chunk_path.write_bytes(chunk.data)
         chunks.append(chunk_path)
-        logger.info(
-            "PDF 切分",
-            source=str(source),
-            chunk_index=chunk_idx,
-            pages=f"{page_index + 1}-{end_index}",
-            target=chunk_path.name,
-        )
-        page_index = end_index
-
-    src_doc.close()
     return chunks
 
 
 def cleanup_chunks(chunks: List[Path]) -> None:
-    """rmtree 整个 chunk 目录（force=True,不管里面有没有 stray 文件)。"""
+    """兼容旧版调用，清理旧式 chunk 目录。"""
     if not chunks:
         return
     parents = {c.parent for c in chunks}

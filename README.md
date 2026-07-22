@@ -138,8 +138,8 @@ Hana 自带 `office-documents` skill，它的设计思路是「一个 skill 干�
 │  doc_intake.js ─→ service.js ─→ Python spawn    │
 │  doc_intake_validate.js                         │
 │                                                 │
-│  职责: 参数校验 / 并发控制 / PDF 切割调度       │
-│        / 结果合并 / 批量摘要                    │
+│  职责: 参数校验 / 文件级并发控制 / 批量摘要      │
+│        / 结果格式化                              │
 └──────────────────────┬──────────────────────────┘
                        │ JSON stdin/stdout
                        ▼
@@ -197,8 +197,8 @@ doc-intake/
 │   ├── key_pool.py               # 统一 KeyPool：多 credential 轮询 + 失败跳过
 │   ├── api_retry.py              # HTTP 重试：指数退避、429/5xx 自动重试
 │   ├── image_splitter.py         # 长图智能分割（空白行检测 + 色差容忍）
-│   ├── pdf_splitter.py           # 大 PDF 按页数切割（PyMuPDF）
-│   ├── split_cli.py              # PDF 切割 CLI（供 JS 端 spawn 调用）
+│   ├── pdf_splitter.py           # 大 PDF 内存分块（PyMuPDF bytes）
+│   ├── split_cli.py              # 旧版手动 PDF 切割兼容 CLI（主流程不调用）
 │   ├── utils.py                  # 图片归一化（URL/本地/对象 → {stem}_media/）
 │   ├── validate.py               # Token 验证脚本（Python 端实现）
 │   ├── logger.py                 # Python 端日志（stderr）
@@ -317,10 +317,10 @@ doc-intake/
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `pdfBackendChain` | `string[]` | `["mineru", "paddleocr", "local"]` | PDF 后端降级链，按顺序尝试，失败自动降级到下一档。 |
-| `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF（按 `splitChunkPages` 切分，多路并发可计入 `maxConcurrent`）。 |
-| `splitChunkPages` | `number` | `180` | 切割时每块页数（小于 MinerU 200 页限制）。 |
+| `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF（在插件 Python 进程内按 `splitChunkPages` 生成内存 PDF bytes，直接上传云端，不创建 `*_chunks` 文件夹）。 |
+| `splitChunkPages` | `number` | `180` | 内存分块时每块页数（小于 MinerU 200 页限制）。 |
 
-大 PDF 的切割只用于云端上传，chunk 不会作为用户输出文件。所有 chunk 的识别结果会在插件内部按原 PDF 顺序合并后，再统一保存为一个 Markdown/JSON 文件；媒体也会直接写入原 PDF 对应的唯一 `{原文件名}_media/` 目录，并使用 chunk 前缀避免重名。插件不会先生成 chunk Markdown/JSON 再做文件级后处理。
+大 PDF 的切割只用于云端上传，chunk 会在 Python 进程内以 PDF bytes 存在，不会在源文件目录创建 `*_chunks` 文件夹或 chunk PDF。所有 chunk 的识别结果会按 `chunkIndex` 在插件内部按原 PDF 顺序合并，再统一保存为一个 Markdown/JSON 文件；媒体也会直接写入原 PDF 对应的唯一 `{原文件名}_media/` 目录，并使用 chunk 前缀避免重名。插件不会先生成 chunk PDF 再上传，也不会先生成 chunk Markdown/JSON 再做文件级后处理。
 
 #### 本地档（PyMuPDF）的限制
 
@@ -420,6 +420,8 @@ doc-intake/
 ```
 
 ### 保存到本地时的文件结构
+
+大 PDF 的分块只在插件内部以内存 PDF bytes 完成，源文件目录不会出现 `*_chunks` 文件夹或 chunk PDF。
 
 ```
 outputDir/

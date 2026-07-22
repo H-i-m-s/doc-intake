@@ -74,6 +74,8 @@ class PaddleClient:
         language: str = "zh",
         include_images: bool = True,
         keys: list[str] | None = None,
+        pdf_bytes: bytes | None = None,
+        display_name: str | None = None,
         **kwargs,
     ) -> ExtractionResult:
         result = ExtractionResult()
@@ -81,13 +83,16 @@ class PaddleClient:
         retry_enabled = self.settings.get("keyRetryOnFailure", True)
 
         # 准备一次性创建的资源（图片分割等），不随 token retry 重做
-        files_to_process = [source]
+        file_payloads: list[tuple[str | None, bytes | None, str]] = [
+            (source, None, Path(source).name)
+        ]
         is_split = False
-        # split_temp_dir 存在时无论结果如何都 rmtree（finally 清理），不让临时文件留在 output_dir
         split_temp_dir: Optional[str] = None
 
-        # PDF 不做预处理了：PaddleOCR API 本身能接 PDF 直接 OCR。
-        # 这一档只是 chain 上的降级档（Mineru 替代），过度设计已经被清掉。
+        if pdf_bytes is not None:
+            file_payloads = [
+                (None, pdf_bytes, display_name or Path(source).name)
+            ]
         if not source.startswith("http") and self._is_image(source):
             from PIL import Image
             # 用 with 包裹 — PIL 持有源图 file handle,Windows 不 close 会锁到 GC。
@@ -99,11 +104,13 @@ class PaddleClient:
                     min_continuous_blank=self.settings.get("splitImageMinBlank"),
                 )
                 if splitter.need_split(img):
-                    # 用系统 temp 目录而不是 output_dir，处理完自动清理
                     split_temp_dir = tempfile.mkdtemp(prefix="doc-intake-paddle-split-")
-                    files_to_process = splitter.split_and_save(source, split_temp_dir)
-                    is_split = len(files_to_process) > 1
-                    self.logger.info("图片已分割", count=len(files_to_process))
+                    split_paths = splitter.split_and_save(source, split_temp_dir)
+                    file_payloads = [
+                        (path, None, Path(path).name) for path in split_paths
+                    ]
+                    is_split = len(file_payloads) > 1
+                    self.logger.info("图片已分割", count=len(file_payloads))
 
         optional_params = self._build_optional_params()
 
@@ -127,13 +134,18 @@ class PaddleClient:
                                  max_attempts=max_attempts)
 
                 attempt_failed = False
-                for i, file_path in enumerate(files_to_process):
-                    self.logger.debug(f"处理文件 {i+1}/{len(files_to_process)}",
-                                      file_path=file_path)
+                for i, (file_path, file_data, file_name) in enumerate(file_payloads):
+                    self.logger.debug(f"处理文件 {i+1}/{len(file_payloads)}",
+                                      file_path=file_path or file_name)
 
                     try:
                         page_result = self._process_single_file(
-                            file_path, token, optional_params, include_images
+                            file_path,
+                            token,
+                            optional_params,
+                            include_images,
+                            file_bytes=file_data,
+                            file_name=file_name,
                         )
                         all_markdown.append(page_result["markdown"])
                         all_raw_images.extend(page_result["images"])
@@ -159,7 +171,7 @@ class PaddleClient:
                             all_raw_images = []
                             break
                         # 其他错误（网络/解析）→ 不换 token，直接记录失败
-                        err_text = f"文件 {file_path} 提取失败: {str(e)}"
+                        err_text = f"文件 {file_path or file_name} 提取失败: {str(e)}"
                         self.logger.error(err_text)
                         all_markdown.append(f"# 提取失败\n\n{err_text}")
 
@@ -178,7 +190,6 @@ class PaddleClient:
             # 合并 Markdown（去重 100 字符）
             merged_markdown = merge_markdown_deduplicate(all_markdown) if all_markdown else "# 文档提取结果\n\n（无内容）"
         finally:
-            # split_temp_dir 是系统 temp 里的临时目录，处理完（或异常）一律 rmtree
             if split_temp_dir:
                 shutil.rmtree(split_temp_dir, ignore_errors=True)
 
@@ -209,7 +220,7 @@ class PaddleClient:
             "format": "document",
             "reader": "paddleocr-http",
             "model": "PaddleOCR-VL-1.6",
-            "split_count": len(files_to_process),
+            "split_count": len(file_payloads),
             "imagePathMap": image_path_map,
         }
         # raw_json ({"lines": N}) 不再单独写文件 ——
@@ -246,14 +257,16 @@ class PaddleClient:
 
     def _process_single_file(
         self,
-        file_path: str,
+        file_path: str | None,
         token: str,
         optional_params: dict,
         include_images: bool,
+        file_bytes: bytes | None = None,
+        file_name: str | None = None,
     ) -> dict:
         headers = {"Authorization": f"bearer {token}"}
 
-        self.logger.debug("提交 OCR 任务", file_path=file_path)
+        self.logger.debug("提交 OCR 任务", file_path=file_path or file_name)
         start_time = time.time()
 
         max_retries = self.settings.get("maxRetries", 3)
@@ -261,7 +274,7 @@ class PaddleClient:
 
         # 提交任务
         try:
-            if file_path.startswith("http"):
+            if file_path and file_path.startswith("http"):
                 headers["Content-Type"] = "application/json"
                 payload = {
                     "fileUrl": file_path,
@@ -275,22 +288,36 @@ class PaddleClient:
                     logger_name="paddleocr",
                 )
             else:
-                if not os.path.exists(file_path):
-                    raise FileNotFoundError(f"文件不存在: {file_path}")
-
                 data = {
                     "model": "PaddleOCR-VL-1.6",
                     "optionalPayload": json.dumps(optional_params),
                 }
 
-                with open(file_path, "rb") as f:
-                    files = {"file": f}
+                if file_bytes is not None:
+                    files = {
+                        "file": (
+                            file_name or "document.pdf",
+                            file_bytes,
+                            "application/pdf",
+                        )
+                    }
                     response = request_with_retry(
                         "POST", self.JOB_URL,
                         headers=headers, data=data, files=files, timeout=30,
                         max_retries=max_retries, base_delay_ms=base_delay_ms,
                         logger_name="paddleocr",
                     )
+                else:
+                    if not file_path or not os.path.exists(file_path):
+                        raise FileNotFoundError(f"文件不存在: {file_path}")
+                    with open(file_path, "rb") as f:
+                        files = {"file": f}
+                        response = request_with_retry(
+                            "POST", self.JOB_URL,
+                            headers=headers, data=data, files=files, timeout=30,
+                            max_retries=max_retries, base_delay_ms=base_delay_ms,
+                            logger_name="paddleocr",
+                        )
         except RetryExhausted as e:
             status = e.response.status_code if e.response else 0
             raise Exception(f"提交任务失败重试耗尽: HTTP {status}, error={e.cause or '网络'}") from e

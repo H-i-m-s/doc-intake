@@ -166,7 +166,7 @@
         "autoSplitLargePDF": {
           "type": "boolean",
           "default": true,
-          "title": "自动切割超限 PDF（plugin 端按 splitChunkPages 切分大 PDF，多路并发可计入 maxConcurrent）"
+          "title": "自动切割超限 PDF（Python 内存分块后直接上传，不创建 chunk 文件）"
         },
         "splitChunkPages": {
           "type": "number",

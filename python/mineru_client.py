@@ -72,6 +72,8 @@ class MinerUClient:
         language: str = "zh",
         include_images: bool = True,
         credentials: list | None = None,
+        pdf_bytes: bytes | None = None,
+        display_name: str | None = None,
         **kwargs,
     ) -> ExtractionResult:
         """使用 MinerU 提取 PDF 内容。多 credential 时，按 KeyPool 切换。"""
@@ -129,6 +131,8 @@ class MinerUClient:
                     enable_formula=enable_formula,
                     enable_table=enable_table,
                     include_images=include_images,
+                    pdf_bytes=pdf_bytes,
+                    display_name=display_name,
                 )
                 duration = time.time() - start_time
                 self.logger.log_api_call(
@@ -165,6 +169,46 @@ class MinerUClient:
         )
         raise MinerUAuthError(err_msg)
 
+    def _extract_memory(
+        self,
+        *,
+        client,
+        token: Optional[str],
+        source_name: str,
+        pdf_bytes: bytes,
+        model_version: str,
+        mineru_language: str,
+        enable_ocr: bool,
+        enable_formula: bool,
+        enable_table: bool,
+    ):
+        """将内存 PDF 直接上传 MinerU，不创建本地 chunk 文件。"""
+        if token:
+            api = client._require_auth()
+            model_map = {"pipeline": "pipeline", "vlm": "vlm", "MinerU-HTML": "MinerU-HTML"}
+            payload = {
+                "files": [{"name": source_name, "is_ocr": enable_ocr}],
+                "model_version": model_map.get(model_version, model_version),
+                "enable_formula": enable_formula,
+                "enable_table": enable_table,
+                "language": mineru_language,
+            }
+            body = api.post("/file-urls/batch", payload)
+            batch_id = body["data"]["batch_id"]
+            upload_urls = body["data"]["file_urls"]
+            if len(upload_urls) != 1:
+                raise RuntimeError("MinerU 返回的内存文件上传地址数量异常")
+            api.put_file(upload_urls[0], pdf_bytes)
+            results = client._wait_batch(batch_id, 300)
+            return results[0]
+
+        payload = {"file_name": source_name, "language": mineru_language}
+        body = client._flash_api.post("/parse/file", payload)
+        task_id = body["data"]["task_id"]
+        file_url = body["data"]["file_url"]
+        client._flash_api.put_file(file_url, pdf_bytes)
+        return client._flash_wait(task_id, 300)
+
     def _extract_once(
         self,
         *,
@@ -177,13 +221,28 @@ class MinerUClient:
         enable_formula: bool,
         enable_table: bool,
         include_images: bool,
+        pdf_bytes: bytes | None = None,
+        display_name: str | None = None,
     ) -> ExtractionResult:
         """单次 MinerU SDK 调用（出错由上层 extract 捕获）"""
         from mineru import MinerU as _MinerU
         client = _MinerU(token) if token else _MinerU()
 
         try:
-            if token:
+            if pdf_bytes is not None:
+                self.logger.debug("使用内存 PDF 上传模式")
+                extract_result = self._extract_memory(
+                    client=client,
+                    token=token,
+                    source_name=display_name or Path(source).name,
+                    pdf_bytes=pdf_bytes,
+                    model_version=model_version,
+                    mineru_language=mineru_language,
+                    enable_ocr=enable_ocr,
+                    enable_formula=enable_formula,
+                    enable_table=enable_table,
+                )
+            elif token:
                 self.logger.debug("使用精准解析模式")
                 extract_result = client.extract(
                     source,

@@ -120,6 +120,9 @@ class PdfExtractor(BaseExtractor):
         page_range: Optional[str] = None,
         language: str = "zh",
         include_images: bool = True,
+        pdf_bytes: bytes | None = None,
+        display_name: str | None = None,
+        page_offset: int = 0,
         **kwargs,
     ) -> ExtractionResult:
         import fitz  # PyMuPDF
@@ -133,9 +136,13 @@ class PdfExtractor(BaseExtractor):
         # 任何中间步骤抛异常(磁盘满、page 访问失败、write_bytes 失败等)
         # 都会泄漏源 PDF 的 file handle,所以闭进 finally 里。
         try:
-            doc = fitz.open(source)
+            if pdf_bytes is not None:
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            else:
+                doc = fitz.open(source)
             total = len(doc)
             pages = parse_page_range(page_range, total)
+            display_source = display_name or source
 
             if not pages:
                 warnings.append("页码范围筛选后无有效页")
@@ -166,7 +173,7 @@ class PdfExtractor(BaseExtractor):
                 if not text_blocks:
                     empty_pages += 1
                     page_chunks.append(
-                        f"<!-- Page {page_num}: 本地无文本层,需 OCR 才能识别 -->\n"
+                        f"<!-- Page {page_num + page_offset}: 本地无文本层,需 OCR 才能识别 -->\n"
                     )
                     continue
 
@@ -182,13 +189,18 @@ class PdfExtractor(BaseExtractor):
                 page_images_with_pos: list[tuple[float, str, str]] = []
                 if include_images:
                     page_images_with_pos, page_local_paths = self._extract_page_images(
-                        page, page_num, media_dir, doc, stem, media_prefix
+                        page,
+                        page_num + page_offset,
+                        media_dir,
+                        doc,
+                        stem,
+                        media_prefix,
                     )
                     saved_images.extend(page_local_paths)
 
                 # 文字 + 图片按位置合并
                 body = self._interleave(text_blocks, page_images_with_pos)
-                page_chunks.append(f"## Page {page_num}\n\n{body}\n")
+                page_chunks.append(f"## Page {page_num + page_offset}\n\n{body}\n")
 
             if not total_chars:
                 warnings.append(
@@ -219,7 +231,7 @@ class PdfExtractor(BaseExtractor):
 
             result.markdown = (
                 f"# PDF 本地提取结果\n\n"
-                + f"源文件: {source}\n"
+                + f"源文件: {display_source}\n"
                 + f"提取页: {len(pages)}/{total}\n"
                 + f"字符总数: {total_chars}\n\n"
                 + "\n".join(page_chunks)

@@ -9,7 +9,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Iterable
 
 # 添加当前目录到 path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from extractors.base import BaseExtractor, ExtractionResult
 from extractors import get_extractor
 from logger import get_logger, log
+from pdf_splitter import PdfMemoryChunk, iter_pdf_memory_chunks, pdf_page_count
 
 
 @contextmanager
@@ -123,6 +124,9 @@ def extract_with_chain(
     language: str,
     include_images: bool,
     available_credentials: dict,
+    pdf_bytes: bytes | None = None,
+    display_name: str | None = None,
+    page_offset: int = 0,
 ) -> ExtractionResult:
     """沿 backend_chain 逐档尝试，成功则返回。"""
     logger = get_logger("extractor")
@@ -150,6 +154,9 @@ def extract_with_chain(
                 language=language,
                 include_images=include_images,
                 available_credentials=available_credentials.get(current_backend, []),
+                pdf_bytes=pdf_bytes,
+                display_name=display_name,
+                page_offset=page_offset,
             )
             duration = time.time() - start_time
 
@@ -233,6 +240,9 @@ def _extract_with_backend(
     language: str,
     include_images: bool,
     available_credentials: list,
+    pdf_bytes: bytes | None = None,
+    display_name: str | None = None,
+    page_offset: int = 0,
 ) -> ExtractionResult:
     """使用指定后端提取"""
     logger = get_logger("backend")
@@ -247,6 +257,8 @@ def _extract_with_backend(
             language=language,
             include_images=include_images,
             credentials=available_credentials,
+            pdf_bytes=pdf_bytes,
+            display_name=display_name,
         )
 
     elif backend == "paddleocr":
@@ -259,6 +271,8 @@ def _extract_with_backend(
             language=language,
             include_images=include_images,
             keys=available_credentials,
+            pdf_bytes=pdf_bytes,
+            display_name=display_name,
         )
 
     elif backend == "local":
@@ -270,6 +284,9 @@ def _extract_with_backend(
             page_range=page_range,
             language=language,
             include_images=include_images,
+            pdf_bytes=pdf_bytes,
+            display_name=display_name,
+            page_offset=page_offset,
         )
 
     else:
@@ -394,6 +411,30 @@ def main():
     sys.stdout.write("\n")
 
 
+def _iter_pdf_chunks_if_needed(args, settings: dict):
+    """在内存中生成 PDF chunk；非 PDF 或未超阈值时返回 None。"""
+    if detect_file_type(args.source) != "pdf":
+        return None
+    # 指定页码范围时由后端一次性处理，避免把原始页码错误解释成 chunk 内页码。
+    if args.page_range:
+        return None
+    if settings.get("autoSplitLargePDF", True) is False:
+        return None
+    pages_per_chunk = int(settings.get("splitChunkPages") or 180)
+    if pages_per_chunk <= 0:
+        return None
+
+    total_pages = pdf_page_count(args.source)
+    if total_pages <= pages_per_chunk:
+        return None
+
+    chunks = iter_pdf_memory_chunks(args.source, pages_per_chunk)
+    first = next(chunks, None)
+    if first is None:
+        return []
+    return (first, chunks)
+
+
 def _run(args) -> dict:
     settings = load_settings(args)
 
@@ -409,10 +450,6 @@ def _run(args) -> dict:
 
     file_type = detect_file_type(args.source)
     output_dir = determine_output_dir(args, settings)
-    if args.defer_save and args.output_stem:
-        settings["outputStem"] = args.output_stem
-    if args.media_prefix:
-        settings["mediaPrefix"] = args.media_prefix
 
     # 仅做图片分割，不调用后端
     if args.split_only:
@@ -463,41 +500,151 @@ def _run(args) -> dict:
         return format_result(result)
 
     backend_chain = select_backend_chain(file_type, backend, settings)
+    include_images = settings.get("includeMedia", settings.get("includeImages", True))
 
-    result = extract_with_chain(
-        source=args.source,
-        file_type=file_type,
+    chunk_state = _iter_pdf_chunks_if_needed(args, settings)
+    if chunk_state is None:
+        result = extract_with_chain(
+            source=args.source,
+            file_type=file_type,
+            output_dir=output_dir,
+            backend_chain=backend_chain,
+            settings=settings,
+            page_range=args.page_range,
+            language=settings.get("defaultLanguage", "zh"),
+            include_images=include_images,
+            available_credentials=available_credentials,
+        )
+        return _finalize_single_result(result, args, output_dir, settings, start_time)
+
+    first_chunk, remaining_chunks = chunk_state
+    merged = _extract_memory_pdf_chunks(
+        args=args,
+        settings=settings,
         output_dir=output_dir,
         backend_chain=backend_chain,
-        settings=settings,
-        page_range=args.page_range,
-        language=settings.get("defaultLanguage", "zh"),
-        include_images=settings.get("includeMedia", settings.get("includeImages", True)),
+        include_images=include_images,
         available_credentials=available_credentials,
+        first_chunk=first_chunk,
+        remaining_chunks=remaining_chunks,
     )
+    return _finalize_single_result(merged, args, output_dir, settings, start_time)
 
-    if output_dir and settings.get("outputStem"):
-        result.markdown = _rewrite_media_paths(
-            result.markdown,
-            result.metadata or {},
-            settings["outputStem"],
-        )
 
-    if output_dir and result.markdown and not args.defer_save:
-        result.name = args.source
+def _finalize_single_result(
+    result: ExtractionResult,
+    args,
+    output_dir: Optional[str],
+    settings: dict,
+    start_time: float,
+) -> dict:
+    result.name = args.source
+    if output_dir and result.markdown:
         save_result(result, args.source, output_dir, settings.get("saveJson", False))
-    elif args.defer_save:
+    else:
         result.output_dir = output_dir
-        result.name = args.source
 
     duration = time.time() - start_time
     log.log_response(
         markdown_length=len(result.markdown),
         image_count=len(result.images),
-        duration=duration
+        duration=duration,
     )
-
     return format_result(result)
+
+
+def _extract_memory_pdf_chunks(
+    *,
+    args,
+    settings: dict,
+    output_dir: Optional[str],
+    backend_chain: list[str],
+    include_images: bool,
+    available_credentials: dict,
+    first_chunk: PdfMemoryChunk,
+    remaining_chunks: Iterable[PdfMemoryChunk],
+) -> ExtractionResult:
+    """顺序消费内存 chunk，按 chunk index 合并，不产生 chunk 文件。"""
+    merged = ExtractionResult()
+    markdown_parts: list[str] = []
+    all_images: list[str] = []
+    all_warnings: list[str] = []
+    chunk_results: list[tuple[int, ExtractionResult]] = []
+    source_name = Path(args.source).name
+    stem = Path(args.source).stem
+    settings["outputStem"] = stem
+
+    try:
+        for chunk in (chunk for chunk in [first_chunk] if chunk is not None):
+            chunk_results.append((chunk.index, _extract_one_memory_chunk(
+                chunk, args, settings, output_dir, backend_chain,
+                include_images, available_credentials, source_name,
+            )))
+            del chunk
+        for chunk in remaining_chunks:
+            try:
+                chunk_results.append((chunk.index, _extract_one_memory_chunk(
+                    chunk, args, settings, output_dir, backend_chain,
+                    include_images, available_credentials, source_name,
+                )))
+            finally:
+                del chunk
+    finally:
+        settings.pop("outputStem", None)
+
+    for index, result in sorted(chunk_results, key=lambda item: item[0]):
+        if result.markdown:
+            markdown_parts.append(result.markdown)
+        all_images.extend(result.images or [])
+        all_warnings.extend(result.warnings or [])
+
+    merged.markdown = "\n\n---\n\n".join(markdown_parts)
+    merged.images = all_images
+    merged.warnings = all_warnings
+    merged.metadata = {
+        "format": "pdf",
+        "reader": "chunked-memory",
+        "chunkCount": len(chunk_results),
+        "backendChain": backend_chain,
+        "usedBackendInChain": True,
+    }
+    merged.output_dir = output_dir
+    return merged
+
+
+def _extract_one_memory_chunk(
+    chunk: PdfMemoryChunk,
+    args,
+    settings: dict,
+    output_dir: Optional[str],
+    backend_chain: list[str],
+    include_images: bool,
+    available_credentials: dict,
+    source_name: str,
+) -> ExtractionResult:
+    chunk_settings = dict(settings)
+    chunk_settings["mediaPrefix"] = f"chunk_{chunk.index:03d}_"
+    result = extract_with_chain(
+        source=args.source,
+        file_type="pdf",
+        output_dir=output_dir,
+        backend_chain=backend_chain,
+        settings=chunk_settings,
+        page_range=None,
+        language=settings.get("defaultLanguage", "zh"),
+        include_images=include_images,
+        available_credentials=available_credentials,
+        pdf_bytes=chunk.data,
+        display_name=source_name,
+        page_offset=chunk.start_page - 1,
+    )
+    if output_dir:
+        result.markdown = _rewrite_media_paths(
+            result.markdown,
+            result.metadata or {},
+            chunk_settings["outputStem"],
+        )
+    return result
 
 
 def save_result(result: ExtractionResult, source: str, output_dir: str, save_json: bool = False):
