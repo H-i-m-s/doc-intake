@@ -7,6 +7,7 @@ import os
 import re as _re
 import sys
 import time
+from urllib.parse import quote as _url_quote
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional, Iterable
@@ -64,12 +65,30 @@ def detect_file_type(source: str) -> str:
 
 
 def load_settings(args) -> dict:
-    """从 DOC_INTAKE_SETTINGS 环境变量加载配置"""
+    """读取 JS 通过 stdin 传入的设置，环境变量仅作为旧版兼容回退。
+
+    当前入口的 stdin 只承载一份完整 JSON 配置，读取完成后立即关闭管道。
+    Windows 下不能可靠地用 select 轮询 TextIOWrapper，因此直接读取 EOF。
+    JS 端会在 spawn 后写入 JSON 并关闭 stdin，不会产生永久等待。
+    """
+    try:
+        # JS 正式入口将 stdin 连接为 pipe；直接在终端运行时不读取控制台，避免阻塞。
+        if not sys.stdin.isatty():
+            settings_str = sys.stdin.read()
+            if settings_str and settings_str.strip():
+                loaded = json.loads(settings_str)
+                if isinstance(loaded, dict):
+                    return loaded
+    except (EOFError, OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        pass
+
+    # 兼容直接命令行启动旧版本的调用方式；正式 JS 入口不会再注入该环境变量。
     settings_str = os.environ.get("DOC_INTAKE_SETTINGS")
     if settings_str:
         try:
-            return json.loads(settings_str)
-        except json.JSONDecodeError:
+            loaded = json.loads(settings_str)
+            return loaded if isinstance(loaded, dict) else {}
+        except (TypeError, json.JSONDecodeError):
             pass
     return {}
 
@@ -141,7 +160,7 @@ def extract_with_chain(
 
     for current_backend in backend_chain:
         attempted.append(current_backend)
-        logger.info("尝试后端", source=source, backend=current_backend)
+        logger.info("尝试后端", source=_display_source(source), backend=current_backend)
         start_time = time.time()
 
         try:
@@ -178,7 +197,7 @@ def extract_with_chain(
 
         except Exception as e:
             duration = time.time() - start_time
-            error_msg = str(e)
+            error_msg = _redact_runtime_secret(str(e), settings)
             logger.log_api_call(
                 api_name=current_backend,
                 success=False,
@@ -196,7 +215,9 @@ def extract_with_chain(
         result.warnings.append(f"所有后端都失败（最后档: {last}）")
         result.markdown = "# 错误\n\n所有提取后端都失败"
         for att in failed_atts:
-            result.warnings.append(f"  {att['backend']}: {att['reason']}")
+            result.warnings.append(
+                f"  {att['backend']}: {_redact_runtime_secret(att['reason'], settings)}"
+            )
     else:
         result.warnings.append("后端链为空")
         result.markdown = "# 错误\n\n后端链为空"
@@ -205,7 +226,32 @@ def extract_with_chain(
     return result
 
 
-def _is_successful_result(result: ExtractionResult) -> bool:
+def _display_source(source: str) -> str:
+    """日志中只保留文件名，避免把完整本地路径写入日志。"""
+    if source.startswith(("http://", "https://")):
+        return "<remote-url>"
+    return Path(source).name
+
+
+def _redact_runtime_secret(text: str, settings: dict) -> str:
+    """从通用降级错误中移除当前配置中的完整凭证。"""
+    value = str(text or "")
+    secrets = []
+    for item in settings.get("paddleTokens") or []:
+        if isinstance(item, str):
+            secrets.append(item)
+    for item in settings.get("mineruCredentials") or []:
+        if isinstance(item, dict):
+            secrets.extend([item.get("accessKey", ""), item.get("secretKey", "")])
+        elif isinstance(item, str):
+            secrets.append(item)
+    for secret in secrets:
+        if secret:
+            value = value.replace(str(secret), "[REDACTED]")
+    return value
+
+
+def _is_successful_result(result: ExtractionResult):
     """后端产出是否看作"成功"——有非错误 markdown 或有图片。"""
     if result.markdown and not result.markdown.startswith("# 错误"):
         return True
@@ -228,7 +274,9 @@ def _annotate_chain_result(
     )
     # 降级原因合并到 warnings，统一警告输出。避免 fallbackReasons 与 warnings 重叠。
     for att in failed_atts:
-        result.warnings.append(f"  {att['backend']}: {att['reason']}")
+        result.warnings.append(
+            f"  {att['backend']}: {_redact_runtime_secret(att['reason'], settings)}"
+        )
 
 
 def _extract_with_backend(
@@ -327,6 +375,18 @@ def _strip_all_image_tags(markdown: str) -> str:
     return _re.sub(r'\n{3,}', '\n\n', markdown)
 
 
+def _replace_markdown_media_reference(markdown: str, escaped_path: str, relative_path: str) -> str:
+    """替换 Markdown 图片路径，同时保留可选 title，不让空格被解析成 title。"""
+    pattern = rf'\]\(\s*{escaped_path}(?:\s+["\']([^"\']*)["\'])?\s*\)'
+    return _re.sub(
+        pattern,
+        lambda match: f']({relative_path}'
+        + (f' "{match.group(1)}"' if match.group(1) is not None else '')
+        + ')',
+        markdown,
+    )
+
+
 def _rewrite_media_paths(markdown: str, metadata: dict, stem: str) -> str:
     """将后端虚拟媒体路径改成统一输出目录下的相对路径。"""
     if not markdown:
@@ -341,17 +401,14 @@ def _rewrite_media_paths(markdown: str, metadata: dict, stem: str) -> str:
         else:
             local_name = Path(str(local_info)).name
         rel = f"{stem}_media/{local_name}"
+        rel_encoded = _url_quote(rel, safe="/:._-", encoding="utf-8")
         vp_escaped = _re.escape(virtual_path)
         markdown = _re.sub(
             rf'src="{vp_escaped}"',
-            f'src="{rel}"',
+            f'src="{rel_encoded}"',
             markdown,
         )
-        markdown = _re.sub(
-            rf'\]\({vp_escaped}(\s+[^)]*)?\)',
-            f']({rel}\\1)',
-            markdown,
-        )
+        markdown = _replace_markdown_media_reference(markdown, vp_escaped, rel_encoded)
     return markdown
 
 
@@ -440,7 +497,7 @@ def _run(args) -> dict:
 
     start_time = time.time()
     backend = settings.get("defaultBackend", "auto")
-    log.log_request(source=args.source, backend=backend, output_dir=args.output_dir)
+    log.log_request(source=_display_source(args.source), backend=backend, output_dir="<configured>" if args.output_dir else None)
 
     # 凭证按后端分别存，避免 PaddleOCR 拿到 MinerU 的 dict 凭证
     available_credentials = {
@@ -687,12 +744,13 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
             else:
                 local_name = Path(str(local_info)).name
             rel = f"{stem}_media/{local_name}"
+            rel_encoded = _url_quote(rel, safe="/:._-", encoding="utf-8")
             vp_escaped = _re.escape(virtual_path)
-            final_markdown = _re.sub(rf'src="{vp_escaped}"', f'src="{rel}"', final_markdown)
-            final_markdown = _re.sub(
-                rf'\]\({vp_escaped}(\s+[^)]*)?\)',
-                f']({rel}\\1)',
+            final_markdown = _re.sub(rf'src="{vp_escaped}"', f'src="{rel_encoded}"', final_markdown)
+            final_markdown = _replace_markdown_media_reference(
                 final_markdown,
+                vp_escaped,
+                rel_encoded,
             )
         logger.debug("Markdown 媒体路径已重写",
                      rewritten_count=len(media_map_for_rewrite),
@@ -742,7 +800,7 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
             path=str(md_path),
             success=False
         )
-        logger.error(f"保存文件失败: {e}")
+        logger.error(f"保存文件失败: {_redact_runtime_secret(str(e), settings)}")
 
     result.output_dir = str(output_path)
 

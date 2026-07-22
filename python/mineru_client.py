@@ -17,6 +17,14 @@ from logger import get_logger
 from key_pool import KeyPool
 
 
+def _redact_secret_text(text: str, secret: str | None = None) -> str:
+    """从异常/日志文本中移除可能回显的完整凭证。"""
+    value = str(text or "")
+    if secret:
+        value = value.replace(secret, "[REDACTED]")
+    return value
+
+
 class MinerUClient:
     """MinerU API 客户端（支持多 credential KeyPool，失败后自动切换）"""
 
@@ -148,22 +156,22 @@ class MinerUClient:
                 if any(k in error_msg for k in ["auth", "token", "401", "403", "quota", "limit"]):
                     self.mark_credential_failed(token or "")
                     self.logger.warning(
-                        f"MinerU Token 报错，准备切换",
+                        "MinerU 凭证报错，准备切换",
                         key=self._pool._cred_key(token or "")[:8] + "..." if token else "",
-                        error=str(e),
+                        error=_redact_secret_text(str(e), token),
                     )
                     attempt_failed = True
                     continue
                 else:
                     duration = time.time() - start_time
                     self.logger.log_api_call(
-                        api_name="mineru", success=False, duration=duration, error=str(e),
+                        api_name="mineru", success=False, duration=duration, error=_redact_secret_text(str(e), token),
                     )
                     raise
 
         # 跑完 max_attempts 都失败
         duration = time.time() - start_time
-        err_msg = f"MinerU 所有 {max_attempts} 个 credential 失败: {last_error}"
+        err_msg = f"MinerU 所有 {max_attempts} 个 credential 失败: {_redact_secret_text(str(last_error), token)}"
         self.logger.log_api_call(
             api_name="mineru", success=False, duration=duration, error=err_msg,
         )

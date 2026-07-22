@@ -25,6 +25,13 @@ metadata:
 
 ---
 
+## 安全边界
+
+- MinerU / PaddleOCR 凭证由 JS 通过一次性 stdin 管道传给 Python，不注入 `DOC_INTAKE_SETTINGS` 环境变量。
+- Python 仍保留环境变量读取，仅用于直接命令行调用的兼容回退；正式插件入口不会使用该回退。
+- Token 验证工具同样通过 stdin 传递凭证，命令行参数仅用于旧版手动调用。
+- 错误日志会遮蔽已知完整 Token，避免异常文本或第三方响应回显凭证。
+
 ## 工具 1：`doc_intake`
 
 ### 参数

@@ -76,7 +76,7 @@ def validate_mineru_token(token: str) -> dict:
     except requests.exceptions.ConnectionError:
         return {"ok": False, "key": mask_key(token), "message": "网络连接失败"}
     except Exception as e:
-        return {"ok": False, "key": mask_key(token), "message": f"验证异常: {str(e)}"}
+        return {"ok": False, "key": mask_key(token), "message": "验证异常（详细错误已隐藏）"}
 
 
 def validate_paddle_token(token: str) -> dict:
@@ -111,7 +111,21 @@ def validate_paddle_token(token: str) -> dict:
     except requests.exceptions.ConnectionError:
         return {"ok": False, "key": mask_key(token), "message": "网络连接失败"}
     except Exception as e:
-        return {"ok": False, "key": mask_key(token), "message": f"验证异常: {str(e)}"}
+        return {"ok": False, "key": mask_key(token), "message": "验证异常（详细错误已隐藏）"}
+
+
+def _load_validation_settings() -> dict:
+    """优先从 stdin 读取验证凭证，旧命令行参数作为兼容回退。"""
+    try:
+        if not sys.stdin.isatty():
+            raw = sys.stdin.read()
+            if raw and raw.strip():
+                value = json.loads(raw)
+                if isinstance(value, dict):
+                    return value
+    except (EOFError, OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    return {}
 
 
 def main():
@@ -120,25 +134,31 @@ def main():
     parser.add_argument("--mineru-creds", help="MinerU credentials JSON 数组")
     parser.add_argument("--paddle-tokens", help="PaddleOCR Tokens，分号分隔")
     args = parser.parse_args()
+    stdin_settings = _load_validation_settings()
 
-    # 解析 MinerU 凭证
-    mineru_credentials = []
-    if args.mineru_creds:
-        try:
-            mineru_credentials = json.loads(args.mineru_creds)
-        except json.JSONDecodeError:
-            pass
-    elif args.mineru_tokens:
-        mineru_credentials = [
-            {"accessKey": t.strip(), "secretKey": ""}
-            for t in args.mineru_tokens.split(";")
-            if t.strip()
-        ]
+    # 正式 JS 入口经 stdin 传递；命令行参数只保留给旧版手动调用。
+    mineru_credentials = stdin_settings.get("mineruCredentials")
+    if not isinstance(mineru_credentials, list):
+        mineru_credentials = []
+        if args.mineru_creds:
+            try:
+                parsed = json.loads(args.mineru_creds)
+                if isinstance(parsed, list):
+                    mineru_credentials = parsed
+            except json.JSONDecodeError:
+                pass
+        elif args.mineru_tokens:
+            mineru_credentials = [
+                {"accessKey": t.strip(), "secretKey": ""}
+                for t in args.mineru_tokens.split(";")
+                if t.strip()
+            ]
 
-    # 解析 PaddleOCR Tokens
-    paddle_tokens = []
-    if args.paddle_tokens:
-        paddle_tokens = [t.strip() for t in args.paddle_tokens.split(";") if t.strip()]
+    paddle_tokens = stdin_settings.get("paddleTokens")
+    if not isinstance(paddle_tokens, list):
+        paddle_tokens = []
+        if args.paddle_tokens:
+            paddle_tokens = [t.strip() for t in args.paddle_tokens.split(";") if t.strip()]
 
     # 逐个验证
     mineru_results = []

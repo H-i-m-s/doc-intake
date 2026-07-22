@@ -40,26 +40,18 @@ export async function execute(input = {}, ctx) {
 
     // 准备参数
     const args = [scriptPath];
-
-    if (backend === "all" || backend === "mineru") {
-      const mineruCreds = settings.mineruCredentials || [];
-      if (mineruCreds.length > 0) {
-        args.push("--mineru-creds", JSON.stringify(mineruCreds));
-      }
-    }
-
-    if (backend === "all" || backend === "paddleocr") {
-      const paddleTokens = settings.paddleTokens || [];
-      if (paddleTokens.length > 0) {
-        const tokensStr = Array.isArray(paddleTokens)
-          ? paddleTokens.join(";")
-          : String(paddleTokens);
-        args.push("--paddle-tokens", tokensStr);
-      }
-    }
+    const validationSettings = {
+      backend,
+      mineruCredentials: backend === "all" || backend === "mineru"
+        ? settings.mineruCredentials || []
+        : [],
+      paddleTokens: backend === "all" || backend === "paddleocr"
+        ? settings.paddleTokens || []
+        : [],
+    };
 
     // 没有配置任何凭证
-    if (args.length === 1) {
+    if (validationSettings.mineruCredentials.length === 0 && validationSettings.paddleTokens.length === 0) {
       const text = "⚠️ 未配置任何 Token，请先在插件设置中配置 MinerU 或 PaddleOCR 的凭证。\n\n" +
         "在设置 → 插件 → Doc Intake 中配置：\n" +
         "- mineruCredentials：MinerU Token（获取地址：https://mineru.net/apiManage/token）\n" +
@@ -69,7 +61,7 @@ export async function execute(input = {}, ctx) {
     }
 
     // 调 Python 脚本验证
-    const result = await runPython(pythonExe, args);
+    const result = await runPython(pythonExe, args, validationSettings);
 
     if (!result.ok) {
       return toToolResult(
@@ -89,14 +81,16 @@ export async function execute(input = {}, ctx) {
   }
 }
 
-function runPython(pythonExe, args) {
+function runPython(pythonExe, args, settings) {
   return new Promise((resolve) => {
     const child = spawn(pythonExe, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, PYTHONUTF8: "1" },
       windowsHide: true,
       timeout: 120000,
     });
+
+    child.stdin.end(JSON.stringify(settings));
 
     let stdout = "";
     let stderr = "";

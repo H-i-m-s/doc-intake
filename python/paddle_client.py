@@ -22,6 +22,14 @@ from logger import get_logger
 from key_pool import KeyPool
 
 
+def _redact_secret_text(text: str, secret: str | None = None) -> str:
+    """从异常/日志文本中移除可能回显的完整 Token。"""
+    value = str(text or "")
+    if secret:
+        value = value.replace(secret, "[REDACTED]")
+    return value
+
+
 class PaddleClient:
     """PaddleOCR HTTP API 客户端（不依赖 PyTorch）"""
 
@@ -164,14 +172,14 @@ class PaddleClient:
                             self.mark_token_failed(token)
                             self.logger.warning(
                                 f"Token {self._mask_key(token)} 报错，准备切换",
-                                error=str(e),
+                                error=_redact_secret_text(str(e), token),
                             )
                             attempt_failed = True
                             all_markdown = []
                             all_raw_images = []
                             break
                         # 其他错误（网络/解析）→ 不换 token，直接记录失败
-                        err_text = f"文件 {file_path or file_name} 提取失败: {str(e)}"
+                        err_text = f"文件 {file_path or file_name} 提取失败: {_redact_secret_text(str(e), token)}"
                         self.logger.error(err_text)
                         all_markdown.append(f"# 提取失败\n\n{err_text}")
 
