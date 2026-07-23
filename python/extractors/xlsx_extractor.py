@@ -416,13 +416,19 @@ class XlsxExtractor(BaseExtractor):
                         if col_index > max_cols:
                             continue
 
-                        value = ""
-                        for v in cell.iter():
-                            if _local_name(v.tag) == "v":
-                                value = v.text or ""
-                                break
-
                         cell_type = cell.get("t", "")
+                        value = ""
+                        if cell_type == "inlineStr":
+                            for inline_string in cell.iter():
+                                if _local_name(inline_string.tag) == "is":
+                                    value = _element_text(inline_string)
+                                    break
+                        else:
+                            for v in cell.iter():
+                                if _local_name(v.tag) == "v":
+                                    value = v.text or ""
+                                    break
+
                         if cell_type == "s" and value:
                             try:
                                 value = strings[int(value)]

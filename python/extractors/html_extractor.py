@@ -482,7 +482,7 @@ class HtmlExtractor(BaseExtractor):
             safe_stem = re.sub(r'[<>:"/\\|?*]', '_', Path(source).stem)[:50]
 
         # 处理 base64 媒体(图/音视频)
-        if output_dir and extract_images:
+        if output_dir and include_images and extract_images:
             result.markdown, base64_media = _process_base64_media(
                 result.markdown, output_dir, safe_stem
             )
