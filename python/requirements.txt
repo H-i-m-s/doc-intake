@@ -15,8 +15,8 @@ mineru-open-sdk>=0.2.0
 # HTML → Markdown 转换（不装则 HTML 解析返回错误提示）
 html-to-markdown>=0.5.0
 
-# MathType 公式提取（不装则 MathType 公式退化为图片，OMML 公式不受影响）
-mtef-py>=1.0.0
+# MathType MTEF 解析器已内置于 python/mathtype
+# 该目录可能包含针对 doc-intake 的本地修改，不再安装外部 mtef-py
 
 # ===== Windows 专用（仅 .ppt 旧格式需要）=====
 
