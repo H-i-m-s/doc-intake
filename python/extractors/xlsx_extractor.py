@@ -54,13 +54,22 @@ class XlsxExtractor(BaseExtractor):
         page_range: str | None = None,
         language: str = "zh",
         include_images: bool = True,
-        max_rows: int = 100,
-        max_cols: int = 50,
+        max_rows: int | None = None,
+        max_cols: int | None = None,
         **kwargs,
     ) -> ExtractionResult:
         path = self._check_file_exists(source)
         result = ExtractionResult()
+        max_rows = int(
+            max_rows if max_rows is not None else self.settings.get("xlsxMaxRows", 100)
+        )
+        max_cols = int(
+            max_cols if max_cols is not None else self.settings.get("xlsxMaxCols", 50)
+        )
+        if max_rows <= 0 or max_cols <= 0:
+            raise ValueError("xlsxMaxRows 和 xlsxMaxCols 必须大于 0")
 
+        truncation_warnings: list[str] = []
         with zipfile.ZipFile(path) as zf:
             names = set(zf.namelist())
 
@@ -97,9 +106,11 @@ class XlsxExtractor(BaseExtractor):
             # 提取文本（包含媒体引用）
             result.markdown = self._extract_text(
                 zf, sheets, strings, path.name, names, max_rows, max_cols,
-                include_images, media_map, media_anchors, path.stem
+                include_images, media_map, media_anchors, path.stem,
+                truncation_warnings,
             )
 
+        result.warnings.extend(truncation_warnings)
         result.metadata = {
             "format": "xlsx",
             "reader": "xlsx_extractor",
@@ -353,6 +364,7 @@ class XlsxExtractor(BaseExtractor):
         media_map: dict[int, ExtractedMedia] | None = None,
         media_anchors: dict | None = None,
         stem: str = "",
+        truncation_warnings: list[str] | None = None,
     ) -> str:
         """提取 XLSX 文本内容。
 
@@ -451,6 +463,23 @@ class XlsxExtractor(BaseExtractor):
                         while len(rows_out) < row_index - 1:
                             rows_out.append([""] * max_cols)
                         rows_out.append(values)
+
+                if any(
+                    int(row.get("r", "0")) > max_rows
+                    for row in sheet_root.iter()
+                    if _local_name(row.tag) == "row"
+                ) and truncation_warnings is not None:
+                    truncation_warnings.append(
+                        f"工作表“{sheet_name}”超过 {max_rows} 行，已截断"
+                    )
+                if any(
+                    _cell_ref_to_col_index(cell.get("r", "")) > max_cols
+                    for cell in sheet_root.iter()
+                    if _local_name(cell.tag) == "c"
+                ) and truncation_warnings is not None:
+                    truncation_warnings.append(
+                        f"工作表“{sheet_name}”超过 {max_cols} 列，已截断"
+                    )
 
                 lines.append(f"## Sheet: {sheet_name}")
                 lines.append("")

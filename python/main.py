@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # 使用绝对导入，避免相对导入问题
 from extractors.base import BaseExtractor, ExtractionResult
 from extractors import get_extractor
-from logger import get_logger, log
+from logger import configure_logging, get_logger, log
 from pdf_splitter import PdfMemoryChunk, iter_pdf_memory_chunks, pdf_page_count
 
 
@@ -279,6 +279,7 @@ def _annotate_chain_result(
     """在 result.metadata 里标出后端链实际走了几档、用哪档。降级原因合并到 warnings。"""
     result.metadata = result.metadata or {}
     result.metadata["backendChain"] = backend_chain
+    result.metadata["usedBackend"] = used_backend
     result.metadata["usedBackendInChain"] = bool(
         used_backend and used_backend in backend_chain
     )
@@ -345,6 +346,8 @@ def _extract_with_backend(
             pdf_bytes=pdf_bytes,
             display_name=display_name,
             page_offset=page_offset,
+            max_rows=settings.get("xlsxMaxRows"),
+            max_cols=settings.get("xlsxMaxCols"),
         )
 
     else:
@@ -442,6 +445,8 @@ def format_result(result: ExtractionResult):
         "format": meta.get("format"),
         "reader": meta.get("reader"),
         "backendChain": meta.get("backendChain"),
+        "usedBackend": meta.get("usedBackend"),
+        "usedBackends": meta.get("usedBackends"),
         "warnings": result.warnings,
         "usedBackendInChain": meta.get("usedBackendInChain"),
     }
@@ -498,12 +503,13 @@ def _iter_pdf_chunks_if_needed(args, settings: dict):
     chunks = iter_pdf_memory_chunks(args.source, pages_per_chunk)
     first = next(chunks, None)
     if first is None:
-        return []
+        return None
     return (first, chunks)
 
 
 def _run(args) -> dict:
     settings = load_settings(args)
+    configure_logging(settings)
 
     start_time = time.time()
     backend = settings.get("defaultBackend", "auto")
@@ -673,12 +679,18 @@ def _extract_memory_pdf_chunks(
     merged.markdown = "\n\n---\n\n".join(markdown_parts)
     merged.images = all_images
     merged.warnings = all_warnings
+    used_backends = {
+        chunk_result.metadata.get("usedBackend")
+        for _, chunk_result in chunk_results
+        if chunk_result.metadata and chunk_result.metadata.get("usedBackend")
+    }
     merged.metadata = {
         "format": "pdf",
         "reader": "chunked-memory",
         "chunkCount": len(chunk_results),
         "backendChain": backend_chain,
-        "usedBackendInChain": True,
+        "usedBackendInChain": bool(used_backends),
+        "usedBackends": sorted(used_backends),
     }
     merged.output_dir = output_dir
     return merged
@@ -696,6 +708,7 @@ def _extract_one_memory_chunk(
 ) -> ExtractionResult:
     chunk_settings = dict(settings)
     chunk_settings["mediaPrefix"] = f"chunk_{chunk.index:03d}_"
+    chunk_settings["isMemoryChunk"] = True
     result = extract_with_chain(
         source=args.source,
         file_type="pdf",
@@ -789,6 +802,8 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                     "format": meta.get("format"),
                     "reader": meta.get("reader"),
                     "backendChain": meta.get("backendChain"),
+                    "usedBackend": meta.get("usedBackend"),
+                    "usedBackends": meta.get("usedBackends"),
                     "warnings": result.warnings,
                     "usedBackendInChain": meta.get("usedBackendInChain"),
                 },

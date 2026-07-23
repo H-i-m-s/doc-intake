@@ -231,6 +231,18 @@
           "title": "HTML: 标题风格",
           "enum": ["ATX", "SETEXT"]
         },
+        "xlsxMaxRows": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "title": "XLSX 最大提取行数"
+        },
+        "xlsxMaxCols": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "title": "XLSX 最大提取列数"
+        },
         "autoSave": {
           "type": "boolean",
           "default": false,

@@ -28,16 +28,6 @@ class DocIntakeLogger:
             console.setFormatter(formatter)
             self.logger.addHandler(console)
             
-            # 文件输出（可选）
-            log_file = os.environ.get("DOC_INTAKE_LOG_FILE")
-            if log_file:
-                try:
-                    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-                    file_handler.setLevel(logging.DEBUG)
-                    file_handler.setFormatter(formatter)
-                    self.logger.addHandler(file_handler)
-                except Exception as e:
-                    self.logger.warning(f"无法创建日志文件 {log_file}: {e}")
     
     def _get_console_level(self) -> int:
         """从环境变量获取控制台日志级别"""
@@ -126,6 +116,56 @@ class DocIntakeLogger:
             self.info(f"文件{operation}成功", path=path, size_info=size_info)
         else:
             self.error(f"文件{operation}失败", path=path)
+
+
+def configure_logging(settings: dict | None = None) -> None:
+    """按插件配置应用控制台级别和日志文件。"""
+    settings = settings or {}
+    level_name = str(settings.get("logLevel") or "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    log_file = str(
+        settings.get("logFile") or os.environ.get("DOC_INTAKE_LOG_FILE") or ""
+    ).strip()
+    os.environ["DOC_INTAKE_LOG_LEVEL"] = level_name
+    if log_file:
+        os.environ["DOC_INTAKE_LOG_FILE"] = log_file
+    else:
+        os.environ.pop("DOC_INTAKE_LOG_FILE", None)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    for logger in [root_logger, logging.getLogger("doc-intake")]:
+        logger.setLevel(logging.DEBUG)
+
+    all_loggers = [root_logger]
+    all_loggers.extend(
+        logger
+        for logger in logging.Logger.manager.loggerDict.values()
+        if isinstance(logger, logging.Logger)
+    )
+
+    # 子 logger 只保留控制台 handler；文件输出统一由 root logger 承担，
+    # 避免每个后端各开一个文件句柄并重复写入。
+    for logger in all_loggers:
+        logger.setLevel(logging.DEBUG)
+        for handler in list(logger.handlers):
+            if isinstance(handler, logging.FileHandler):
+                logger.removeHandler(handler)
+                handler.close()
+            elif isinstance(handler, logging.StreamHandler):
+                handler.setLevel(level)
+
+    if log_file:
+        try:
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter(
+                "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            ))
+            root_logger.addHandler(file_handler)
+        except Exception:
+            pass
 
 
 # 全局日志实例（默认实例，使用 doc-intake 作为 logger 名）

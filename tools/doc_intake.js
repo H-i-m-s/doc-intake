@@ -81,7 +81,12 @@ function addGuideText(result) {
           : "other";
     kindCounts[kind] += 1;
   }
-  result.markdown = appendMediaGuide(result.markdown, count, kindCounts);
+  result.markdown = appendMediaGuide(
+    result.markdown,
+    count,
+    kindCounts,
+    Boolean(result.outputDir),
+  );
   return result;
 }
 
@@ -132,6 +137,8 @@ function toFileOutput(item) {
     backendChain: metadata.backendChain ?? null,
     warnings: metadata.warnings ?? [],
     usedBackendInChain: metadata.usedBackendInChain ?? null,
+    usedBackend: metadata.usedBackend ?? null,
+    usedBackends: metadata.usedBackends ?? [],
     markdown: result.markdown ?? "",
   };
 }
@@ -151,6 +158,8 @@ function buildResult(sources, results, settings = {}) {
         backendChain: file.backendChain ?? null,
         warnings: file.warnings ?? [],
         usedBackendInChain: file.usedBackendInChain ?? null,
+        usedBackend: file.usedBackend ?? null,
+        usedBackends: file.usedBackends ?? [],
       };
       if (file.mdPath) metadata.mdPath = file.mdPath;
       if (file.imagesDir) metadata.imagesDir = file.imagesDir;
@@ -180,6 +189,8 @@ function buildResult(sources, results, settings = {}) {
       backendChain: file.backendChain ?? null,
       warnings: file.warnings ?? [],
       usedBackendInChain: file.usedBackendInChain ?? null,
+      usedBackend: file.usedBackend ?? null,
+      usedBackends: file.usedBackends ?? [],
     };
     if (file.imagesDir) metadata.imagesDir = file.imagesDir;
     if (file.jsonPath) metadata.jsonPath = file.jsonPath;

@@ -375,6 +375,8 @@ doc-intake/
 | `htmlExtractImages` | `boolean` | `true` | 提取并下载所有图片。 |
 | `htmlExtractCodeBlocks` | `boolean` | `true` | 提取代码块并标注语言。 |
 | `htmlHeadingStyle` | `"ATX" \| "SETEXT"` | `"ATX"` | Markdown 标题风格。 |
+| `xlsxMaxRows` | `number` | `100` | XLSX 最大提取行数，超过时在 warnings 中提示截断。 |
+| `xlsxMaxCols` | `number` | `50` | XLSX 最大提取列数，超过时在 warnings 中提示截断。 |
 | `maxRemoteImagesPerHtml` | `number` | `100` | HTML 页面最多下载多少远程图片。 |
 
 ### 批量 & 日志

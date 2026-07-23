@@ -426,15 +426,24 @@ class HtmlExtractor(BaseExtractor):
             result.markdown = "# 错误\n\n无法读取 HTML 内容"
             return result
 
-        metadata = _extract_metadata(html_content)
+        extract_metadata = self.settings.get("htmlExtractMetadata", True)
+        extract_links = self.settings.get("htmlExtractLinks", True)
+        extract_images = self.settings.get("htmlExtractImages", True)
+        extract_code_blocks = self.settings.get("htmlExtractCodeBlocks", True)
+        heading_style = str(self.settings.get("htmlHeadingStyle", "ATX")).upper()
+        if heading_style == "SETEXT":
+            heading_style = "underlined"
+
+        metadata = _extract_metadata(html_content) if extract_metadata else {}
         result.metadata = metadata
 
         try:
             from html_to_markdown import convert, ConversionOptions
 
             options = ConversionOptions(
-                heading_style="atx",
+                heading_style=heading_style,
                 extract_metadata=False,
+                skip_images=not extract_images,
             )
 
             convert_result = convert(html_content, options)
@@ -473,7 +482,7 @@ class HtmlExtractor(BaseExtractor):
             safe_stem = re.sub(r'[<>:"/\\|?*]', '_', Path(source).stem)[:50]
 
         # 处理 base64 媒体(图/音视频)
-        if output_dir:
+        if output_dir and extract_images:
             result.markdown, base64_media = _process_base64_media(
                 result.markdown, output_dir, safe_stem
             )
@@ -481,7 +490,7 @@ class HtmlExtractor(BaseExtractor):
                 result.images.append(m.local_path)
 
         # 下载远程媒体(图/音视频)
-        if include_images and output_dir:
+        if include_images and extract_images and output_dir:
             downloaded = self._download_remote_media(
                 html_content, output_dir, safe_stem
             )
@@ -495,21 +504,26 @@ class HtmlExtractor(BaseExtractor):
 
         if save_json:
             headings = _extract_headings(html_content)
-            links = _extract_links(html_content)
-            media_info = _extract_media_info(html_content)
-            code_blocks = _extract_code_blocks(html_content)
+            links = _extract_links(html_content) if extract_links else []
+            media_info = _extract_media_info(html_content) if extract_images else []
+            code_blocks = _extract_code_blocks(html_content) if extract_code_blocks else []
 
-            result.metadata["标题列表"] = headings
-            result.metadata["链接列表"] = links
-            result.metadata["媒体列表"] = media_info
-            result.metadata["代码块"] = code_blocks
-            result.metadata["统计"] = {
-                "字数": _count_words(result.markdown),
-                "标题数": len(headings),
-                "链接数": len(links),
-                "媒体数": len(media_info),
-                "代码块数": len(code_blocks),
-            }
+            if extract_metadata:
+                result.metadata["标题列表"] = headings
+            if extract_links:
+                result.metadata["链接列表"] = links
+            if extract_images:
+                result.metadata["媒体列表"] = media_info
+            if extract_code_blocks:
+                result.metadata["代码块"] = code_blocks
+            if extract_metadata:
+                result.metadata["统计"] = {
+                    "字数": _count_words(result.markdown),
+                    "标题数": len(headings),
+                    "链接数": len(links),
+                    "媒体数": len(media_info),
+                    "代码块数": len(code_blocks),
+                }
 
         return result
 
