@@ -48,7 +48,7 @@
 - **敏感配置隔离**：MinerU / PaddleOCR 凭证通过一次性 stdin 管道传给 Python，不再注入 `DOC_INTAKE_SETTINGS` 环境变量；旧环境变量仅保留给手动兼容调用
 - **敏感错误脱敏**：第三方异常、降级警告和日志会遮蔽已知完整 Token，避免凭证随错误文本回显
 
-- **后端降级链**：PDF 默认走 `MinerU → PaddleOCR → 本地 PyMuPDF`，任一环节失败自动降级到下一档，保证"有总比没有好"
+- **后端降级链**：PDF 默认只走本地 PyMuPDF，避免无 Token 时隐式上传原件；用户可在设置中显式配置 `MinerU → PaddleOCR → local` 等链，失败自动降级到下一档
 - **多 Token 轮询**：每个云端 API 支持配置多个 Token，单个失效自动切换下一个，不中断批处理
 - **双池并发**：云端 API 和本地解析分别走独立的并发池，互不抢资源
 - **归一化输出**：所有后端产出统一为 Markdown + 媒体文件，调用方不需要关心底层用的是哪个引擎
@@ -89,20 +89,20 @@ pip install -r python/requirements.txt
    - MinerU Token：https://mineru.net/apiManage/token
    - PaddleOCR Token：https://aistudio.baidu.com/account/accessToken
 
-没有 Token 也能用：PDF 会走 Flash 模式（无 Token 的 MinerU），图片 OCR 则不可用。
+没有 Token 也能用：PDF 默认走本地 PyMuPDF，不会隐式调用云端；如需 MinerU/PaddleOCR，请在设置中显式配置后端链并提供对应凭证。图片 OCR 仍需要 PaddleOCR Token。
 
 ### 后续推荐操作
 
 #### 1. 配置云端 Token
 
-插件的 PDF 降级链是 `MinerU → PaddleOCR → 本地 PyMuPDF`，图片 OCR 只有 PaddleOCR 一档。要让降级链完整覆盖扫描件和图片，需要配置云端 Token：
+插件支持用户显式配置 `MinerU → PaddleOCR → 本地 PyMuPDF` 等 PDF 降级链，图片 OCR 只有 PaddleOCR 一档。要让扫描件和图片具备云端识别能力，需要配置对应 Token：
 
 - **MinerU Token**：[获取地址](https://mineru.net/apiManage/token) → 填入插件设置面板的 `mineruCredentials`（多个用分号分隔）
 - **PaddleOCR Token**：[获取地址](https://aistudio.baidu.com/account/accessToken) → 填入插件设置面板的 `paddleTokens`（多个用分号分隔）
 
 > ⚠️ MinerU Token 有效期 **90 天**，到期后提取会失败并自动降级到 PaddleOCR / 本地档。建议日历提醒自己续期。
 
-没有 Token 也能用：PDF 会走 MinerU Flash 模式（无需认证，但精度低于 Precision 模式），图片 OCR 则不可用。
+没有 Token 也能用：PDF 默认走本地 PyMuPDF，不会隐式调用 MinerU Flash；如需云端识别，请显式配置云端后端并提供对应 Token。图片 OCR 仍需要 PaddleOCR Token。
 
 #### 2. 验证 Token 是否生效
 
@@ -319,7 +319,7 @@ doc-intake/
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `pdfBackendChain` | `string[]` | `["mineru", "paddleocr", "local"]` | PDF 后端降级链，按顺序尝试，失败自动降级到下一档。 |
+| `pdfBackendChain` | `string[]` | `["local"]` | PDF 后端降级链，默认只使用本地后端；用户显式配置云端后按顺序尝试，失败自动降级到下一档。 |
 | `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF（在插件 Python 进程内按 `splitChunkPages` 生成内存 PDF bytes，直接上传云端，不创建 `*_chunks` 文件夹）。 |
 | `splitChunkPages` | `number` | `180` | 内存分块时每块页数（小于 MinerU 200 页限制）。 |
 
@@ -401,7 +401,7 @@ doc-intake/
     "mediaPaths": ["/path/to/report_media/image_001.png"],
     "format": "pdf",
     "reader": "mineru",
-    "backendChain": ["mineru", "paddleocr", "local"],
+    "backendChain": ["local"],
     "warnings": [],
     "usedBackendInChain": true
   }

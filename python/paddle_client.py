@@ -20,6 +20,7 @@ from image_splitter import ImageSplitter, merge_markdown_deduplicate
 from utils import normalize_images
 from logger import get_logger
 from key_pool import KeyPool
+from pdf_splitter import crop_pdf_to_page_range
 
 
 def _redact_secret_text(text: str, secret: str | None = None) -> str:
@@ -89,6 +90,16 @@ class PaddleClient:
         result = ExtractionResult()
         start_time = time.time()
         retry_enabled = self.settings.get("keyRetryOnFailure", True)
+
+        # pageRange 是云端边界：上传前先在本地裁剪，不能把原始 PDF 交给 API。
+        if (
+            pdf_bytes is None
+            and page_range
+            and Path(source).suffix.lower() == ".pdf"
+            and not source.startswith(("http://", "https://"))
+        ):
+            self.logger.debug("按 pageRange 在本地裁剪 PDF", page_range=page_range)
+            pdf_bytes = crop_pdf_to_page_range(source, page_range)
 
         # 准备一次性创建的资源（图片分割等），不随 token retry 重做
         file_payloads: list[tuple[str | None, bytes | None, str]] = [

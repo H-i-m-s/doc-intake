@@ -46,7 +46,7 @@ function entryBackendKind(source, input, settings) {
 
   const ext = extname(source).toLowerCase();
   if (ext === ".pdf") {
-    const chain = settings?.pdfBackendChain || ["mineru", "paddleocr", "local"];
+    const chain = settings?.pdfBackendChain || ["local"];
     return chain[0] === "local" ? "local" : "api";
   }
   if ([".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif"].includes(ext)) {

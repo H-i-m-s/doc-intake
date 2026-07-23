@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List
+import re
 import shutil
 
 import fitz  # PyMuPDF
@@ -15,6 +16,53 @@ import fitz  # PyMuPDF
 from logger import get_logger
 
 logger = get_logger("pdf_splitter")
+
+_PAGE_RANGE_PATTERN = re.compile(r"\s*(\d+)(?:\s*-\s*(\d+))?\s*")
+
+
+def parse_page_range(spec: str | None, total_pages: int) -> list[int]:
+    """解析 1-based 页码范围，并返回去重后的升序页码列表。"""
+    if not spec:
+        return list(range(1, total_pages + 1))
+
+    selected: set[int] = set()
+    for match in _PAGE_RANGE_PATTERN.finditer(spec):
+        start = int(match.group(1))
+        end = int(match.group(2)) if match.group(2) else start
+        if start > end:
+            start, end = end, start
+        selected.update(
+            page for page in range(start, end + 1)
+            if 1 <= page <= total_pages
+        )
+    return sorted(selected)
+
+
+def crop_pdf_to_page_range(source: str | Path, page_range: str) -> bytes:
+    """在本地裁剪 PDF，只返回指定页组成的新 PDF bytes。
+
+    该函数用于云端后端上传前的边界处理，调用方不得在 page_range 无效时
+    回退为上传原始 PDF。
+    """
+    source = Path(source)
+    if not source.exists():
+        raise FileNotFoundError(f"PDF 不存在: {source}")
+
+    src_doc = fitz.open(source)
+    try:
+        pages = parse_page_range(page_range, len(src_doc))
+        if not pages:
+            raise ValueError("页码范围无有效页")
+
+        cropped = fitz.open()
+        try:
+            for page in pages:
+                cropped.insert_pdf(src_doc, from_page=page - 1, to_page=page - 1)
+            return cropped.tobytes()
+        finally:
+            cropped.close()
+    finally:
+        src_doc.close()
 
 
 @dataclass(frozen=True)

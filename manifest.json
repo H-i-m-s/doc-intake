@@ -24,7 +24,7 @@
             "type": "string",
             "enum": ["mineru", "paddleocr", "local"]
           },
-          "default": ["mineru", "paddleocr", "local"],
+          "default": ["local"],
           "title": "PDF 后端降级链（按顺序尝试，失败自动降级到下一档）"
         },
         "mineruCredentials": {

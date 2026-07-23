@@ -53,7 +53,7 @@ metadata:
 
 | 文件类型 | 默认链 | 说明 |
 |---------|--------|------|
-| PDF | mineru → paddleocr → local | 失败自动降级到下一档 |
+| PDF | local | 默认只走本地；用户显式配置云端链后失败自动降级到下一档 |
 | 图片（jpg/png/webp/tiff/...） | paddleocr | 自动长图分割 |
 | DOCX / PPTX / XLSX / HTML | local | 本地 Python 解析 |
 | .ppt | local | 本地用 PowerPoint 转成 .pptx 后处理 |

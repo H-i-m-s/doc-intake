@@ -6,11 +6,15 @@ import json
 import re
 import urllib.request
 import urllib.parse
+import ipaddress
+import socket
 from pathlib import Path
 from typing import Optional
 
 from .base import BaseExtractor, ExtractionResult
 from ._utils import ExtractedMedia, classify_media, format_media_ref, media_filename
+
+MAX_REMOTE_MEDIA_BYTES = 50 * 1024 * 1024
 
 
 def _extract_meta_content(html: str, name: str) -> Optional[str]:
@@ -555,6 +559,25 @@ class HtmlExtractor(BaseExtractor):
         except Exception:
             return None
 
+    @staticmethod
+    def _is_public_remote_url(url: str) -> bool:
+        """仅允许 HTTP(S) 公网地址，阻断本机、私网和保留地址。"""
+        try:
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+                return False
+            host = parsed.hostname
+            if host.lower() in {"localhost", "localhost.localdomain"}:
+                return False
+            addresses = socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
+            for address in addresses:
+                ip = ipaddress.ip_address(address[4][0])
+                if not ip.is_global:
+                    return False
+            return True
+        except (ValueError, OSError, socket.gaierror):
+            return False
+
     def _download_remote_media(self, html: str, output_dir: str, stem: str) -> list[ExtractedMedia]:
         """下载远程媒体(图片/视频/音频),按 kind 分别连续编号。
 
@@ -586,6 +609,10 @@ class HtmlExtractor(BaseExtractor):
                 if url.startswith("//"):
                     url = "https:" + url
 
+                if not self._is_public_remote_url(url):
+                    self.logger.warning("拒绝下载非公网媒体地址", url=url)
+                    continue
+
                 ext = self._get_media_ext(url)
                 kind = classify_media(ext)
                 # 兜底:按 HTML 标签强制分类
@@ -596,7 +623,29 @@ class HtmlExtractor(BaseExtractor):
                 filename = media_filename(kind, counters[kind], ext)
                 filepath = media_dir / filename
 
-                urllib.request.urlretrieve(url, str(filepath))
+                request = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "doc-intake/1.0"},
+                )
+                temp_filepath = filepath.with_name(f".{filepath.name}.download")
+                try:
+                    with urllib.request.urlopen(request, timeout=30) as response:
+                        content_length = response.headers.get("Content-Length")
+                        if content_length and int(content_length) > MAX_REMOTE_MEDIA_BYTES:
+                            raise ValueError("远程媒体超过 50MB 限制")
+                        total = 0
+                        with open(temp_filepath, "wb") as output:
+                            while True:
+                                chunk = response.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                total += len(chunk)
+                                if total > MAX_REMOTE_MEDIA_BYTES:
+                                    raise ValueError("远程媒体超过 50MB 限制")
+                                output.write(chunk)
+                    temp_filepath.replace(filepath)
+                finally:
+                    temp_filepath.unlink(missing_ok=True)
                 downloaded.append(ExtractedMedia(
                     local_path=str(filepath),
                     original_path=url,

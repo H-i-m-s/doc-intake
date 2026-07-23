@@ -15,6 +15,7 @@ from extractors.base import ExtractionResult
 from utils import normalize_images
 from logger import get_logger
 from key_pool import KeyPool
+from pdf_splitter import crop_pdf_to_page_range
 
 
 def _redact_secret_text(text: str, secret: str | None = None) -> str:
@@ -141,6 +142,7 @@ class MinerUClient:
                     include_images=include_images,
                     pdf_bytes=pdf_bytes,
                     display_name=display_name,
+                    page_range=page_range,
                 )
                 duration = time.time() - start_time
                 self.logger.log_api_call(
@@ -231,10 +233,15 @@ class MinerUClient:
         include_images: bool,
         pdf_bytes: bytes | None = None,
         display_name: str | None = None,
+        page_range: str | None = None,
     ) -> ExtractionResult:
         """单次 MinerU SDK 调用（出错由上层 extract 捕获）"""
         from mineru import MinerU as _MinerU
         client = _MinerU(token) if token else _MinerU()
+
+        if pdf_bytes is None and page_range and not source.startswith(("http://", "https://")):
+            self.logger.debug("按 pageRange 在本地裁剪 PDF", page_range=page_range)
+            pdf_bytes = crop_pdf_to_page_range(source, page_range)
 
         try:
             if pdf_bytes is not None:

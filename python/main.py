@@ -6,6 +6,7 @@ import json
 import os
 import re as _re
 import sys
+import tempfile
 import time
 from urllib.parse import quote as _url_quote
 from contextlib import contextmanager
@@ -121,7 +122,7 @@ def select_backend_chain(
         return [explicit_backend]
 
     if file_type == "pdf":
-        chain = settings.get("pdfBackendChain") or ["mineru", "paddleocr", "local"]
+        chain = settings.get("pdfBackendChain") or ["local"]
     elif file_type == "image":
         chain = ["paddleocr"]
     elif file_type in ("docx", "pptx", "ppt", "xlsx", "xlsm", "html", "htm"):
@@ -185,7 +186,9 @@ def extract_with_chain(
                     success=True,
                     duration=duration,
                 )
-                _annotate_chain_result(result, backend_chain, current_backend, failed_atts)
+                _annotate_chain_result(
+                    result, backend_chain, current_backend, failed_atts, settings
+                )
                 return result
 
             reason = result.markdown[:80] if result.markdown else "空结果"
@@ -222,7 +225,13 @@ def extract_with_chain(
         result.warnings.append("后端链为空")
         result.markdown = "# 错误\n\n后端链为空"
 
-    _annotate_chain_result(result, backend_chain, attempted[-1] if attempted else None, failed_atts)
+    _annotate_chain_result(
+        result,
+        backend_chain,
+        None,
+        failed_atts,
+        settings,
+    )
     return result
 
 
@@ -265,12 +274,13 @@ def _annotate_chain_result(
     backend_chain: list[str],
     used_backend: Optional[str],
     failed_atts: list[dict[str, str]],
+    settings: dict,
 ) -> None:
     """在 result.metadata 里标出后端链实际走了几档、用哪档。降级原因合并到 warnings。"""
     result.metadata = result.metadata or {}
     result.metadata["backendChain"] = backend_chain
-    result.metadata["usedBackendInChain"] = (
-        used_backend in backend_chain if used_backend else False
+    result.metadata["usedBackendInChain"] = bool(
+        used_backend and used_backend in backend_chain
     )
     # 降级原因合并到 warnings，统一警告输出。避免 fallbackReasons 与 warnings 重叠。
     for att in failed_atts:
@@ -472,7 +482,7 @@ def _iter_pdf_chunks_if_needed(args, settings: dict):
     """在内存中生成 PDF chunk；非 PDF 或未超阈值时返回 None。"""
     if detect_file_type(args.source) != "pdf":
         return None
-    # 指定页码范围时由后端一次性处理，避免把原始页码错误解释成 chunk 内页码。
+    # 指定页码范围由 _run 在进入云端链前裁剪，不能把原始 PDF 直接上传。
     if args.page_range:
         return None
     if settings.get("autoSplitLargePDF", True) is False:
@@ -597,7 +607,12 @@ def _finalize_single_result(
 ) -> dict:
     result.name = args.source
     if output_dir and result.markdown:
-        save_result(result, args.source, output_dir, settings.get("saveJson", False))
+        try:
+            save_result(result, args.source, output_dir, settings.get("saveJson", False))
+        except Exception as exc:
+            result.warnings.append(f"保存失败: {exc}")
+            result.metadata["saveStatus"] = "failed"
+            result.output_dir = None
     else:
         result.output_dir = output_dir
 
@@ -723,13 +738,14 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
 
     md_path = output_path / f"{filename}.md"
     json_path = output_path / f"{filename}.json"
+    if md_path.exists() or json_path.exists():
+        result.metadata["saveStatus"] = "failed"
+        raise FileExistsError(
+            f"输出文件已存在，默认拒绝覆盖: {md_path}"
+        )
 
-    # 顶部设 result.md_path / result.images_dir。JSON 写入会读 result.md_path（批量模式 metadata 需要）。
-    # images_dir 字段名仅为向后兼容 — 实际指向 {stem}_media 目录。
+    # 只有全部写入并回读验证成功后，才把路径写入结果。
     stem = Path(filename).stem
-    result.md_path = str(md_path)
-    if result.images:
-        result.images_dir = str(output_path / f"{stem}_media")
 
     # 重写 markdown 里的虚拟路径(比如 MinerU 返回的 'images/xxx.png'、
     # PaddleOCR 的 'imgs/xxx.jpg') → 本地路径 '{stem}_media/xxx.ext'。
@@ -756,22 +772,15 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                      rewritten_count=len(media_map_for_rewrite),
                      total=len(media_map_for_rewrite))
 
+    temp_paths: list[Path] = []
+    committed_paths: list[Path] = []
     try:
         # base64 图片最后抹除，防止一坨 base64 进 markdown 让人看 / agent 渲染。
         final_markdown = _strip_data_url_images(final_markdown)
+        md_bytes = final_markdown.encode("utf-8")
 
-        # 保存 Markdown
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(final_markdown)
-
-        logger.log_file_operation(
-            operation="保存",
-            path=str(md_path),
-            success=True,
-            size=len(final_markdown.encode('utf-8'))
-        )
-
-        # 保存 JSON（如果启用了 saveJson）
+        json_data = None
+        json_bytes = None
         if save_json:
             json_data = {
                 "content": final_markdown,
@@ -784,25 +793,68 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                     "usedBackendInChain": meta.get("usedBackendInChain"),
                 },
             }
-            with open(json_path, "w", encoding="utf-8") as f:
-                import json
-                json.dump(json_data, f, ensure_ascii=False, indent=2)
+            json_bytes = json.dumps(json_data, ensure_ascii=False, indent=2).encode("utf-8")
 
-            logger.log_file_operation(
-                operation="保存",
-                path=str(json_path),
-                success=True,
-                size=len(json.dumps(json_data, ensure_ascii=False).encode('utf-8'))
+        def atomic_write(path: Path, data: bytes) -> None:
+            fd, temp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
             )
-    except Exception as e:
+            temp_path = Path(temp_name)
+            temp_paths.append(temp_path)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_path, path)
+                temp_paths.remove(temp_path)
+                committed_paths.append(path)
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
+
+        atomic_write(md_path, md_bytes)
+        if md_path.read_bytes() != md_bytes:
+            raise OSError(f"写后校验失败: {md_path}")
+        if json_bytes is not None:
+            atomic_write(json_path, json_bytes)
+            if json_path.read_bytes() != json_bytes:
+                raise OSError(f"写后校验失败: {json_path}")
+
+        result.md_path = str(md_path)
+        if result.images:
+            result.images_dir = str(output_path / f"{stem}_media")
+        result.output_dir = str(output_path)
+        result.metadata["saveStatus"] = "saved"
+        result.metadata["mdPath"] = str(md_path)
+        if json_bytes is not None:
+            result.metadata["jsonPath"] = str(json_path)
         logger.log_file_operation(
             operation="保存",
             path=str(md_path),
-            success=False
+            success=True,
+            size=len(md_bytes),
         )
-        logger.error(f"保存文件失败: {_redact_runtime_secret(str(e), settings)}")
-
-    result.output_dir = str(output_path)
+    except Exception as e:
+        for temp_path in temp_paths + committed_paths:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        result.md_path = None
+        result.images_dir = None
+        result.output_dir = None
+        result.metadata["saveStatus"] = "failed"
+        logger.log_file_operation(
+            operation="保存",
+            path=str(md_path),
+            success=False,
+        )
+        logger.error(f"保存文件失败: {_redact_runtime_secret(str(e), {})}")
+        raise OSError(f"保存结果失败: {e}") from e
 
 
 if __name__ == "__main__":
