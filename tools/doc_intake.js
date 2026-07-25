@@ -127,7 +127,6 @@ function toFileOutput(item) {
   const metadata = result.metadata ?? {};
   return {
     name: item.source,
-    status: "success",
     outputDir: result.outputDir ?? null,
     mdPath: metadata.mdPath ?? null,
     imagesDir: metadata.imagesDir ?? null,
@@ -176,9 +175,9 @@ function buildResult(sources, results, settings = {}) {
       : toToolResult(detailFiles);
   }
 
-  const successCount = filesOut.filter((file) => file.status === "success").length;
+  const successCount = filesOut.filter((file) => !file.warnings || file.warnings.length === 0).length;
   const summary = filesOut.map((file) => {
-    const ok = file.status === "success";
+    const ok = !file.warnings || file.warnings.length === 0;
     return `${ok ? "✅" : "❌"} ${file.name}${ok ? "" : " — " + (file.warnings[0] ?? "失败")}`;
   });
   const summaryFiles = filesOut.map((file) => {
@@ -254,8 +253,6 @@ export const parameters = {
   },
   required: ["source"],
 };
-
-export { buildResult };
 
 export async function execute(input = {}, ctx) {
   try {

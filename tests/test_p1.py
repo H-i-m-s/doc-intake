@@ -47,24 +47,8 @@ def test_html_configuration_switches() -> None:
     assert not result.images
     assert all(
         key not in result.metadata
-        for key in ("标题", "标题列表", "链接列表", "媒体列表", "代码块", "统计")
+        for key in ("标题", "链接列表", "媒体列表", "代码块")
     )
-
-
-def test_html_metadata_switch_with_save_json() -> None:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        html_path = Path(temp_dir) / "metadata-off.html"
-        html_path.write_text(
-            "<html><head><title>T</title></head><body><h1>Heading</h1></body></html>",
-            encoding="utf-8",
-        )
-        result = HtmlExtractor({"htmlExtractMetadata": False}).extract(
-            str(html_path), output_dir=temp_dir, save_json=True
-        )
-
-    assert "标题" not in result.metadata
-    assert "标题列表" not in result.metadata
-    assert "统计" not in result.metadata
 
 
 def test_xlsx_truncation_warning_and_limits() -> None:

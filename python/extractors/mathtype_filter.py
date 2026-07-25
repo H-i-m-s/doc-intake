@@ -23,8 +23,8 @@ def filter_mathtype_previews(
     mathtype_preview_files = set()
     
     for media in media_files:
-        # 检查是否是 WMF 文件
-        if media.lower().endswith(".wmf"):
+        # 检查是否是 WMF/EMF 文件
+        if media.lower().endswith((".wmf", ".emf")):
             try:
                 info = zf.getinfo(media)
                 if info.file_size < max_wmf_size:
@@ -47,7 +47,7 @@ def should_skip_media(media_name: str, zf, max_wmf_size: int = 5000) -> bool:
     Returns:
         True 如果应该跳过，False 如果应该保留
     """
-    if media_name.lower().endswith(".wmf"):
+    if media_name.lower().endswith((".wmf", ".emf")):
         try:
             info = zf.getinfo(media_name)
             return info.file_size < max_wmf_size

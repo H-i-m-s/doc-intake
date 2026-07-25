@@ -1,6 +1,6 @@
 {
   "name": "doc-intake",
-  "version": "1.6.5",
+  "version": "1.0.0",
   "type": "module",
   "description": "Document and image content extraction plugin for Hana",
   "engines": {

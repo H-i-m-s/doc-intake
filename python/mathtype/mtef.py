@@ -1204,28 +1204,23 @@ class MTEF:
 
                 # 多个line字符串数据以 \\ 分割
                 if idx > 0:
-                    buf + " \\\\ "
+                    buf += " \\\\ "
 
                 buf += _latex
                 idx += 1
             return buf, None
         elif ast.tag == RecordType.MATRIX:
-            matrixCol = int(ast.value.cols)
-            idx = 0
-            for _ast in ast.children:
+            matrix_col = max(1, int(ast.value.cols))
+            for idx, _ast in enumerate(ast.children):
                 _latex, _ = self.makeLatex(_ast)
 
                 if idx == 0:
                     buf += " \\begin{array} {} "
-                    continue
-
-                buf += _latex
-
-                if idx%matrixCol == 0:
+                elif idx % matrix_col == 0:
                     buf += " \\\\ "
                 else:
                     buf += " & "
-                idx += 1
+                buf += _latex
 
             buf += " \\end{array} "
             return buf, None

@@ -174,7 +174,8 @@ class MathTypeConverter:
             
             # 解析头部
             cbHdr = struct.unpack('<H', eq_data[0:2])[0]
-            cbSize = struct.unpack('<I', eq_data[10:14])[0]
+            # Equation Native 头部布局为 cbHdr(2) + version(4) + cf(2) + cbSize(4)。
+            cbSize = struct.unpack('<I', eq_data[8:12])[0]
             
             if cbHdr + cbSize > len(eq_data):
                 # 数据范围错误，尝试使用剩余数据

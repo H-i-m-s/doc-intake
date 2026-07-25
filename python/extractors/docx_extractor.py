@@ -1,6 +1,7 @@
 """DOCX 文档提取器"""
 from __future__ import annotations
 
+import posixpath
 import re
 import zipfile
 from pathlib import Path
@@ -9,7 +10,6 @@ from xml.etree import ElementTree as ET
 from .base import BaseExtractor, ExtractionResult
 from .emf_converter import extract_and_convert_media
 from .omml_converter import OmmlToLatexConverter
-from .mathtype_filter import filter_mathtype_previews
 from ._utils import (
     ExtractedMedia,
     format_media_ref,
@@ -20,6 +20,27 @@ from ._utils import (
 from logger import get_logger
 
 logger = get_logger("docx_extractor")
+
+
+def _attr_by_local_name(element: ET.Element, name: str) -> str:
+    """读取属性的本地名，兼容 Transitional 与 Strict OOXML 命名空间。"""
+    for key, value in element.attrib.items():
+        if _local_name(key) == name:
+            return value
+    return ""
+
+
+def _docx_target_candidates(target: str) -> list[str]:
+    """生成 DOCX 关系 Target 的候选 ZIP 路径。"""
+    normalized = (target or "").replace("\\", "/").lstrip("/")
+    candidates: list[str] = []
+    if normalized.startswith(("media/", "embeddings/")):
+        candidates.append(f"word/{normalized}")
+    candidates.append(posixpath.normpath(posixpath.join("word", normalized)))
+    # 兼容旧文档里把 ../media 写成 word/media 的非标准写法。
+    stripped = re.sub(r"^(?:\.\./)+", "", normalized)
+    candidates.append(f"word/{stripped}")
+    return list(dict.fromkeys(candidates))
 
 
 class DocxExtractor(BaseExtractor):
@@ -62,13 +83,20 @@ class DocxExtractor(BaseExtractor):
                 result.warnings.append("无效的 DOCX 文件")
                 return result
 
-            # 抽取所有媒体(图片/视频/音频),按 document.xml.rels 引用顺序排序
+            # 先提取 MathType 公式，再决定哪些媒体需要落盘。
+            # 成功转换的公式不需要预览图；失败公式只保留其 Fallback 图，避免导出数百个无引用 WMF。
+            mathtype_equations = []
+            if self.mathtype_converter:
+                try:
+                    mathtype_equations = self.mathtype_converter.extract_mathtype_from_docx(source)
+                except Exception as e:
+                    logger.warning("MathType 提取失败，公式将退化为图片", error=str(e), source=source)
+
+            # 抽取正文实际引用的媒体(图片/视频/音频),按 document.xml.rels 引用顺序排序。
             media_list: list[ExtractedMedia] = []
             if include_images:
-                media_files = sorted(name for name in names if name.startswith("word/media/"))
-                # 过滤 MathType 预览图片
-                media_files = filter_mathtype_previews(media_files, zf)
-                # 按 document.xml 中 rId 出现顺序排(避免 zip 名排序后顺序跳变)
+                all_media_files = sorted(name for name in names if name.startswith("word/media/"))
+                media_files = self._select_media_files(zf, all_media_files, mathtype_equations)
                 media_files = self._sort_media_by_refs(zf, media_files)
                 media_list = extract_and_convert_media(media_files, zf, output_dir or "", path.stem)
                 result.images = [m.local_path for m in media_list]
@@ -78,14 +106,6 @@ class DocxExtractor(BaseExtractor):
                 {m.original_path: m for m in media_list} if include_images else {}
             )
 
-            # 提取 MathType 公式
-            mathtype_equations = []
-            if self.mathtype_converter:
-                try:
-                    mathtype_equations = self.mathtype_converter.extract_mathtype_from_docx(source)
-                except Exception as e:
-                    logger.warning("MathType 提取失败，公式将退化为图片", error=str(e), source=source)
-
             # 提取文本
             stem = path.stem
             result.markdown = self._extract_text(
@@ -94,6 +114,103 @@ class DocxExtractor(BaseExtractor):
 
         result.metadata = {"format": "docx", "reader": "docx_extractor"}
         return result
+
+    def _select_media_files(self, zf, media_files: list[str], mathtype_equations: list[dict]) -> list[str]:
+        """选择正文图片和失败 MathType 公式回退图。"""
+        if not media_files:
+            return []
+
+        selected: set[str] = set()
+        root = ET.fromstring(zf.read("word/document.xml"))
+        rels_root = ET.fromstring(zf.read("word/_rels/document.xml.rels"))
+        rid_to_path: dict[str, str] = {}
+        for rel in rels_root:
+            if _local_name(rel.tag) != "Relationship":
+                continue
+            candidates = _docx_target_candidates(rel.get("Target", ""))
+            match = next((candidate for candidate in candidates if candidate in media_files), None)
+            if match:
+                rid_to_path[rel.get("Id", "")] = match
+
+        parsed_equation_targets = {
+            Path(eq.get("position", "")).as_posix().replace("\\", "/")
+            for eq in mathtype_equations
+            if eq.get("position")
+        }
+        ole_rids_with_latex: set[str] = set()
+        for rel in rels_root:
+            if _local_name(rel.tag) != "Relationship":
+                continue
+            target = next(
+                (candidate for candidate in _docx_target_candidates(rel.get("Target", "")) if candidate in zf.namelist()),
+                "",
+            )
+            if target.replace("\\", "/") in parsed_equation_targets:
+                ole_rids_with_latex.add(rel.get("Id", ""))
+
+        for paragraph in root.iter():
+            if _local_name(paragraph.tag) != "p":
+                continue
+            ole_rids = {
+                _attr_by_local_name(node, "id")
+                for node in paragraph.iter()
+                if _local_name(node.tag) == "OLEObject"
+            }
+            has_failed_ole = bool(ole_rids - ole_rids_with_latex)
+            parent_map = {
+                child: parent
+                for parent in paragraph.iter()
+                for child in parent
+            }
+            formula_blip_paths: list[str] = []
+            ordinary_blip_paths: list[str] = []
+            paragraph_vml_paths: list[str] = []
+            for node in paragraph.iter():
+                tag = _local_name(node.tag)
+                if tag == "blip":
+                    r_id = _attr_by_local_name(node, "embed")
+                    if r_id not in rid_to_path:
+                        continue
+                    ancestor = parent_map.get(node)
+                    inside_alternate = False
+                    while ancestor is not None and ancestor is not paragraph:
+                        if _local_name(ancestor.tag) == "AlternateContent":
+                            inside_alternate = True
+                            break
+                        ancestor = parent_map.get(ancestor)
+                    if inside_alternate:
+                        formula_blip_paths.append(rid_to_path[r_id])
+                    else:
+                        ordinary_blip_paths.append(rid_to_path[r_id])
+                elif tag == "imagedata" and has_failed_ole:
+                    r_id = _attr_by_local_name(node, "id")
+                    if r_id in rid_to_path:
+                        paragraph_vml_paths.append(rid_to_path[r_id])
+                elif tag in ("media", "imgLayer"):
+                    r_id = _attr_by_local_name(node, "embed")
+                    if r_id in rid_to_path:
+                        ordinary_blip_paths.append(rid_to_path[r_id])
+                elif tag in ("videoFile", "audioFile"):
+                    r_id = _attr_by_local_name(node, "link")
+                    if r_id in rid_to_path:
+                        ordinary_blip_paths.append(rid_to_path[r_id])
+
+            if not ole_rids:
+                selected.update(ordinary_blip_paths + formula_blip_paths)
+            else:
+                # 公式所在段落仍可能混有普通图片；普通图片必须保留。
+                selected.update(ordinary_blip_paths)
+                if has_failed_ole:
+                    # Fallback blip 是可渲染的现代预览；没有 Fallback 时才保留 VML 预览。
+                    selected.add(
+                        formula_blip_paths[0]
+                        if formula_blip_paths
+                        else (paragraph_vml_paths[0] if paragraph_vml_paths else "")
+                    )
+            # 成功转为 LaTeX 的公式不导出其预览图片。
+            selected.discard("")
+
+        return [media for media in media_files if media in selected]
 
     def _sort_media_by_refs(self, zf, media_files: list[str]) -> list[str]:
         """按 document.xml 中 rId 实际出现顺序排序 media_files。
@@ -107,35 +224,36 @@ class DocxExtractor(BaseExtractor):
             if rels_path not in zf.namelist():
                 return media_files
             rels_root = ET.fromstring(zf.read(rels_path))
-            # rId -> 原始 zip 路径(完整,如 'word/media/image1.png')
-            # 接受两种 Target 格式: 'media/xxx' 或 '../media/xxx'
+            # rId -> 原始 ZIP 路径，关系表和 document.xml 都可能使用 Strict 命名空间。
             rid_to_path: dict[str, str] = {}
             for rel in rels_root:
-                if _local_name(rel.tag) == "Relationship":
-                    rId = rel.get("Id", "")
-                    target = rel.get("Target", "")
-                    target_normalized = re.sub(r'^\.\./', '', target)
-                    if target_normalized.startswith("media/"):
-                        rid_to_path[rId] = f"word/{target_normalized}"
-            # document.xml 实际出现 rId 的顺序
-            doc_xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
-            rId_order: list[str] = []
-            for m in re.finditer(r'r:embed="(rId\d+)"|r:link="(rId\d+)"', doc_xml):
-                rid = m.group(1) or m.group(2)
-                if rid in rid_to_path and rid not in rId_order:
-                    rId_order.append(rid)
-            # 按 rId_order 排 media_files
+                if _local_name(rel.tag) != "Relationship":
+                    continue
+                r_id = rel.get("Id", "")
+                target = rel.get("Target", "")
+                candidates = _docx_target_candidates(target)
+                match = next((candidate for candidate in candidates if candidate in media_files), None)
+                if match:
+                    rid_to_path[r_id] = match
+
+            doc_root = ET.fromstring(zf.read("word/document.xml"))
+            r_id_order: list[str] = []
+            for element in doc_root.iter():
+                for attr_name in ("embed", "link", "id"):
+                    value = _attr_by_local_name(element, attr_name)
+                    if value and value in rid_to_path and value not in r_id_order:
+                        r_id_order.append(value)
+
             ordered: list[str] = []
             seen: set[str] = set()
-            for rid in rId_order:
-                mp = rid_to_path.get(rid)
-                if mp in media_files and mp not in seen:
-                    ordered.append(mp)
-                    seen.add(mp)
-            # 兜底:rels 里没记录的追加到末尾
-            for mp in media_files:
-                if mp not in seen:
-                    ordered.append(mp)
+            for r_id in r_id_order:
+                media_path = rid_to_path[r_id]
+                if media_path not in seen:
+                    ordered.append(media_path)
+                    seen.add(media_path)
+            for media_path in media_files:
+                if media_path not in seen:
+                    ordered.append(media_path)
             return ordered
         except Exception:
             return media_files
@@ -153,22 +271,77 @@ class DocxExtractor(BaseExtractor):
         # 构建 rId -> ExtractedMedia 映射(基于 rels)
         rid_to_media = self._build_rid_media_map(zf, media_map)
 
-        # 构建 MathType 公式映射(基于 rId)
-        mathtype_map = {}
-
+        # 构建公式 OLE 的 rId -> LaTeX 映射，同时保留失败公式的预览图回退映射。
+        mathtype_map: dict[str, str] = {}
+        ole_preview_map: dict[str, ExtractedMedia] = {}
         try:
             rels_path = "word/_rels/document.xml.rels"
             if rels_path in zf.namelist():
-                rels_content = zf.read(rels_path).decode("utf-8")
-                for match in re.finditer(r'Id="(rId\d+)"[^>]*Target="embeddings/(oleObject\d+\.bin)"', rels_content):
-                    rId = match.group(1)
-                    ole_file = match.group(2)
-                    for eq in mathtype_equations:
-                        if ole_file in eq.get("position", ""):
-                            mathtype_map[rId] = eq["latex"]
-                            break
+                rels_root = ET.fromstring(zf.read(rels_path))
+                target_to_equation = {
+                    Path(eq.get("position", "")).as_posix().replace("\\", "/"): eq.get("latex", "")
+                    for eq in mathtype_equations
+                    if eq.get("position") and eq.get("latex")
+                }
+                rid_to_target: dict[str, str] = {}
+                for rel in rels_root:
+                    if _local_name(rel.tag) != "Relationship":
+                        continue
+                    r_id = rel.get("Id", "")
+                    target = rel.get("Target", "")
+                    candidates = _docx_target_candidates(target)
+                    if any(candidate in zf.namelist() for candidate in candidates):
+                        rid_to_target[r_id] = next(
+                            candidate for candidate in candidates if candidate in zf.namelist()
+                        )
+
+                for r_id, target in rid_to_target.items():
+                    normalized_target = target.replace("\\", "/")
+                    if "/embeddings/" in normalized_target:
+                        latex = target_to_equation.get(normalized_target, "")
+                        if latex:
+                            mathtype_map[r_id] = latex
+
+                # 在同一段落中，公式 OLE 前后的两个 WMF 通常是 VML Fallback/Preview。
+                # 建立 OLE rId -> 可渲染预览媒体的映射，失败时保持公式原位置。
+                for paragraph in root.iter():
+                    if _local_name(paragraph.tag) != "p":
+                        continue
+                    ole_ids = [
+                        _attr_by_local_name(node, "id")
+                        for node in paragraph.iter()
+                        if _local_name(node.tag) == "OLEObject"
+                    ]
+                    if not ole_ids:
+                        continue
+                    preview_ids = [
+                        _attr_by_local_name(node, "embed") or _attr_by_local_name(node, "id")
+                        for node in paragraph.iter()
+                        if _local_name(node.tag) == "blip"
+                    ]
+                    fallback_ids = [
+                        _attr_by_local_name(node, "id")
+                        for node in paragraph.iter()
+                        if _local_name(node.tag) == "imagedata"
+                    ]
+                    preview_media = [
+                        rid_to_media[r_id]
+                        for r_id in preview_ids
+                        if r_id in rid_to_media
+                    ]
+                    fallback_media = [
+                        rid_to_media[r_id]
+                        for r_id in fallback_ids
+                        if r_id in rid_to_media
+                    ]
+                    for ole_id in ole_ids:
+                        # 优先选择 Fallback/Drawing 中的 blip；VML imagedata 是旧版预览，
+                        # 但在目标论文中同样可作为无 Fallback 时的回退。
+                        preview = (preview_media or fallback_media or [None])[0]
+                        if preview is not None:
+                            ole_preview_map[ole_id] = preview
         except Exception:
-            pass
+            logger.exception("构建 DOCX 公式关系映射失败")
 
         # 解析 numbering.xml 获取列表类型映射
         num_type_map = self._parse_numbering(zf)
@@ -191,7 +364,7 @@ class DocxExtractor(BaseExtractor):
             if tag == "p":
                 num_info = self._get_num_info(child, num_type_map)
                 content = self._extract_paragraph(
-                    child, stem, include_images, rid_to_media, mathtype_map, num_info
+                    child, stem, include_images, rid_to_media, mathtype_map, ole_preview_map, num_info
                 )
                 if content and content not in seen_content:
                     seen_content.add(content)
@@ -200,7 +373,7 @@ class DocxExtractor(BaseExtractor):
 
             elif tag == "tbl":
                 table_content = self._extract_table(
-                    child, stem, include_images, rid_to_media, mathtype_map
+                    child, stem, include_images, rid_to_media, mathtype_map, ole_preview_map
                 )
                 if table_content:
                     lines.append(table_content)
@@ -214,7 +387,7 @@ class DocxExtractor(BaseExtractor):
                             ctag = _local_name(content_child.tag)
                             if ctag == "p":
                                 content = self._extract_paragraph(
-                                    content_child, stem, include_images, rid_to_media, mathtype_map
+                                    content_child, stem, include_images, rid_to_media, mathtype_map, ole_preview_map
                                 )
                                 if content and content not in seen_content:
                                     seen_content.add(content)
@@ -222,32 +395,23 @@ class DocxExtractor(BaseExtractor):
                                     lines.append("")
                             elif ctag == "tbl":
                                 table_content = self._extract_table(
-                                    content_child, stem, include_images, rid_to_media
+                                    content_child,
+                                    stem,
+                                    include_images,
+                                    rid_to_media,
+                                    mathtype_map,
+                                    ole_preview_map,
                                 )
                                 if table_content:
                                     lines.append(table_content)
                                     lines.append("")
 
-            elif tag == "OLEObject":
-                prog_id = child.get("ProgID", "")
-                rId = child.get(
-                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id",
-                    "",
-                )
-                if "Equation" in prog_id and rId:
-                    for key, latex in mathtype_map.items():
-                        if key in rId or rId in key:
-                            lines.append(f"${latex}$")
-                            lines.append("")
-                            break
+            # OLEObject 属于段落内部节点，已由 _extract_content_recursive 按原顺序处理。
 
         return "\n".join(lines).strip() + "\n"
 
     def _build_rid_media_map(self, zf, media_map: dict[str, ExtractedMedia]) -> dict[str, ExtractedMedia]:
-        """构建 rId -> ExtractedMedia 映射(基于 rels)。
-
-        接受两种 Target 格式: 'media/xxx' 或 '../media/xxx'。
-        """
+        """构建 rId -> ExtractedMedia 映射，兼容 Strict/Transitional 关系属性。"""
         rid_to_media: dict[str, ExtractedMedia] = {}
         try:
             rels_path = "word/_rels/document.xml.rels"
@@ -255,14 +419,16 @@ class DocxExtractor(BaseExtractor):
                 return rid_to_media
             rels_root = ET.fromstring(zf.read(rels_path))
             for rel in rels_root:
-                if _local_name(rel.tag) == "Relationship":
-                    rId = rel.get("Id", "")
-                    target = rel.get("Target", "")
-                    target_normalized = re.sub(r'^\.\./', '', target)
-                    if target_normalized.startswith("media/"):
-                        full_path = f"word/{target_normalized}"
-                        if full_path in media_map:
-                            rid_to_media[rId] = media_map[full_path]
+                if _local_name(rel.tag) != "Relationship":
+                    continue
+                r_id = rel.get("Id", "")
+                target = rel.get("Target", "")
+                full_path = next(
+                    (candidate for candidate in _docx_target_candidates(target) if candidate in media_map),
+                    None,
+                )
+                if full_path is not None:
+                    rid_to_media[r_id] = media_map[full_path]
         except Exception:
             pass
         return rid_to_media
@@ -330,9 +496,20 @@ class DocxExtractor(BaseExtractor):
             pass
         return None
 
-    def _extract_paragraph(self, para, stem, include_images, rid_to_media, mathtype_map, num_info=None):
-        """提取段落内容"""
+    def _extract_paragraph(
+        self,
+        para,
+        stem,
+        include_images,
+        rid_to_media,
+        mathtype_map,
+        ole_preview_map=None,
+        num_info=None,
+    ):
+        """提取段落内容，公式和图片按 XML 节点顺序输出。"""
         parts = []
+        if ole_preview_map is None:
+            ole_preview_map = {}
 
         list_prefix = ""
         if num_info:
@@ -344,24 +521,48 @@ class DocxExtractor(BaseExtractor):
             else:
                 list_prefix = f"{indent}1. "
 
-        self._extract_content_recursive(para, stem, parts, include_images, rid_to_media, mathtype_map)
+        self._extract_content_recursive(
+            para,
+            stem,
+            parts,
+            include_images,
+            rid_to_media,
+            mathtype_map,
+            ole_preview_map,
+        )
 
         content = "".join(parts).strip()
         if content and list_prefix:
             content = list_prefix + content
         return content
 
-    def _extract_content_recursive(self, elem, stem, parts, include_images, rid_to_media, mathtype_map, depth=0):
-        """递归提取内容，处理文本框等嵌套结构"""
+    def _extract_content_recursive(
+        self,
+        elem,
+        stem,
+        parts,
+        include_images,
+        rid_to_media,
+        mathtype_map,
+        ole_preview_map,
+        depth=0,
+    ):
+        """递归提取内容，处理文本框等嵌套结构。"""
         if depth > 20:
             return
         for child in elem:
             tag = _local_name(child.tag)
 
             if tag == "r":
-                math_latex = self._check_ole_object(child, stem, mathtype_map, rid_to_media)
-                if math_latex:
-                    parts.append(f"${math_latex}$")
+                math_value = self._check_ole_object(
+                    child,
+                    stem,
+                    mathtype_map,
+                    ole_preview_map,
+                    rid_to_media,
+                )
+                if math_value:
+                    parts.append(math_value)
                     continue
 
                 has_textbox = False
@@ -371,31 +572,32 @@ class DocxExtractor(BaseExtractor):
                     r_child_tag = _local_name(r_child.tag)
                     if r_child_tag == "txbxContent" and not has_textbox:
                         self._extract_content_recursive(
-                            r_child, stem, parts, include_images, rid_to_media, mathtype_map, depth + 1
+                            r_child,
+                            stem,
+                            parts,
+                            include_images,
+                            rid_to_media,
+                            mathtype_map,
+                            ole_preview_map,
+                            depth + 1,
                         )
                         has_textbox = True
                     elif r_child_tag in ("videoFile", "audioFile") and include_images and not handled_video:
-                        link = r_child.get(
-                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}link", ""
-                        )
+                        link = _attr_by_local_name(r_child, "link")
                         if link and link in rid_to_media:
                             m = rid_to_media[link]
                             parts.append("\n" + self._render_media(m, stem, alt="") + "\n")
                             handled_video = True
                             handled_media = True
                     elif r_child_tag == "media" and include_images and not handled_video:
-                        embed = r_child.get(
-                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
-                        )
+                        embed = _attr_by_local_name(r_child, "embed")
                         if embed and embed in rid_to_media:
                             m = rid_to_media[embed]
                             parts.append("\n" + self._render_media(m, stem, alt="") + "\n")
                             handled_video = True
                             handled_media = True
                     elif r_child_tag == "blip" and include_images and not handled_media:
-                        embed = r_child.get(
-                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
-                        )
+                        embed = _attr_by_local_name(r_child, "embed")
                         if embed and embed in rid_to_media:
                             m = rid_to_media[embed]
                             # alt 用文件名(去后缀)作为默认 title,比 "image" 更友好
@@ -404,9 +606,7 @@ class DocxExtractor(BaseExtractor):
                             handled_media = True
                     # 不 return: 继续递归到 blip 子元素找 <a14:imgLayer>(HD Photo 场景)
                     elif r_child_tag == "imgLayer" and include_images and not handled_media:
-                        embed = r_child.get(
-                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
-                        )
+                        embed = _attr_by_local_name(r_child, "embed")
                         if embed and embed in rid_to_media:
                             m = rid_to_media[embed]
                             alt = Path(m.local_path).stem
@@ -439,88 +639,64 @@ class DocxExtractor(BaseExtractor):
                         parts.append("\n" + self._render_media(m, stem, alt=alt) + "\n")
             elif tag == "txbxContent":
                 self._extract_content_recursive(
-                    child, stem, parts, include_images, rid_to_media, mathtype_map, depth + 1
+                    child,
+                    stem,
+                    parts,
+                    include_images,
+                    rid_to_media,
+                    mathtype_map,
+                    ole_preview_map,
+                    depth + 1,
                 )
             else:
                 self._extract_content_recursive(
-                    child, stem, parts, include_images, rid_to_media, mathtype_map, depth + 1
+                    child,
+                    stem,
+                    parts,
+                    include_images,
+                    rid_to_media,
+                    mathtype_map,
+                    ole_preview_map,
+                    depth + 1,
                 )
 
     def _render_media(self, media: ExtractedMedia, stem: str, alt: str = "") -> str:
         """渲染媒体引用: image 用 ![](), video/audio 用 HTML 标签。"""
         return format_media_ref(media_rel_path(stem, media), media.kind, alt or "")
 
-    def _check_ole_object(self, run, stem, mathtype_map, rid_to_media=None):
-        """检查 run 中是否有 MathType OLE 对象,返回 LaTeX 或公式预览图引用"""
+    def _check_ole_object(
+        self,
+        run,
+        stem,
+        mathtype_map,
+        ole_preview_map=None,
+        rid_to_media=None,
+    ):
+        """返回原位置的公式 LaTeX，或无法转换时的预览图片引用。"""
+        if ole_preview_map is None:
+            ole_preview_map = {}
+
         for child in run.iter():
-            tag = _local_name(child.tag)
-
-            if tag == "OLEObject":
-                prog_id = child.get("ProgID", "")
-                rId = child.get(
-                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", ""
-                )
-                if "Equation" in prog_id and rId:
-                    for key, latex in mathtype_map.items():
-                        if key in rId or rId in key:
-                            return latex
-
-            elif tag == "object":
-                for obj_child in child:
-                    if _local_name(obj_child.tag) == "OLEObject":
-                        prog_id = obj_child.get("ProgID", "")
-                        rId = obj_child.get(
-                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", ""
-                        )
-                        if "Equation" in prog_id and rId:
-                            for key, latex in mathtype_map.items():
-                                if key in rId or rId in key:
-                                    return latex
-
-            elif tag == "AlternateContent":
-                for ac_child in child:
-                    ac_tag = _local_name(ac_child.tag)
-                    if ac_tag == "Choice":
-                        for choice_child in ac_child:
-                            choice_tag = _local_name(choice_child.tag)
-                            if choice_tag == "drawing":
-                                for drawing_child in choice_child.iter():
-                                    d_tag = _local_name(drawing_child.tag)
-                                    if d_tag == "OLEObject":
-                                        prog_id = drawing_child.get("ProgID", "")
-                                        rId = drawing_child.get(
-                                            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", ""
-                                        )
-                                        if "Equation" in prog_id and rId:
-                                            for key, latex in mathtype_map.items():
-                                                if key in rId or rId in key:
-                                                    return latex
-
-                for ac_child in child:
-                    ac_tag = _local_name(ac_child.tag)
-                    if ac_tag == "Fallback":
-                        for blip in ac_child.iter():
-                            if _local_name(blip.tag) == "blip":
-                                embed = blip.get(
-                                    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", ""
-                                )
-                                if embed and rid_to_media and embed in rid_to_media:
-                                    # 公式预览固定按图片渲染(回退 Equation.3 等无法转 LaTeX 的)
-                                    media = rid_to_media[embed]
-                                    return format_media_ref(
-                                        media_rel_path(stem, media),
-                                        media.kind,
-                                        "formula",
-                                    )
+            if _local_name(child.tag) != "OLEObject":
+                continue
+            prog_id = _attr_by_local_name(child, "ProgID")
+            r_id = _attr_by_local_name(child, "id")
+            if "Equation" not in prog_id or not r_id:
+                continue
+            if r_id in mathtype_map:
+                return f"${mathtype_map[r_id]}$"
+            preview = ole_preview_map.get(r_id)
+            if preview is not None:
+                return self._render_media(preview, stem, alt="formula")
         return None
 
     def _get_media_from_elem(self, elem, rid_to_media):
-        """从元素中获取所有媒体(图/视/音)"""
+        """从元素中获取所有媒体(图/视/音)，兼容 Strict/Transitional 属性。"""
         media = []
         for ref in elem.iter():
             tag = _local_name(ref.tag)
-            if tag in ("blip", "imgLayer"):
-                embed = ref.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", "")
+            if tag in ("blip", "imgLayer", "imagedata"):
+                embed = _attr_by_local_name(ref, "embed") or _attr_by_local_name(ref, "id")
                 if embed and embed in rid_to_media:
                     media.append(rid_to_media[embed])
         return media
@@ -543,10 +719,20 @@ class DocxExtractor(BaseExtractor):
                         return ""
         return "".join(text_parts)
 
-    def _extract_table(self, table, stem, include_images, rid_to_media, mathtype_map=None):
-        """提取表格，支持合并单元格"""
+    def _extract_table(
+        self,
+        table,
+        stem,
+        include_images,
+        rid_to_media,
+        mathtype_map=None,
+        ole_preview_map=None,
+    ):
+        """提取表格，支持合并单元格。"""
         if mathtype_map is None:
             mathtype_map = {}
+        if ole_preview_map is None:
+            ole_preview_map = {}
         rows = []
 
         for tr in table:
@@ -577,7 +763,12 @@ class DocxExtractor(BaseExtractor):
                 for para in tc:
                     if _local_name(para.tag) == "p":
                         content = self._extract_paragraph(
-                            para, stem, include_images, rid_to_media, mathtype_map
+                            para,
+                            stem,
+                            include_images,
+                            rid_to_media,
+                            mathtype_map,
+                            ole_preview_map,
                         )
                         if content:
                             cell_parts.append(content)

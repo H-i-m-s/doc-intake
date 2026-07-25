@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.5-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
   <img src="https://img.shields.io/badge/python-3.11+-yellow" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
@@ -90,15 +90,6 @@ pip install -r python/requirements.txt
    - PaddleOCR Token：https://aistudio.baidu.com/account/accessToken
 
 没有 Token 也能用：PDF 默认走本地 PyMuPDF，不会隐式调用云端；如需 MinerU/PaddleOCR，请在设置中显式配置后端链并提供对应凭证。图片 OCR 仍需要 PaddleOCR Token。
-
-如果需要使用MinerU，并且常年挂着机场/梯子，建议将以下链接纳入*直连*规则：
-- 'DOMAIN,aistudio.baidu.com,DIRECT'
-- 'DOMAIN,www.paddleocr.ai,DIRECT'
-- 'DOMAIN,cdn-mineru.openxlab.org.cn,DIRECT'
-- 'DOMAIN,mineru.net,DIRECT'
-- 'DOMAIN,mineru.org.cn,DIRECT'
-- 'DOMAIN,sso.openxlab.org.cn,DIRECT'
-
 
 ### 后续推荐操作
 

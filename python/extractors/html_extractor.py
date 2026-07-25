@@ -482,7 +482,7 @@ class HtmlExtractor(BaseExtractor):
             safe_stem = re.sub(r'[<>:"/\\|?*]', '_', Path(source).stem)[:50]
 
         # 处理 base64 媒体(图/音视频)
-        if output_dir and include_images and extract_images:
+        if output_dir and extract_images:
             result.markdown, base64_media = _process_base64_media(
                 result.markdown, output_dir, safe_stem
             )
@@ -508,22 +508,20 @@ class HtmlExtractor(BaseExtractor):
             media_info = _extract_media_info(html_content) if extract_images else []
             code_blocks = _extract_code_blocks(html_content) if extract_code_blocks else []
 
-            if extract_metadata:
-                result.metadata["标题列表"] = headings
+            result.metadata["标题列表"] = headings
             if extract_links:
                 result.metadata["链接列表"] = links
             if extract_images:
                 result.metadata["媒体列表"] = media_info
             if extract_code_blocks:
                 result.metadata["代码块"] = code_blocks
-            if extract_metadata:
-                result.metadata["统计"] = {
-                    "字数": _count_words(result.markdown),
-                    "标题数": len(headings),
-                    "链接数": len(links),
-                    "媒体数": len(media_info),
-                    "代码块数": len(code_blocks),
-                }
+            result.metadata["统计"] = {
+                "字数": _count_words(result.markdown),
+                "标题数": len(headings),
+                "链接数": len(links),
+                "媒体数": len(media_info),
+                "代码块数": len(code_blocks),
+            }
 
         return result
 
