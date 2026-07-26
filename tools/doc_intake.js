@@ -1,5 +1,5 @@
 import { extractDocument } from "../lib/service.js";
-import { toToolError, toToolResult } from "../lib/tool-output.js";
+import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
 import { getSettings } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
 import { appendMediaGuide } from "../lib/doc-intake-helpers.js";
@@ -143,70 +143,226 @@ function toFileOutput(item) {
   };
 }
 
-function buildResult(sources, results, settings = {}) {
-  const filesOut = results.map(toFileOutput);
-  const summaryThreshold = settings.summaryThreshold ?? 3;
-  const isBatch = sources.length >= summaryThreshold;
+function buildFileMetadata(file) {
+  const metadata = {
+    mediaPaths: file.mediaPaths ?? [],
+    outputDir: file.outputDir ?? null,
+    format: file.format ?? null,
+    reader: file.reader ?? null,
+    backendChain: file.backendChain ?? null,
+    warnings: file.warnings ?? [],
+    usedBackendInChain: file.usedBackendInChain ?? null,
+    usedBackend: file.usedBackend ?? null,
+    usedBackends: file.usedBackends ?? [],
+  };
+  if (file.mdPath) metadata.mdPath = file.mdPath;
+  if (file.imagesDir) metadata.imagesDir = file.imagesDir;
+  if (file.jsonPath) metadata.jsonPath = file.jsonPath;
+  return metadata;
+}
 
-  if (!isBatch) {
-    const detailFiles = filesOut.map((file) => {
-      const metadata = {
-        mediaPaths: file.mediaPaths ?? [],
-        outputDir: file.outputDir ?? null,
-        format: file.format ?? null,
-        reader: file.reader ?? null,
-        backendChain: file.backendChain ?? null,
-        warnings: file.warnings ?? [],
-        usedBackendInChain: file.usedBackendInChain ?? null,
-        usedBackend: file.usedBackend ?? null,
-        usedBackends: file.usedBackends ?? [],
-      };
-      if (file.mdPath) metadata.mdPath = file.mdPath;
-      if (file.imagesDir) metadata.imagesDir = file.imagesDir;
-      if (file.jsonPath) metadata.jsonPath = file.jsonPath;
-      return {
-        name: file.name,
-        markdown: file.markdown ?? "",
-        metadata,
-      };
-    });
-    return detailFiles.length === 1
-      ? toToolResult(detailFiles[0])
-      : toToolResult(detailFiles);
-  }
-
+function buildSavedSummary(filesOut) {
   const successCount = filesOut.filter((file) => !file.warnings || file.warnings.length === 0).length;
   const summary = filesOut.map((file) => {
     const ok = !file.warnings || file.warnings.length === 0;
     return `${ok ? "✅" : "❌"} ${file.name}${ok ? "" : " — " + (file.warnings[0] ?? "失败")}`;
   });
-  const summaryFiles = filesOut.map((file) => {
-    const metadata = {
-      outputDir: file.outputDir ?? null,
-      mdPath: file.mdPath ?? null,
-      format: file.format ?? null,
-      reader: file.reader ?? null,
-      backendChain: file.backendChain ?? null,
-      warnings: file.warnings ?? [],
-      usedBackendInChain: file.usedBackendInChain ?? null,
-      usedBackend: file.usedBackend ?? null,
-      usedBackends: file.usedBackends ?? [],
-    };
-    if (file.imagesDir) metadata.imagesDir = file.imagesDir;
-    if (file.jsonPath) metadata.jsonPath = file.jsonPath;
-    return { name: file.name, metadata };
-  });
-
-  return toToolResult({
+  return {
     markdown: [`处理完成：${successCount}/${filesOut.length} 个文件成功`, "", ...summary].join("\n"),
     metadata: {
-      batch: true,
+      contentOmitted: true,
+      returnReason: "inline_return_limit_exceeded",
       count: filesOut.length,
       success: successCount,
-      summaryThreshold,
     },
-    files: summaryFiles,
-  });
+    files: filesOut.map((file) => ({
+      name: file.name,
+      metadata: buildFileMetadata(file),
+    })),
+  };
+}
+
+function truncateWithoutBreakingUtf8(text, maxBytes) {
+  const buffer = Buffer.from(String(text ?? ""), "utf8");
+  if (buffer.length <= maxBytes) return String(text ?? "");
+  let end = Math.max(0, maxBytes);
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end -= 1;
+  return buffer.subarray(0, end).toString("utf8");
+}
+
+const DEFAULT_INLINE_BLOCK_BYTES = 28 * 1024;
+const MIN_INLINE_BLOCK_BYTES = 4 * 1024;
+const MAX_INLINE_BLOCK_BYTES = 30 * 1024;
+const DEFAULT_INLINE_BLOCK_COUNT = 4;
+const MAX_INLINE_BLOCK_COUNT = 8;
+
+function normalizeInlineSettings(settings = {}) {
+  const configuredBytes = Number(settings.inlineBlockBytes);
+  const configuredCount = Number(settings.inlineBlockCount);
+  const blockBytes = Math.min(
+    MAX_INLINE_BLOCK_BYTES,
+    Math.max(
+      MIN_INLINE_BLOCK_BYTES,
+      Number.isFinite(configuredBytes) ? Math.floor(configuredBytes) : DEFAULT_INLINE_BLOCK_BYTES,
+    ),
+  );
+  const blockCount = Math.min(
+    MAX_INLINE_BLOCK_COUNT,
+    Math.max(
+      1,
+      Number.isFinite(configuredCount) ? Math.floor(configuredCount) : DEFAULT_INLINE_BLOCK_COUNT,
+    ),
+  );
+  return { blockBytes, blockCount };
+}
+
+function splitUtf8Text(text, maxBytes, maxBlocks) {
+  const source = String(text ?? "");
+  const buffer = Buffer.from(source, "utf8");
+  if (buffer.length <= maxBytes) return { blocks: [source], complete: true };
+
+  const blocks = [];
+  let offset = 0;
+  while (offset < buffer.length && blocks.length < maxBlocks) {
+    const limit = Math.min(offset + maxBytes, buffer.length);
+    let end = limit;
+    let nextOffset = limit;
+    if (limit < buffer.length) {
+      const newline = buffer.lastIndexOf(0x0a, limit - 1);
+      if (newline >= offset) {
+        end = newline + 1;
+        nextOffset = end;
+      }
+    }
+    while (end > offset && (buffer[end] & 0xc0) === 0x80) end -= 1;
+    if (end <= offset) {
+      // 当前配置下不会触发（最小块大小远大于最长 UTF-8 字符），但保证 helper 在异常参数下仍然推进。
+      end = Math.min(offset + 1, buffer.length);
+    }
+    nextOffset = end;
+    blocks.push(buffer.subarray(offset, end).toString("utf8"));
+    offset = nextOffset;
+  }
+  return { blocks, complete: offset >= buffer.length };
+}
+
+function buildReadableText(filesOut) {
+  if (filesOut.length === 1) return filesOut[0].markdown ?? "";
+  return filesOut
+    .map((file) => `## ${file.name}\n\n${file.markdown ?? ""}`)
+    .join("\n\n");
+}
+
+function buildInlineContent(text, settings) {
+  const { blockBytes, blockCount } = normalizeInlineSettings(settings);
+  const split = splitUtf8Text(text, blockBytes, blockCount);
+  return {
+    content: split.blocks.map((block) => ({ type: "text", text: block })),
+    complete: split.complete,
+    blockBytes,
+    blockCount,
+  };
+}
+
+function fitHeadTailToInline(text, settings, suffix = "") {
+  const { blockBytes, blockCount } = normalizeInlineSettings(settings);
+  const capacity = blockBytes * blockCount;
+  const source = String(text ?? "");
+  const suffixBytes = Buffer.byteLength(suffix, "utf8");
+  let low = 0;
+  let high = Math.max(0, capacity - suffixBytes);
+  let best = suffix;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = headTailText(source, mid) + suffix;
+    const split = splitUtf8Text(candidate, blockBytes, blockCount);
+    if (split.complete) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best;
+}
+
+function headTailText(text, maxBytes) {
+  const source = String(text ?? "");
+  const sourceBytes = Buffer.byteLength(source, "utf8");
+  if (sourceBytes <= maxBytes) return source;
+
+  const marker = "\n\n[中间内容已省略]\n\n";
+  const markerBytes = Buffer.byteLength(marker, "utf8");
+  if (maxBytes <= markerBytes) return truncateWithoutBreakingUtf8(source, maxBytes);
+
+  const contentBytes = maxBytes - markerBytes;
+  const headBytes = Math.ceil(contentBytes * 0.4);
+  const tailBytes = contentBytes - headBytes;
+  const head = truncateWithoutBreakingUtf8(source, headBytes);
+  const tailBuffer = Buffer.from(source, "utf8");
+  let tailStart = Math.max(0, tailBuffer.length - tailBytes);
+  while (tailStart < tailBuffer.length && (tailBuffer[tailStart] & 0xc0) === 0x80) tailStart += 1;
+  const tail = tailBuffer.subarray(tailStart).toString("utf8");
+  return head + marker + tail;
+}
+
+export function buildResult(sources, results, settings = {}) {
+  const filesOut = results.map(toFileOutput);
+  const fullPayload = filesOut.length === 1
+    ? { name: filesOut[0].name, markdown: filesOut[0].markdown ?? "", metadata: buildFileMetadata(filesOut[0]) }
+    : filesOut.map((file) => ({
+      name: file.name,
+      markdown: file.markdown ?? "",
+      metadata: buildFileMetadata(file),
+    }));
+  const fullText = buildReadableText(filesOut);
+  const inline = buildInlineContent(fullText, settings);
+
+  if (inline.complete) {
+    return toToolResultWithContent(fullPayload, inline.content);
+  }
+
+  if (filesOut.some((file) => Boolean(file.outputDir || file.mdPath))) {
+    return toToolResult(buildSavedSummary(filesOut));
+  }
+
+  const { blockBytes, blockCount } = normalizeInlineSettings(settings);
+  const limitLabel = `${blockCount} × ${Math.round(blockBytes / 1024)} KiB`;
+  const notice = `\n\n⚠️ 返回内容超过 ${limitLabel}，以下仅保留开头和结尾；完整结果未保存到本地，中间内容无法读取。`
+    + " 如需完整内容，请指定 outputDir 或开启自动保存。";
+  const truncatedText = fitHeadTailToInline(fullText, settings, notice);
+  const truncated = buildInlineContent(truncatedText, settings);
+  const metadata = filesOut.length === 1
+    ? {
+      ...buildFileMetadata(filesOut[0]),
+      contentTruncated: true,
+      returnReason: "inline_return_limit_exceeded",
+      inlineBlockBytes: blockBytes,
+      inlineBlockCount: blockCount,
+    }
+    : {
+      contentTruncated: true,
+      returnReason: "inline_return_limit_exceeded",
+      count: filesOut.length,
+      inlineBlockBytes: blockBytes,
+      inlineBlockCount: blockCount,
+    };
+  const payload = filesOut.length === 1
+    ? {
+      name: filesOut[0].name,
+      markdown: truncatedText,
+      metadata,
+    }
+    : {
+      markdown: truncatedText,
+      metadata,
+      files: filesOut.map((file) => ({
+        name: file.name,
+        metadata: buildFileMetadata(file),
+      })),
+    };
+  return toToolResultWithContent(payload, truncated.content);
 }
 
 export const name = "doc_intake";

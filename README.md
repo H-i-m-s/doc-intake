@@ -138,6 +138,10 @@ Hana 自带 `office-documents` skill，它的设计思路是「一个 skill 干�
 
 **操作**：在 Hana 的 Skills 管理界面中卸载 `office-documents`。卸载后 Agent 不会再优先调用它，文档请求会走 `doc-intake`。
 
+#### 4. 推荐开启保存到本地
+
+Hana平台对插件返回信息有字数限制，大于32k将被略去中间部分。所以推荐选择一个保存路径，保存到本地让agent自行读取。
+
 ---
 
 
@@ -388,11 +392,12 @@ doc-intake/
 | `xlsxMaxCols` | `number` | `50` | XLSX 最大提取列数，超过时在 warnings 中提示截断。 |
 | `maxRemoteImagesPerHtml` | `number` | `100` | HTML 页面最多下载多少远程图片。 |
 
-### 批量 & 日志
+### 返回大小 & 日志
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `summaryThreshold` | `number`（≥2） | `3` | 文件数阈值：≥ 此值时返回结果去掉 markdown/mediaMap（只保留 metadata + mdPath + imagesDir，省 context）。 |
+| `inlineBlockBytes` | `number`（4096–30720） | `28672` | 每个返回文本块的最大大小，按 UTF-8 字节计算；默认 28 KiB。 |
+| `inlineBlockCount` | `number`（1–8） | `4` | 返回文本块数量上限；默认 4 个，默认总容量约 112 KiB。 |
 | `logLevel` | `"DEBUG" \| "INFO" \| "WARNING" \| "ERROR"` | `"INFO"` | 日志级别。 |
 | `logFile` | `string` | `""` | 日志文件路径（留空则只输出到控制台 stderr）。 |
 
@@ -400,7 +405,15 @@ doc-intake/
 
 ## 输出结构
 
-### 单文件 / 少量文件（< `summaryThreshold`）
+### 返回策略
+
+返回策略按内容大小和文本块容量判断，不按文件数量判断：
+
+- 结果不超过 `inlineBlockBytes × inlineBlockCount`：返回全部 Markdown，必要时拆成多个 text block。
+- 结果超限且已保存到本地：只返回处理摘要和 `mdPath` / `imagesDir`。
+- 结果超限且未保存到本地：在多个 text block 中保留开头和结尾，中间插入省略提示，并明确提示内容不完整。
+
+### 未超限时
 
 返回完整 markdown + metadata，Agent 可直接读取内容：
 
@@ -419,9 +432,9 @@ doc-intake/
 }
 ```
 
-### 批量（≥ `summaryThreshold`）
+### 超限且已保存到本地
 
-只返回摘要 + 文件列表，不返回 markdown（省 context）：
+只返回摘要 + 文件列表，不返回正文；完整内容从 `mdPath` 读取：
 
 ```json
 {

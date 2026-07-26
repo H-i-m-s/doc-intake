@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "doc-intake",
   "name": "Doc Intake",
-  "version": "1.7.0",
+  "version": "1.5.0",
   "trust": "restricted",
   "description": "文档/图片内容提取工具。支持 MinerU（PDF）、PaddleOCR（图片）、本地 Python 库（DOCX/PPTX/XLSX/HTML），输出结构化 Markdown。支持公式转 LaTeX、EMF 转 PNG。",
   "contributes": {
@@ -188,11 +188,19 @@
           "default": false,
           "title": "是否默认保存结构化 JSON"
         },
-        "summaryThreshold": {
+        "inlineBlockBytes": {
           "type": "number",
-          "default": 3,
-          "minimum": 2,
-          "title": "文件数阈值：>= 此值时返回结果去掉 markdown/mediaMap（只保留 metadata + mdPath + imagesDir，省 context）"
+          "default": 28672,
+          "minimum": 4096,
+          "maximum": 30720,
+          "title": "每个返回文本块的最大大小（默认 28 KiB，按 UTF-8 字节计算）"
+        },
+        "inlineBlockCount": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 8,
+          "title": "返回文本块数量上限（默认 4 个）"
         },
         "logLevel": {
           "type": "string",

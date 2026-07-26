@@ -66,13 +66,13 @@ PDF / DOCX / PPTX / PPT / XLSX / XLSM / HTML / HTM / JPG / JPEG / PNG / BMP / TI
 
 ### 返回内容（关键概念）
 
-**单文件 / 1-2 个文件**：返回完整 markdown + 文件元信息 + 媒体列表。
+返回策略按最终结果大小判断，不按文件数量判断：
 
-**批量（≥ 3 个文件 / 用户设置 `summaryThreshold`）**：只返回文件列表和处理结果概览，**不返回具体 markdown**——具体内容需查看本地保存的文件。
+- 未超过默认 `4 × 28 KiB`：返回完整 Markdown + 文件元信息 + 媒体列表，正文可能拆成多个 text block。
+- 超过块容量且已保存到本地：返回处理概览和 `mdPath` / `imagesDir`，完整内容从本地文件读取。
+- 超过块容量且未保存到本地：在多个 text block 中保留 Markdown 开头和结尾，中间内容插入省略提示，并明确标记内容不完整。
 
 大 PDF 的分块只用于云端上传；插件会在 Python 进程内生成内存 PDF bytes，不创建源目录下的 `*_chunks` 文件夹或 chunk PDF，再按 `chunkIndex` 顺序合并所有结果，统一生成一个原文件对应的 Markdown/JSON 和唯一媒体目录，不会把 chunk 结果作为本地输出文件。
-
-> 上面这条很重要。批量场景下不要期待 agent 拿到内容。
 
 ### 输出文件结构（保存到本地时）
 

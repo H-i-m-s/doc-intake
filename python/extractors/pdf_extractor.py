@@ -338,8 +338,9 @@ class PdfExtractor(BaseExtractor):
             x0, y0, _x1, _y1 = info["bbox"]
 
             try:
-                img_bytes = doc.extract_image(xref)["image"]
-                ext = doc.extract_image(xref)["ext"]
+                image_info = doc.extract_image(xref)
+                img_bytes = image_info["image"]
+                ext = image_info["ext"]
             except Exception as e:
                 logger.warning(
                     "PDF 图片提取失败",

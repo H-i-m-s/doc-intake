@@ -17,6 +17,7 @@ import fitz
 import main
 from extractors.base import ExtractionResult
 from extractors.html_extractor import HtmlExtractor
+from extractors.pdf_extractor import PdfExtractor
 from pdf_splitter import crop_pdf_to_page_range, parse_page_range
 
 
@@ -94,6 +95,58 @@ def test_all_backend_failure_is_explicit_and_not_marked_used() -> None:
         "token-secret" not in warning and "mineru-secret" not in warning
         for warning in result.warnings
     )
+
+
+def test_pdf_image_extraction_calls_extract_image_once_per_xref() -> None:
+    class FakePage:
+        def get_image_info(self, xrefs=True):
+            assert xrefs is True
+            return [
+                {"xref": 7, "bbox": (10, 20, 30, 40)},
+                {"xref": 7, "bbox": (10, 20, 30, 40)},
+            ]
+
+    class FakeDocument:
+        def __init__(self):
+            self.calls = []
+
+        def extract_image(self, xref):
+            self.calls.append(xref)
+            return {"image": b"image-bytes", "ext": "png"}
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        document = FakeDocument()
+        images, paths = PdfExtractor._extract_page_images(
+            FakePage(),
+            page_num=1,
+            media_dir=Path(temp_dir),
+            doc=document,
+            stem="sample",
+        )
+        assert len(images) == 1
+        assert len(paths) == 1
+        assert document.calls == [7]
+
+
+def test_save_result_atomic_temp_stays_in_target_directory() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        captured_dirs = []
+        original_mkstemp = main.tempfile.mkstemp
+
+        def capture_mkstemp(*args, **kwargs):
+            captured_dirs.append(kwargs.get("dir"))
+            return original_mkstemp(*args, **kwargs)
+
+        result = ExtractionResult(markdown="content", metadata={})
+        with patch.object(main.tempfile, "mkstemp", side_effect=capture_mkstemp):
+            main.save_result(result, "input.pdf", temp_dir, save_json=True)
+
+        assert [Path(directory).resolve() for directory in captured_dirs] == [
+            Path(temp_dir).resolve(),
+            Path(temp_dir).resolve(),
+        ]
+        assert Path(result.md_path).read_text(encoding="utf-8") == "content"
+        assert Path(result.metadata["jsonPath"]).exists()
 
 
 def test_save_result_is_atomic_and_rejects_existing_output() -> None:
