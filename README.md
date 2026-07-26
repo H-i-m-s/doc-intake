@@ -392,12 +392,44 @@ doc-intake/
 | `xlsxMaxCols` | `number` | `50` | XLSX 最大提取列数，超过时在 warnings 中提示截断。 |
 | `maxRemoteImagesPerHtml` | `number` | `100` | HTML 页面最多下载多少远程图片。 |
 
-### 返回大小 & 日志
+### Agent 返回机制说明
+
+`SKILL.md` 只保留 Agent 调用工具时需要执行的规则；本节记录返回层的设计，供维护者理解实现，不作为 Agent 的调用指令。
+
+#### 为什么使用多个 text block
+
+Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单块直接达到限制时，平台可能对正文做头尾截断，因此插件采用低于限制的独立文本块承载 Markdown：
+
+- 默认每块 `28672` 字节，即 28 KiB；
+- 默认最多 4 块，总容量约 112 KiB；
+- 每个块都保持在单块限制以下，并按 UTF-8 边界切分；
+- 完整结构化数据仍放在 `details.data`，正文文本放在多个 `content[type="text"]` 块中。
+
+这个方案来自实际探针验证，不代表 4 是 Hana 的硬上限。增加块数只能扩大工具结果的承载量，仍会受到 Agent 上下文、模型上下文窗口、provider 请求限制和输入成本影响。当前默认值优先取稳定余量，而不是追求最大块数。
+
+#### 超出总容量时的决策
+
+返回层按最终 Markdown 内容大小判断，不按文件数量判断：
+
+1. 内容能放入 `inlineBlockBytes × inlineBlockCount`：返回完整 Markdown，必要时拆成多个 text block。
+2. 内容超限且已有本地保存结果：返回处理摘要和路径，完整正文从 `mdPath` 读取。
+3. 内容超限且没有本地保存结果：跨多个 text block 保留开头和结尾，中间插入省略提示，并标记结果不完整。
+
+因此，`content` 适合 Agent 直接阅读，`details.data` 适合程序读取结构化元信息，本地 Markdown 文件是大文档的完整兜底。
+
+#### 配置项
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `inlineBlockBytes` | `number`（4096–30720） | `28672` | 每个返回文本块的最大大小，按 UTF-8 字节计算；默认 28 KiB。 |
 | `inlineBlockCount` | `number`（1–8） | `4` | 返回文本块数量上限；默认 4 个，默认总容量约 112 KiB。 |
+
+旧版 `maxInlineReturnBytes` 会作为 `inlineBlockBytes` 的兼容 fallback，但新配置优先。
+
+### 返回大小 & 日志
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
 | `logLevel` | `"DEBUG" \| "INFO" \| "WARNING" \| "ERROR"` | `"INFO"` | 日志级别。 |
 | `logFile` | `string` | `""` | 日志文件路径（留空则只输出到控制台 stderr）。 |
 

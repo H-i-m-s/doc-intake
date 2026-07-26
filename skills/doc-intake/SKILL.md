@@ -1,189 +1,98 @@
 ---
 name: doc-intake
 description: >
-  Use when the user asks to read, open, view, inspect, understand, summarize, analyze, transcribe, recognize, or extract text/tables/images from any PDF, DOCX, PPTX, PPT, XLSX, XLSM, HTML, or image file (PNG, JPG, JPEG, BMP, TIFF, TIF, WEBP, GIF), including when they mention Word document, Excel spreadsheet, PowerPoint presentation, slide deck, Office document, PDF report, scanned image, screenshot of text, or image containing text in passing. The first-line tool for any "read this file" or "what does this file say" request. Supports OCR for scanned/image-only PDFs and images. 读取/提取/解析/识别/转换任何 PDF、Word、Excel、PPT、图片、HTML 文件时必须使用此插件，不要自己读二进制或猜测文件内容。
-compatibility: "需要 Python 环境（用户需在插件设置面板填 pythonPath）和可选的云端 API Token（MinerU / PaddleOCR）"
+  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOCX、PPTX、PPT、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP、GIF）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。需要验证 MinerU/PaddleOCR Token 或 Key 时调用 doc_intake_validate。
+compatibility: "需要 Python 环境（用户需在插件设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
 metadata:
   default-enabled: true
 ---
 
-# Doc Intake
+# Doc Intake 调用规则
 
-**必须插件**：用户发送任何文档/图片文件时，必须调用此插件提取内容。
+## 1. 工具选择
 
-## 触发条件
+### 调用 `doc_intake`
 
-以下情况**必须**调用 `doc_intake`：
-- 用户发送 PDF / Word / PPT / Excel / HTML / 图片文件
-- 用户说"读取这个文档"、"提取内容"、"解析这个文件"、"转成 markdown"
-- 用户说"OCR"、"识别文字"、"识别图片里的字"
+以下情况直接调用 `doc_intake`：
 
-以下情况**必须**调用 `doc_intake_validate`：
-- 用户说"测试 token"、"测试 key"、"验证凭证"
-- 用户问"token 有效吗"、"key 能用吗"
-- 用户刚配置完 MinerU / PaddleOCR Token 后想确认是否正确
+- 用户发送或指定 PDF、DOCX、PPTX、PPT、XLSX、XLSM、HTML、HTM 或图片文件。
+- 用户要求读取、查看、解析、提取、识别、OCR、转 Markdown、总结或分析文件内容。
+- 用户询问文档中的文字、表格、公式、图片、视频、音频或链接。
+- 用户要求批量处理多个文件或一个文件夹。
 
----
+### 调用 `doc_intake_validate`
 
-## 安全边界
+以下情况调用 `doc_intake_validate`，不要调用 `doc_intake`：
 
-- MinerU / PaddleOCR 凭证由 JS 通过一次性 stdin 管道传给 Python，不注入 `DOC_INTAKE_SETTINGS` 环境变量。
-- Python 仍保留环境变量读取，仅用于直接命令行调用的兼容回退；正式插件入口不会使用该回退。
-- Token 验证工具同样通过 stdin 传递凭证，命令行参数仅用于旧版手动调用。
-- 错误日志会遮蔽已知完整 Token，避免异常文本或第三方响应回显凭证。
+- 用户要求测试或验证 MinerU/PaddleOCR Token、Key 或凭证。
+- 用户询问 Token/Key 是否有效。
+- 用户刚配置 Token 后要求确认配置。
 
-## 工具 1：`doc_intake`
+## 2. `doc_intake` 参数
 
-### 参数
+只传有明确需求的参数；没有特别要求时使用默认值。
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `source` | array | ✅ | — | 文件路径列表。**支持单个文件、多个文件、文件夹**。文件夹自动展开成所有支持的文档。 |
-| `outputDir` | string | ❌ | 插件设置 `savePath` | 保存目录。**未指定时插件按 `autoSave` 配置自动决定**：若启用则保存到 `savePath`，否则不保存文件。 |
-| `backend` | string | ❌ | `"auto"` | 强制后端。可选值：`auto`（按文件类型走默认链）/ `mineru` / `paddleocr` / `local`。 |
-| `pageRange` | string | ❌ | 全部页 | PDF 页码范围，格式 `"1-5,10,15-20"`（1-based）。 |
-| `language` | string | ❌ | 插件设置 `defaultLanguage`（默认 `zh`） | 文档语言，传给 OCR / 云端 API。 |
-| `includeMedia` | boolean | ❌ | `true` | 是否提取媒体（图片/视频/音频）。**关闭后只输出文本，不抽文件**。 |
-| `saveJson` | boolean | ❌ | `false` | 是否额外保存 JSON 格式文件（与 markdown 并列）。 |
-| `splitOnly` | boolean | ❌ | `false` | 仅做图片分割测试，不调用后端。**调试用，正常提取不要传**。 |
+| 参数 | 类型 | 调用规则 |
+|---|---|---|
+| `source` | `string[]` | 必填。传文件路径、多个文件路径或文件夹路径。 |
+| `outputDir` | `string` | 只有用户明确要求保存，或任务需要后续读取完整大文档时传。没有保存需求时不要主动传。 |
+| `backend` | `string` | 只有用户指定后端时传：`auto`、`mineru`、`paddleocr`、`local`。 |
+| `pageRange` | `string` | 用户指定 PDF 页码时传，例如 `1-5,10`。 |
+| `language` | `string` | 用户指定 OCR/识别语言时传；否则不传。 |
+| `includeMedia` | `boolean` | 用户明确不要提取图片、视频、音频时传 `false`；否则不传。 |
+| `saveJson` | `boolean` | 用户要求 JSON，或明确要求结构化保存时传 `true`；否则不传。 |
+| `splitOnly` | `boolean` | 只有用户要求测试长图切割时传 `true`；正常提取不要传。 |
 
-### 后端选择
+常用调用：
 
-`backend` 默认 `auto`，按文件类型走默认链（用户在插件设置面板可改 `pdfBackendChain`）：
-
-| 文件类型 | 默认链 | 说明 |
-|---------|--------|------|
-| PDF | local | 默认只走本地；用户显式配置云端链后失败自动降级到下一档 |
-| 图片（jpg/png/webp/tiff/...） | paddleocr | 自动长图分割 |
-| DOCX / PPTX / XLSX / HTML | local | 本地 Python 解析 |
-| .ppt | local | 本地用 PowerPoint 转成 .pptx 后处理 |
-
-需要强制只用某一档时，传 `backend="local"` 等。MinerU / PaddleOCR 支持多 Token 轮询（用户在设置面板用分号分隔多个 Token，单个 Key 失效自动切下一个）。
-
-### 支持的文件格式
-
-PDF / DOCX / PPTX / PPT / XLSX / XLSM / HTML / HTM / JPG / JPEG / PNG / BMP / TIFF / TIF / WEBP / GIF
-
-### 返回内容（关键概念）
-
-返回策略按最终结果大小判断，不按文件数量判断：
-
-- 未超过默认 `4 × 28 KiB`：返回完整 Markdown + 文件元信息 + 媒体列表，正文可能拆成多个 text block。
-- 超过块容量且已保存到本地：返回处理概览和 `mdPath` / `imagesDir`，完整内容从本地文件读取。
-- 超过块容量且未保存到本地：在多个 text block 中保留 Markdown 开头和结尾，中间内容插入省略提示，并明确标记内容不完整。
-
-大 PDF 的分块只用于云端上传；插件会在 Python 进程内生成内存 PDF bytes，不创建源目录下的 `*_chunks` 文件夹或 chunk PDF，再按 `chunkIndex` 顺序合并所有结果，统一生成一个原文件对应的 Markdown/JSON 和唯一媒体目录，不会把 chunk 结果作为本地输出文件。
-
-### 输出文件结构（保存到本地时）
-
-大 PDF 的分块只在插件内部以内存 PDF bytes 完成，源文件目录不会出现 `*_chunks` 文件夹或 chunk PDF。
-
-```
-outputDir/
-├── 文件名.pdf.md      ← 完整合并后的 markdown（原始 PDF 文件名 + .md 后缀）
-├── 文件名.pdf.json    ← 完整合并后的 JSON（仅 saveJson=true 时）
-└── 文件名_media/      ← 唯一媒体目录（图/视频/音频都在这里）
-    ├── image_001.png
-    ├── video_001.mp4
-    ├── audio_001.flac
-    └── ...
+```text
+doc_intake(source=["report.pdf"])
+doc_intake(source=["report.pdf"], outputDir="D:/Output")
+doc_intake(source=["report.pdf"], pageRange="1-5")
+doc_intake(source=["paper.pdf"], backend="local")
+doc_intake(source=["document.docx"], includeMedia=false)
+doc_intake(source=["a.docx", "b.pptx", "c.xlsx"], outputDir="D:/Output")
 ```
 
-媒体命名按类型分别连续编号：普通文件使用 `image_001.png` / `video_001.mp4` / `audio_001.flac`；分块 PDF 会增加 `chunk_NNN_` 前缀，避免并发分块之间覆盖。
+## 3. 后端选择
 
-### markdown 中的媒体引用
+默认不传 `backend`，让插件按文件类型和设置中的降级链处理。
 
-- 图片：`![alt](文件名_media/image_001.png)`
-- 视频：`<video controls src="文件名_media/video_001.mp4" title="alt"></video>`
-- 音频：`<audio controls src="文件名_media/audio_001.flac" title="alt"></audio>`
+- PDF：默认本地后端；用户配置云端链时按设置顺序降级。
+- 图片：默认走 PaddleOCR 配置链。
+- DOCX、PPTX、XLSX、HTML、PPT：走本地 Python 解析。
+- 用户要求不上传 PDF 或只用本地解析时传 `backend="local"`。
+- 不要因为本地解析失败就自行改写参数；根据返回的 `warnings` 判断是否需要建议用户改用其他后端。
 
-### 使用场景
+## 4. 结果处理
 
-**场景 1：聊天中读取文档**
-```
-用户：[发送文件 report.pdf]
-→ 调用 doc_intake(source=["report.pdf"])
-```
+- 先读取工具返回的 `content` 和 `details.data`，再回答用户。
+- 返回正文完整时，直接基于正文回答，不要重复调用工具。
+- 返回 `mdPath` 时，正文已保存到本地；需要完整内容时读取该 Markdown 文件，不要假装已经看到了未返回的正文。
+- 返回 `imagesDir` 或媒体列表时，用户的问题涉及图片、公式预览、视频或音频，就继续读取相关媒体；不要只看文字摘要。
+- 返回 `contentTruncated: true`、`contentOmitted: true` 或“中间内容已省略”时，只能基于实际返回部分回答，并明确说明内容不完整；需要完整分析时先读取 `mdPath`，没有路径则请求用户允许保存或缩小范围。
+- 批量结果中逐项查看成功/失败状态和 `warnings`，不要把部分成功说成全部成功。
+- 看到后端降级警告时，在回答中说明实际使用的后端；不要声称使用了用户未要求或未成功的后端。
+- 看到媒体引导文字时，按引导读取媒体后再回答涉及媒体的问题。
 
-**场景 2：用户指定保存位置**
-```
-用户：把这个 PDF 提取到 D:/Output
-→ 调用 doc_intake(source=["report.pdf"], outputDir="D:/Output")
-```
+## 5. 保存与路径规则
 
-> **重要**：除非用户明确指定了保存位置，否则不要传 `outputDir`，让插件按配置自动处理。
+- 用户明确给出保存目录时，原样传入 `outputDir`。
+- 用户没有要求保存时，不要擅自指定 `outputDir`。
+- 不要猜测或重写 `mdPath`、`imagesDir`、`mediaPaths`；按工具返回的真实路径读取。
+- 不要把 Markdown 中的媒体引用路径当作本地绝对路径；需要读取文件时优先使用 `mediaPaths` 或 `imagesDir`。
 
-**场景 3：只提取特定页**
-```
-用户：只提取前 5 页
-→ 调用 doc_intake(source=["report.pdf"], pageRange="1-5")
-```
+## 6. 错误处理
 
-**场景 4：批量处理文件夹**
-```
-用户：提取这个文件夹里的所有文档  D:\各种文件
-→ 调用 doc_intake(source=["D:\\各种文件"], outputDir="D:\\输出")
-→ 返回：16 个文件处理完成，12 成功 4 失败 + 文件列表
-> 内容需查看本地文件，不要让 agent 假装自己读到了
-```
+- `PYTHON_PATH_NOT_CONFIGURED`：告知用户到插件设置中配置 `pythonPath`。
+- `INVALID_SOURCE` 或找不到文件：检查路径和文件格式，请用户提供有效路径。
+- `SPAWN_FAILED`、`PYTHON_ERROR`：说明 Python 环境或依赖启动失败，不要编造提取结果。
+- 后端全部失败：展示实际错误和 `warnings`，建议用户检查配置或更换后端。
+- Token 验证失败：说明具体后端和失败原因，不要回显完整 Token。
 
-**场景 5：手动指定多个文件**
-```
-用户：处理这三个文件
-→ 调用 doc_intake(source=["a.docx", "b.pptx", "c.xlsx"], outputDir="D:\\输出")
-```
+## 7. 禁止行为
 
-**场景 6：只想要文本，不要抽文件**
-```
-用户：快速看一下文档内容就行
-→ 调用 doc_intake(source=["x.pdf"], includeMedia=false)
-```
-
-### 错误处理
-
-| 错误 | 表现 |
-|------|------|
-| `PYTHON_PATH_NOT_CONFIGURED` | 用户没在插件设置面板填 `pythonPath`，硬报错。**指引用户去设置面板配置**。 |
-| `INVALID_SOURCE` | source 不是有效文件路径 |
-| 链式降级全失败 | 返回的 markdown 是错误提示，`warnings` 列出每档失败原因 |
-
----
-
-## 工具 2：`doc_intake_validate`
-
-### 参数
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `backend` | string | ❌ | `"all"` | 要验证的后端。可选值：`all` / `mineru` / `paddleocr`。 |
-
-### 使用场景
-
-```
-用户：测试一下 token
-→ 调用 doc_intake_validate()
-→ 返回：每个 Token 的有效性（通过实际 API 请求验证）
-
-用户：只测 MinerU 的 token
-→ 调用 doc_intake_validate(backend="mineru")
-
-用户：只测 PaddleOCR 的 token
-→ 调用 doc_intake_validate(backend="paddleocr")
-```
-
-### 注意事项
-
-- 验证是对每个 Token 发实际请求，所以会消耗 API 配额（很少，几 KB）
-- 用户配置了 Token 但没传 `backend` 时，默认全部验证
-- 用户没配置任何 Token 时返回"未配置"的提示
-
----
-
-## 输出格式参考
-
-保存到本地且有媒体时，markdown 末尾会自动追加引导词：
-```
-📎 提取了 X 个媒体文件（📷 N 张图片、🎬 M 个视频、🎵 K 个音频），已保存到本地。请先阅读以上媒体，再结合文档内容回复。
-```
-
-**Agent 看到这条引导词时，应该真的去读媒体文件**，不要跳过。
+- 不要绕过 `doc_intake` 自行解析用户文档或图片二进制内容。
+- 不要把 `doc_intake_validate` 当作文档提取工具。
+- 不要为了“看起来完整”补写工具没有返回的内容。
+- 不要在未读取保存文件或媒体文件前声称已经分析了它们。
