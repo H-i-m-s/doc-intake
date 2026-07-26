@@ -47,8 +47,6 @@ metadata:
 | `saveJson` | boolean | ❌ | `false` | 是否额外保存 JSON 格式文件（与 markdown 并列）。 |
 | `splitOnly` | boolean | ❌ | `false` | 仅做图片分割测试，不调用后端。**调试用，正常提取不要传**。 |
 
-当用户没有明确指定需要哪个参数时，你无须传递参数。插件会默认使用用户设置中的参数。
-
 ### 后端选择
 
 `backend` 默认 `auto`，按文件类型走默认链（用户在插件设置面板可改 `pdfBackendChain`）：

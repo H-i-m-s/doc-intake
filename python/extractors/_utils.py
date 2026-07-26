@@ -18,6 +18,11 @@ from xml.etree import ElementTree as ET
 from typing import List, Literal, Optional
 
 
+def markdown_media_path(path: str) -> str:
+    """为 Markdown/HTML 媒体引用编码 ASCII 空格，保留中文和其他路径字符。"""
+    return str(path).replace("%20", "%20").replace(" ", "%20")
+
+
 MediaKind = Literal["image", "video", "audio", "other"]
 
 
@@ -77,14 +82,15 @@ def format_media_ref(rel_path: str, kind: str, alt: str = "") -> str:
     - audio:  <audio controls src="rel" title="alt"></audio>
     - other:  ![alt](rel)  (没法渲染,落到图片占位)
     """
+    encoded_path = markdown_media_path(rel_path)
     alt_escaped = (alt or "").replace('"', "&quot;").strip()
     if kind == "video":
         title_attr = f' title="{alt_escaped}"' if alt_escaped else ""
-        return f'<video controls src="{rel_path}"{title_attr}></video>'
+        return f'<video controls src="{encoded_path}"{title_attr}></video>'
     if kind == "audio":
         title_attr = f' title="{alt_escaped}"' if alt_escaped else ""
-        return f'<audio controls src="{rel_path}"{title_attr}></audio>'
-    return f'![{alt or ""}]({rel_path})'
+        return f'<audio controls src="{encoded_path}"{title_attr}></audio>'
+    return f'![{alt or ""}]({encoded_path})'
 
 
 @dataclass

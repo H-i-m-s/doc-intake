@@ -11,6 +11,7 @@ from unittest.mock import patch
 PLUGIN_PYTHON = Path(__file__).resolve().parents[1] / "python"
 sys.path.insert(0, str(PLUGIN_PYTHON))
 
+from extractors._utils import format_media_ref, markdown_media_path
 from extractors.docx_extractor import DocxExtractor
 from extractors.mathtype_filter import filter_mathtype_previews
 from mathtype_converter import MathTypeConverter
@@ -65,6 +66,17 @@ def _write_strict_docx(path: Path, preview_name: str = "image1.png") -> None:
         archive.writestr("word/embeddings/oleObject1.bin", b"placeholder")
         archive.writestr(f"word/media/{preview_name}", PNG_BYTES)
         archive.writestr("word/media/image2.png", PNG_BYTES)
+
+
+def test_markdown_media_path_encodes_spaces_only() -> None:
+    assert markdown_media_path("论文 文件_media/image 001.png") == "论文%20文件_media/image%20001.png"
+    assert markdown_media_path("论文%20文件/image.png") == "论文%20文件/image.png"
+    assert format_media_ref("论文 文件_media/image 001.png", "image", "图") == (
+        "![图](论文%20文件_media/image%20001.png)"
+    )
+    assert format_media_ref("论文 文件_media/video 001.mp4", "video", "视频") == (
+        '<video controls src="论文%20文件_media/video%20001.mp4" title="视频"></video>'
+    )
 
 
 def test_strict_ooxml_formula_and_image_relationships() -> None:

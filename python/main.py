@@ -8,7 +8,6 @@ import re as _re
 import sys
 import tempfile
 import time
-from urllib.parse import quote as _url_quote
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional, Iterable
@@ -19,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # 使用绝对导入，避免相对导入问题
 from extractors.base import BaseExtractor, ExtractionResult
 from extractors import get_extractor
+from extractors._utils import markdown_media_path
 from logger import configure_logging, get_logger, log
 from pdf_splitter import PdfMemoryChunk, iter_pdf_memory_chunks, pdf_page_count
 
@@ -414,7 +414,7 @@ def _rewrite_media_paths(markdown: str, metadata: dict, stem: str) -> str:
         else:
             local_name = Path(str(local_info)).name
         rel = f"{stem}_media/{local_name}"
-        rel_encoded = _url_quote(rel, safe="/:._-", encoding="utf-8")
+        rel_encoded = markdown_media_path(rel)
         vp_escaped = _re.escape(virtual_path)
         markdown = _re.sub(
             rf'src="{vp_escaped}"',
@@ -560,7 +560,7 @@ def _run(args) -> dict:
             if settings.get("splitImageMinBlank"):
                 result.markdown += f"参数: 连续 {settings.get('splitImageMinBlank')} 行空白切一刀\n\n"
             for i, p in enumerate(saved):
-                result.markdown += f"![块{i+1}]({p})\n"
+                result.markdown += f"![块{i+1}]({markdown_media_path(p)})\n"
             result.images = saved
             result.metadata = {"format": "split_test"}
             result.output_dir = str(split_dir)
@@ -773,7 +773,7 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
             else:
                 local_name = Path(str(local_info)).name
             rel = f"{stem}_media/{local_name}"
-            rel_encoded = _url_quote(rel, safe="/:._-", encoding="utf-8")
+            rel_encoded = markdown_media_path(rel)
             vp_escaped = _re.escape(virtual_path)
             final_markdown = _re.sub(rf'src="{vp_escaped}"', f'src="{rel_encoded}"', final_markdown)
             final_markdown = _replace_markdown_media_reference(

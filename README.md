@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.6.5-blue" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
   <img src="https://img.shields.io/badge/python-3.11+-yellow" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
@@ -91,6 +91,15 @@ pip install -r python/requirements.txt
 
 没有 Token 也能用：PDF 默认走本地 PyMuPDF，不会隐式调用云端；如需 MinerU/PaddleOCR，请在设置中显式配置后端链并提供对应凭证。图片 OCR 仍需要 PaddleOCR Token。
 
+如果需要使用MinerU，并且常年挂着机场/梯子，建议将以下链接纳入**直连**规则：
+- 'DOMAIN,aistudio.baidu.com,DIRECT'
+- 'DOMAIN,www.paddleocr.ai,DIRECT'
+- 'DOMAIN,cdn-mineru.openxlab.org.cn,DIRECT'
+- 'DOMAIN,mineru.net,DIRECT'
+- 'DOMAIN,mineru.org.cn,DIRECT'
+- 'DOMAIN,sso.openxlab.org.cn,DIRECT'
+
+
 ### 后续推荐操作
 
 #### 1. 配置云端 Token
@@ -114,7 +123,7 @@ doc_intake_validate()
 
 返回每个 Token 的有效性。全部通过说明降级链三档齐全，覆盖面最广。
 
-#### 3. 清理自带的 `office-documents` skill
+#### 3. 当确认doc-intake可用及符合您胃口后，可清理自带的 `office-documents` skill
 
 Hana 自带 `office-documents` skill，它的设计思路是「一个 skill 干所有事」——读、写、转换、格式化全包。结果是每个场景都只能做到「能用」级别：扫描件是空白、公式丢失、媒体不提取、批量无并发。
 
