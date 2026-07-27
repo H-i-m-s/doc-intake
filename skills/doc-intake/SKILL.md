@@ -41,6 +41,7 @@ metadata:
 | `language` | `string` | 用户指定 OCR/识别语言时传；否则不传。 |
 | `includeMedia` | `boolean` | 用户明确不要提取图片、视频、音频时传 `false`；否则不传。 |
 | `saveJson` | `boolean` | 用户要求 JSON，或明确要求结构化保存时传 `true`；否则不传。 |
+| `summaryOnly` | `boolean` | 用户只想确认每个文件是否成功时传 `true`；传入后仍执行提取，但不返回 Markdown 正文。成功但带 warnings 的文件仍算成功。 |
 | `splitOnly` | `boolean` | 只有用户要求测试长图切割时传 `true`；正常提取不要传。 |
 
 常用调用：
@@ -52,6 +53,7 @@ doc_intake(source=["report.pdf"], pageRange="1-5")
 doc_intake(source=["paper.pdf"], backend="local")
 doc_intake(source=["document.docx"], includeMedia=false)
 doc_intake(source=["a.docx", "b.pptx", "c.xlsx"], outputDir="D:/Output")
+doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 ```
 
 ## 3. 后端选择
@@ -67,6 +69,7 @@ doc_intake(source=["a.docx", "b.pptx", "c.xlsx"], outputDir="D:/Output")
 ## 4. 结果处理
 
 - 先读取工具返回的 `content` 和 `details.data`，再回答用户。
+- `summaryOnly=true` 时，只根据每个文件的 `status`、`error` 和保存路径汇报结果，不要寻找或补写正文。
 - 返回正文完整时，直接基于正文回答，不要重复调用工具。
 - 返回 `mdPath` 时，正文已保存到本地；需要完整内容时读取该 Markdown 文件，不要假装已经看到了未返回的正文。
 - 返回 `imagesDir` 或媒体列表时，用户的问题涉及图片、公式预览、视频或音频，就继续读取相关媒体；不要只看文字摘要。

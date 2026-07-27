@@ -56,6 +56,59 @@ function testConfiguredBlocksPreserveCompleteUtf8Text() {
   assert.ok(blocks.every((block) => Buffer.byteLength(block.text, "utf8") <= 8192));
 }
 
+function testSummaryOnlyReturnsPerFileStatusWithoutMarkdown() {
+  const result = buildResult(
+    ["ok.docx", "warn.pdf", "failed.xlsx"],
+    [
+      success("ok.docx", "完整正文"),
+      success("warn.pdf", "正文", { metadata: { warnings: ["检测到扫描页"] } }),
+      {
+        ok: false,
+        source: "failed.xlsx",
+        error: new Error("解析失败原因"),
+      },
+    ],
+    {},
+    { summaryOnly: true },
+  );
+  const payload = toolPayload(result);
+
+  assert.equal(payload.metadata.summaryOnly, true);
+  assert.equal(payload.metadata.contentOmitted, true);
+  assert.equal(payload.metadata.success, 2);
+  assert.equal(payload.metadata.failed, 1);
+  assert.deepEqual(
+    payload.files.map((file) => [file.name, file.status]),
+    [["ok.docx", "success"], ["warn.pdf", "success"], ["failed.xlsx", "failed"]],
+  );
+  assert.equal(payload.files[0].markdown, undefined);
+  assert.deepEqual(payload.files[1].metadata.warnings, ["检测到扫描页"]);
+  assert.match(payload.markdown, /✅ ok\.docx/);
+  assert.match(payload.markdown, /✅ warn\.pdf/);
+  assert.match(payload.markdown, /❌ failed\.xlsx — 解析失败原因/);
+  assert.doesNotMatch(toolText(result), /完整正文/);
+}
+
+function testSummaryOnlyPreservesSavedPaths() {
+  const result = buildResult(
+    ["saved.docx"],
+    [success("saved.docx", "正文", {
+      outputDir: "D:\\Agent\\输出",
+      metadata: {
+        mdPath: "D:\\Agent\\输出\\saved.docx.md",
+        imagesDir: "D:\\Agent\\输出\\saved_media",
+      },
+    })],
+    {},
+    { summaryOnly: true },
+  );
+  const payload = toolPayload(result);
+
+  assert.equal(payload.files[0].status, "success");
+  assert.equal(payload.files[0].metadata.mdPath, "D:\\Agent\\输出\\saved.docx.md");
+  assert.equal(payload.files[0].metadata.imagesDir, "D:\\Agent\\输出\\saved_media");
+}
+
 function testOversizedSavedResultReturnsPathsOnly() {
   const result = buildResult(
     ["long.docx"],
@@ -107,7 +160,9 @@ function testOversizedUnsavedResultKeepsHeadAndTailAcrossBlocks() {
 
 testManyShortFilesReturnFully();
 testConfiguredBlocksPreserveCompleteUtf8Text();
+testSummaryOnlyReturnsPerFileStatusWithoutMarkdown();
+testSummaryOnlyPreservesSavedPaths();
 testOversizedSavedResultReturnsPathsOnly();
 testUtf8ContentAtMinimumConfiguredBlock();
 testOversizedUnsavedResultKeepsHeadAndTailAcrossBlocks();
-console.log("return-budget-tests-ok (5 tests)");
+console.log("return-budget-tests-ok (7 tests)");

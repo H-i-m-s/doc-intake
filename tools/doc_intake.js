@@ -127,6 +127,7 @@ function toFileOutput(item) {
   const metadata = result.metadata ?? {};
   return {
     name: item.source,
+    status: "success",
     outputDir: result.outputDir ?? null,
     mdPath: metadata.mdPath ?? null,
     imagesDir: metadata.imagesDir ?? null,
@@ -161,25 +162,35 @@ function buildFileMetadata(file) {
   return metadata;
 }
 
-function buildSavedSummary(filesOut) {
-  const successCount = filesOut.filter((file) => !file.warnings || file.warnings.length === 0).length;
+function buildStatusSummary(filesOut, reason = "summary_only") {
+  const successCount = filesOut.filter((file) => file.status === "success").length;
+  const failedCount = filesOut.length - successCount;
   const summary = filesOut.map((file) => {
-    const ok = !file.warnings || file.warnings.length === 0;
-    return `${ok ? "✅" : "❌"} ${file.name}${ok ? "" : " — " + (file.warnings[0] ?? "失败")}`;
+    const ok = file.status === "success";
+    const detail = ok ? "" : ` — ${file.error ?? file.warnings?.[0] ?? "解析失败"}`;
+    return `${ok ? "✅" : "❌"} ${file.name}${detail}`;
   });
   return {
     markdown: [`处理完成：${successCount}/${filesOut.length} 个文件成功`, "", ...summary].join("\n"),
     metadata: {
+      summaryOnly: reason === "summary_only",
       contentOmitted: true,
-      returnReason: "inline_return_limit_exceeded",
+      returnReason: reason,
       count: filesOut.length,
       success: successCount,
+      failed: failedCount,
     },
     files: filesOut.map((file) => ({
       name: file.name,
+      status: file.status,
+      ...(file.error ? { error: file.error } : {}),
       metadata: buildFileMetadata(file),
     })),
   };
+}
+
+function buildSavedSummary(filesOut) {
+  return buildStatusSummary(filesOut, "inline_return_limit_exceeded");
 }
 
 function truncateWithoutBreakingUtf8(text, maxBytes) {
@@ -307,8 +318,11 @@ function headTailText(text, maxBytes) {
   return head + marker + tail;
 }
 
-export function buildResult(sources, results, settings = {}) {
+export function buildResult(sources, results, settings = {}, options = {}) {
   const filesOut = results.map(toFileOutput);
+  if (options.summaryOnly === true) {
+    return toToolResult(buildStatusSummary(filesOut));
+  }
   const fullPayload = filesOut.length === 1
     ? { name: filesOut[0].name, markdown: filesOut[0].markdown ?? "", metadata: buildFileMetadata(filesOut[0]) }
     : filesOut.map((file) => ({
@@ -406,6 +420,10 @@ export const parameters = {
       type: "boolean",
       description: "仅做图片分割测试，不调用后端（可选）",
     },
+    summaryOnly: {
+      type: "boolean",
+      description: "只返回每个文件的成功/失败状态，不返回正文（可选）",
+    },
   },
   required: ["source"],
 };
@@ -424,7 +442,9 @@ export async function execute(input = {}, ctx) {
       _localConcurrency: settings.maxConcurrentLocal ?? 8,
     };
     const results = await processFiles(sources, enrichedInput, ctx, settings);
-    return buildResult(sources, results, settings);
+    return buildResult(sources, results, settings, {
+      summaryOnly: input.summaryOnly === true,
+    });
   } catch (error) {
     return toToolError(error, {
       action: name,

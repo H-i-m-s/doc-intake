@@ -276,6 +276,7 @@ doc-intake/
 | `language` | `string` | ❌ | `"zh"` | 文档语言，传递给 OCR / 云端 API。影响 PaddleOCR 和 MinerU 的识别语言。 |
 | `includeMedia` | `boolean` | ❌ | `true` | 是否提取媒体文件（图片/视频/音频）。设为 `false` 时只输出文本，不抽取文件。 |
 | `saveJson` | `boolean` | ❌ | `false` | 是否额外保存结构化 JSON 文件（与 .md 并列）。JSON 包含 markdown 内容 + metadata。 |
+| `summaryOnly` | `boolean` | ❌ | `false` | 只返回每个文件的成功/失败状态，不返回 Markdown 正文；提取和保存流程仍正常执行。成功但带 warnings 的文件仍算成功。 |
 | `splitOnly` | `boolean` | ❌ | `false` | 仅做图片分割测试，不调用后端。调试用，正常提取不要传。 |
 
 ### 工具 2：`doc_intake_validate`
@@ -439,7 +440,14 @@ Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单
 
 ### 返回策略
 
-返回策略按内容大小和文本块容量判断，不按文件数量判断：
+`summaryOnly=true` 时会优先返回状态摘要，不受正文大小限制：
+
+- 每个文件返回 `status: "success"` 或 `status: "failed"`。
+- 失败项返回 `error`，成功但存在 warnings 的文件仍算成功。
+- 如果指定了 `outputDir` 或启用了自动保存，状态项保留 `mdPath`、`imagesDir` 等路径。
+- 不返回 Markdown 正文，适合批量处理时只确认文件是否成功。
+
+未设置 `summaryOnly` 时，返回策略按内容大小和文本块容量判断，不按文件数量判断：
 
 - 结果不超过 `inlineBlockBytes × inlineBlockCount`：返回全部 Markdown，必要时拆成多个 text block。
 - 结果超限且已保存到本地：只返回处理摘要和 `mdPath` / `imagesDir`。
