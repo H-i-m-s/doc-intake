@@ -2,9 +2,8 @@ import { extractDocument } from "../lib/service.js";
 import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
 import { getSettings } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
-import { appendMediaGuide } from "../lib/doc-intake-helpers.js";
 import { statSync, readdirSync } from "node:fs";
-import { extname, join } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, normalize, parse, resolve } from "node:path";
 
 const SUPPORTED_EXTS = new Set([
   ".pdf", ".docx", ".pptx", ".ppt", ".xlsx", ".xlsm",
@@ -64,30 +63,55 @@ async function runOne(source, input, ctx) {
   }
 }
 
-function addGuideText(result) {
-  const mediaPaths = result.metadata?.mediaPaths;
-  const count = Array.isArray(mediaPaths) ? mediaPaths.length : 0;
-  if (count === 0) return result;
+const DEFAULT_MEDIA_PATH_RETURN_LIMIT = 20;
 
-  const kindCounts = { image: 0, video: 0, audio: 0, other: 0 };
-  for (const mediaPath of mediaPaths) {
-    const ext = String(mediaPath).toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || "";
-    const kind = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tif", "tiff", "emf", "wmf", "wdp"].includes(ext)
-      ? "image"
-      : ["mp4", "mov", "webm", "m4v", "avi", "wmv"].includes(ext)
-        ? "video"
-        : ["mp3", "wav", "m4a", "ogg", "flac", "aac"].includes(ext)
-          ? "audio"
-          : "other";
-    kindCounts[kind] += 1;
+function normalizeMediaPathReturnLimit(settings = {}) {
+  const configured = Number(settings.mediaPathReturnLimit);
+  if (!Number.isFinite(configured)) return DEFAULT_MEDIA_PATH_RETURN_LIMIT;
+  return Math.max(0, Math.floor(configured));
+}
+
+function absolutePath(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const normalized = normalize(value);
+  return isAbsolute(normalized) ? normalized : resolve(normalized);
+}
+
+function normalizeMediaPaths(paths, mediaDir) {
+  if (!Array.isArray(paths)) return [];
+  const absoluteDir = absolutePath(mediaDir);
+  return paths
+    .map((value) => {
+      if (typeof value !== "string" || !value.trim()) return null;
+      const normalized = normalize(value);
+      if (isAbsolute(normalized)) return normalized;
+      return absoluteDir ? join(absoluteDir, basename(normalized)) : null;
+    })
+    .filter(Boolean);
+}
+
+function inferMediaDir(mediaPaths) {
+  const firstAbsolutePath = mediaPaths.find((value) => isAbsolute(value));
+  return firstAbsolutePath ? dirname(firstAbsolutePath) : null;
+}
+
+function deriveMediaDir({ outputDir, mdPath, source }) {
+  const absoluteMarkdownPath = absolutePath(mdPath);
+  if (absoluteMarkdownPath) {
+    const markdownName = basename(absoluteMarkdownPath);
+    const sourceFilename = markdownName.endsWith(".md")
+      ? markdownName.slice(0, -3)
+      : markdownName;
+    const stem = parse(sourceFilename).name;
+    if (stem) return join(dirname(absoluteMarkdownPath), `${stem}_media`);
   }
-  result.markdown = appendMediaGuide(
-    result.markdown,
-    count,
-    kindCounts,
-    Boolean(result.outputDir),
-  );
-  return result;
+
+  const absoluteOutputDir = absolutePath(outputDir);
+  const sourceStem = typeof source === "string" ? parse(basename(source)).name : "";
+  if (absoluteOutputDir && sourceStem) {
+    return join(absoluteOutputDir, `${sourceStem}_media`);
+  }
+  return null;
 }
 
 async function processFiles(sources, input, ctx, settings) {
@@ -123,20 +147,53 @@ function toFileOutput(item) {
     };
   }
 
-  const result = addGuideText(item.result);
+  const result = item.result;
   const metadata = result.metadata ?? {};
+  const rawMediaPaths = Array.isArray(metadata.mediaPaths) ? metadata.mediaPaths : [];
+  let mediaDir = absolutePath(metadata.mediaDir);
+  let mediaPaths = normalizeMediaPaths(rawMediaPaths, mediaDir);
+  if (!mediaDir && mediaPaths.length > 0) {
+    mediaDir = inferMediaDir(mediaPaths);
+  }
+  if (!mediaDir && rawMediaPaths.length > 0) {
+    mediaDir = deriveMediaDir({
+      outputDir: result.outputDir,
+      mdPath: metadata.mdPath,
+      source: item.source,
+    });
+  }
+  if (mediaDir) {
+    mediaPaths = normalizeMediaPaths(rawMediaPaths, mediaDir);
+  }
+  const rawMediaCount = rawMediaPaths.filter((value) => {
+    if (typeof value === "string") return Boolean(value.trim());
+    return value !== null && value !== undefined;
+  }).length;
+  const unresolvedMediaCount = Math.max(0, rawMediaCount - mediaPaths.length);
+  const saveFailed = metadata.saveStatus === "failed";
+  const warnings = Array.isArray(result.warnings)
+    ? [...result.warnings]
+    : (Array.isArray(metadata.warnings) ? [...metadata.warnings] : []);
+  if (unresolvedMediaCount > 0) {
+    warnings.push("部分媒体路径缺少可用的绝对路径基准，未返回这些媒体的路径");
+  }
+  const saveError = saveFailed
+    ? warnings.find((warning) => String(warning).startsWith("保存失败")) ?? "保存失败"
+    : null;
   return {
     name: item.source,
-    status: "success",
-    outputDir: result.outputDir ?? null,
-    mdPath: metadata.mdPath ?? null,
-    imagesDir: metadata.imagesDir ?? null,
-    jsonPath: metadata.jsonPath ?? null,
-    mediaPaths: metadata.mediaPaths ?? [],
+    status: saveFailed ? "failed" : "success",
+    ...(saveError ? { error: saveError } : {}),
+    outputDir: absolutePath(result.outputDir),
+    mdPath: absolutePath(metadata.mdPath),
+    mediaDir,
+    jsonPath: absolutePath(metadata.jsonPath),
+    mediaPaths,
+    unresolvedMediaCount,
     format: metadata.format ?? null,
     reader: metadata.reader ?? null,
     backendChain: metadata.backendChain ?? null,
-    warnings: metadata.warnings ?? [],
+    warnings,
     usedBackendInChain: metadata.usedBackendInChain ?? null,
     usedBackend: metadata.usedBackend ?? null,
     usedBackends: metadata.usedBackends ?? [],
@@ -144,9 +201,8 @@ function toFileOutput(item) {
   };
 }
 
-function buildFileMetadata(file) {
+function buildFileMetadata(file, settings = {}) {
   const metadata = {
-    mediaPaths: file.mediaPaths ?? [],
     outputDir: file.outputDir ?? null,
     format: file.format ?? null,
     reader: file.reader ?? null,
@@ -157,12 +213,49 @@ function buildFileMetadata(file) {
     usedBackends: file.usedBackends ?? [],
   };
   if (file.mdPath) metadata.mdPath = file.mdPath;
-  if (file.imagesDir) metadata.imagesDir = file.imagesDir;
+  if (file.mediaDir) {
+    metadata.mediaDir = file.mediaDir;
+    const limit = normalizeMediaPathReturnLimit(settings);
+    if (file.unresolvedMediaCount > 0) {
+      metadata.mediaCount = file.mediaPaths.length + file.unresolvedMediaCount;
+    } else if (file.mediaPaths.length <= limit) {
+      metadata.mediaPaths = file.mediaPaths;
+    } else {
+      metadata.mediaCount = file.mediaPaths.length;
+    }
+  } else if (file.unresolvedMediaCount > 0) {
+    metadata.mediaCount = file.unresolvedMediaCount;
+  }
   if (file.jsonPath) metadata.jsonPath = file.jsonPath;
   return metadata;
 }
 
-function buildStatusSummary(filesOut, reason = "summary_only") {
+function buildAgentPathContent(filesOut, settings = {}) {
+  const files = filesOut
+    .map((file) => {
+      const metadata = buildFileMetadata(file, settings);
+      const paths = {};
+      for (const key of ["mdPath", "mediaDir", "mediaPaths", "mediaCount", "jsonPath"]) {
+        if (metadata[key] !== undefined) paths[key] = metadata[key];
+      }
+      if (Object.keys(paths).length === 0 && !file.error) return null;
+      return {
+        name: file.name,
+        status: file.status,
+        ...(file.error ? { error: file.error } : {}),
+        ...paths,
+      };
+    })
+    .filter(Boolean);
+
+  if (files.length === 0) return [];
+  return [{
+    type: "text",
+    text: JSON.stringify({ doc_intake_paths: files }),
+  }];
+}
+
+function buildStatusSummary(filesOut, reason = "summary_only", settings = {}) {
   const successCount = filesOut.filter((file) => file.status === "success").length;
   const failedCount = filesOut.length - successCount;
   const summary = filesOut.map((file) => {
@@ -184,13 +277,13 @@ function buildStatusSummary(filesOut, reason = "summary_only") {
       name: file.name,
       status: file.status,
       ...(file.error ? { error: file.error } : {}),
-      metadata: buildFileMetadata(file),
+      metadata: buildFileMetadata(file, settings),
     })),
   };
 }
 
-function buildSavedSummary(filesOut) {
-  return buildStatusSummary(filesOut, "inline_return_limit_exceeded");
+function buildSavedSummary(filesOut, settings = {}) {
+  return buildStatusSummary(filesOut, "inline_return_limit_exceeded", settings);
 }
 
 function truncateWithoutBreakingUtf8(text, maxBytes) {
@@ -321,24 +414,33 @@ function headTailText(text, maxBytes) {
 export function buildResult(sources, results, settings = {}, options = {}) {
   const filesOut = results.map(toFileOutput);
   if (options.summaryOnly === true) {
-    return toToolResult(buildStatusSummary(filesOut));
+    const payload = buildStatusSummary(filesOut, "summary_only", settings);
+    const pathContent = buildAgentPathContent(filesOut, settings);
+    return toToolResultWithContent(
+      payload,
+      [{ type: "text", text: payload.markdown }, ...pathContent],
+    );
   }
   const fullPayload = filesOut.length === 1
-    ? { name: filesOut[0].name, markdown: filesOut[0].markdown ?? "", metadata: buildFileMetadata(filesOut[0]) }
+    ? { name: filesOut[0].name, markdown: filesOut[0].markdown ?? "", metadata: buildFileMetadata(filesOut[0], settings) }
     : filesOut.map((file) => ({
       name: file.name,
       markdown: file.markdown ?? "",
-      metadata: buildFileMetadata(file),
+      metadata: buildFileMetadata(file, settings),
     }));
   const fullText = buildReadableText(filesOut);
   const inline = buildInlineContent(fullText, settings);
 
   if (inline.complete) {
-    return toToolResultWithContent(fullPayload, inline.content);
+    return toToolResultWithContent(
+      fullPayload,
+      [...inline.content, ...buildAgentPathContent(filesOut, settings)],
+    );
   }
 
-  if (filesOut.some((file) => Boolean(file.outputDir || file.mdPath))) {
-    return toToolResult(buildSavedSummary(filesOut));
+  if (filesOut.some((file) => Boolean(file.mdPath))) {
+    const payload = buildSavedSummary(filesOut, settings);
+    return toToolResultWithContent(payload, buildAgentPathContent(filesOut, settings));
   }
 
   const { blockBytes, blockCount } = normalizeInlineSettings(settings);
@@ -349,7 +451,7 @@ export function buildResult(sources, results, settings = {}, options = {}) {
   const truncated = buildInlineContent(truncatedText, settings);
   const metadata = filesOut.length === 1
     ? {
-      ...buildFileMetadata(filesOut[0]),
+      ...buildFileMetadata(filesOut[0], settings),
       contentTruncated: true,
       returnReason: "inline_return_limit_exceeded",
       inlineBlockBytes: blockBytes,
@@ -373,10 +475,13 @@ export function buildResult(sources, results, settings = {}, options = {}) {
       metadata,
       files: filesOut.map((file) => ({
         name: file.name,
-        metadata: buildFileMetadata(file),
+        metadata: buildFileMetadata(file, settings),
       })),
     };
-  return toToolResultWithContent(payload, truncated.content);
+  return toToolResultWithContent(
+    payload,
+    [...truncated.content, ...buildAgentPathContent(filesOut, settings)],
+  );
 }
 
 export const name = "doc_intake";

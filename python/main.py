@@ -438,8 +438,8 @@ def format_result(result: ExtractionResult):
     else:
         cleaned_markdown = _strip_data_url_images(raw_markdown)
 
-    # 给 JS 端用的结构。metadata 字段顺序与本地 JSON 对齐，多 mdPath/imagesDir 给批量模式用。
-    # mediaPaths 与 result.images 对齐。JS 端按文件扩展名推断 kind。
+    # 给 JS 端用的运行时结构。落盘 JSON 仍由 save_result 单独构造，保持原格式不变。
+    # mediaDir / mdPath / jsonPath 只用于 Agent 获取实际输出路径。
     compact_meta = {
         "mediaPaths": list(result.images or []),
         "format": meta.get("format"),
@@ -453,7 +453,9 @@ def format_result(result: ExtractionResult):
     if result.md_path:
         compact_meta["mdPath"] = result.md_path
     if result.images_dir:
-        compact_meta["imagesDir"] = result.images_dir
+        compact_meta["mediaDir"] = result.images_dir
+    if meta.get("jsonPath"):
+        compact_meta["jsonPath"] = meta["jsonPath"]
 
     return {
         "name": result.name,

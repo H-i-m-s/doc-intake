@@ -128,6 +128,36 @@ def test_pdf_image_extraction_calls_extract_image_once_per_xref() -> None:
         assert document.calls == [7]
 
 
+def test_runtime_paths_use_media_dir_without_changing_saved_json_schema() -> None:
+    result = ExtractionResult(
+        markdown="content",
+        images=[r"C:\\tmp\\image.png"],
+        metadata={"format": "pdf"},
+    )
+    formatted = main.format_result(result)
+    assert formatted["metadata"]["mediaPaths"] == [r"C:\\tmp\\image.png"]
+    assert "mediaDir" not in formatted["metadata"]
+    assert "imagesDir" not in formatted["metadata"]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        source = Path(temp_dir) / "input.pdf"
+        saved = ExtractionResult(
+            markdown="content",
+            images=[str(Path(temp_dir) / "input_media" / "image.png")],
+            metadata={"format": "pdf"},
+        )
+        main.save_result(saved, str(source), temp_dir, save_json=True)
+        json_data = __import__("json").loads(Path(saved.metadata["jsonPath"]).read_text(encoding="utf-8"))
+        assert set(json_data) == {"content", "metadata"}
+        assert set(json_data["metadata"]) == {
+            "mediaPaths", "format", "reader", "backendChain", "usedBackend",
+            "usedBackends", "warnings", "usedBackendInChain",
+        }
+        assert "mdPath" not in json_data["metadata"]
+        assert "mediaDir" not in json_data["metadata"]
+        assert "jsonPath" not in json_data["metadata"]
+
+
 def test_save_result_atomic_temp_stays_in_target_directory() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         captured_dirs = []

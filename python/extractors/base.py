@@ -13,7 +13,7 @@ class ExtractionResult:
 
     字段约定:
     - images:      所有媒体的本地路径列表(图片/视频/音频统一放)
-    - images_dir:  输出根目录里的 media 子目录(如 foo_media/),保留字段名仅为向后兼容
+    - images_dir:  输出根目录里的 media 子目录(如 foo_media/)，保留为 Python 内部兼容字段，运行时由 main.py 暴露为 mediaDir
     """
     markdown: str = ""
     images: list[str] = field(default_factory=list)

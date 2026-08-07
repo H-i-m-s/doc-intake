@@ -13,6 +13,8 @@
 </p>
 
 ---
+在使用本插件前，推荐先仔细阅读本Readme，或将Readme交予Agent，让其生成说明。推荐在已大致了解本插件的情况下进行使用
+---
 
 ## 为什么不用 `office_read-document`？
 
@@ -138,9 +140,17 @@ Hana 自带 `office-documents` skill，它的设计思路是「一个 skill 干�
 
 **操作**：在 Hana 的 Skills 管理界面中卸载 `office-documents`。卸载后 Agent 不会再优先调用它，文档请求会走 `doc-intake`。
 
-#### 4. 推荐开启保存到本地
+#### 4. 推荐关闭HanaAgent自带的office-read-document工具（如果您已开启）
+
+具体位置：设置-助手（然后一直往下划，找到“工具”）-关闭Office
+
+此工具（Hana自带的office读取工具）会让agent优先调用内置工具读取，发现无法读取则会私自写py脚本，不调用doc-intake插件
+
+#### 5. 推荐开启保存到本地
 
 Hana平台对插件返回信息有字数限制，大于32k将被略去中间部分。所以推荐选择一个保存路径，保存到本地让agent自行读取。
+
+注：2.0版本及以后插件已用特殊手段绕过了此限制，详情见[[#Agent 返回机制说明]]（可通过更改插件中的“返回文本块数量上限”与“每个返回文本块的最大大小”提高返回内容上限。“返回文本块数量上限=8”+“每个返回文本块的最大大小=28k”已能满足绝大多数需求）。但依旧推荐保存到本地，因为这样可以让Hana看产出的媒体，获得更好的效果。
 
 ---
 
@@ -270,13 +280,13 @@ doc-intake/
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|:---:|--------|------|
 | `source` | `string[]` | ✅ | — | 文件路径列表。支持单个文件、多个文件、文件夹路径。文件夹自动展开为所有支持格式的文件。 |
-| `outputDir` | `string` | ❌ | 由 `autoSave` + `savePath` 配置决定 | 保存目录。未指定时：若 `autoSave=true` 则保存到 `savePath`，否则不保存文件。 |
+| `outputDir` | `string` | ❌ | 由 `autoSave` + `savePath` 配置决定 | 保存目录。未指定时：若 `autoSave=true` 或 `summaryOnly=true` 则保存到 `savePath`，否则不保存文件。 |
 | `backend` | `"auto" \| "mineru" \| "paddleocr" \| "local"` | ❌ | `"auto"` | 强制指定后端。`auto` 按文件类型走默认降级链。 |
 | `pageRange` | `string` | ❌ | 全部页 | PDF 页码范围，格式 `"1-5,10,15-20"`（1-based）。仅 PDF 有效。 |
 | `language` | `string` | ❌ | `"zh"` | 文档语言，传递给 OCR / 云端 API。影响 PaddleOCR 和 MinerU 的识别语言。 |
 | `includeMedia` | `boolean` | ❌ | `true` | 是否提取媒体文件（图片/视频/音频）。设为 `false` 时只输出文本，不抽取文件。 |
 | `saveJson` | `boolean` | ❌ | `false` | 是否额外保存结构化 JSON 文件（与 .md 并列）。JSON 包含 markdown 内容 + metadata。 |
-| `summaryOnly` | `boolean` | ❌ | `false` | 只返回每个文件的成功/失败状态，不返回 Markdown 正文；提取和保存流程仍正常执行。成功但带 warnings 的文件仍算成功。 |
+| `summaryOnly` | `boolean` | ❌ | `false` | 只返回每个文件的成功/失败状态和输出路径，不返回 Markdown 正文；提取和保存流程仍正常执行。成功但带 warnings 的文件仍算成功。 |
 | `splitOnly` | `boolean` | ❌ | `false` | 仅做图片分割测试，不调用后端。调试用，正常提取不要传。 |
 
 ### 工具 2：`doc_intake_validate`
@@ -424,6 +434,7 @@ Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单
 |--------|------|--------|------|
 | `inlineBlockBytes` | `number`（4096–30720） | `28672` | 每个返回文本块的最大大小，按 UTF-8 字节计算；默认 28 KiB。 |
 | `inlineBlockCount` | `number`（1–8） | `4` | 返回文本块数量上限；默认 4 个，默认总容量约 112 KiB。 |
+| `mediaPathReturnLimit` | `number`（≥0） | `20` | Agent 返回媒体绝对路径的数量上限。媒体数不超过上限时返回 `mediaPaths`，超过上限时返回 `mediaCount`。 |
 
 旧版 `maxInlineReturnBytes` 会作为 `inlineBlockBytes` 的兼容 fallback，但新配置优先。
 
@@ -444,13 +455,17 @@ Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单
 
 - 每个文件返回 `status: "success"` 或 `status: "failed"`。
 - 失败项返回 `error`，成功但存在 warnings 的文件仍算成功。
-- 如果指定了 `outputDir` 或启用了自动保存，状态项保留 `mdPath`、`imagesDir` 等路径。
+- 如果指定了 `outputDir` 或启用了自动保存，状态项保留 `mdPath`、`mediaDir` 等路径。
+- `details.data` 保留完整结构化结果；`content` 末尾附带独立的机器可读 `doc_intake_paths` 路径块，供 Agent 直接读取。
+- 保存到磁盘的 JSON 结构不受 Agent 路径返回字段影响。
+- 媒体数量不超过 `mediaPathReturnLimit` 时返回 `mediaDir` 和每个媒体的绝对 `mediaPaths`；超过上限时只返回 `mediaDir` 和 `mediaCount`。如果上游媒体路径缺少可用基准，则保留媒体总数量并返回警告，不静默丢弃。
+- 只有实际生成 JSON 文件时才返回 `jsonPath`。
 - 不返回 Markdown 正文，适合批量处理时只确认文件是否成功。
 
 未设置 `summaryOnly` 时，返回策略按内容大小和文本块容量判断，不按文件数量判断：
 
 - 结果不超过 `inlineBlockBytes × inlineBlockCount`：返回全部 Markdown，必要时拆成多个 text block。
-- 结果超限且已保存到本地：只返回处理摘要和 `mdPath` / `imagesDir`。
+- 结果超限且已保存到本地：只返回处理摘要和 `mdPath` / `mediaDir` 等路径信息。
 - 结果超限且未保存到本地：在多个 text block 中保留开头和结尾，中间插入省略提示，并明确提示内容不完整。
 
 ### 未超限时
@@ -481,7 +496,7 @@ Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单
   "markdown": "处理完成：12/16 个文件成功\n\n✅ a.pdf\n✅ b.docx\n❌ c.pdf — 所有后端都失败",
   "metadata": { "batch": true, "count": 16, "success": 12 },
   "files": [
-    { "name": "a.pdf", "metadata": { "mdPath": "/out/a.pdf.md", "imagesDir": "/out/a_media" } }
+    { "name": "a.pdf", "metadata": { "mdPath": "D:\\out\\a.pdf.md", "mediaDir": "D:\\out\\a_media", "mediaCount": 86 } }
   ]
 }
 ```

@@ -1,7 +1,7 @@
 ---
 name: doc-intake
 description: >
-  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOCX、PPTX、PPT、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP、GIF）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。需要验证 MinerU/PaddleOCR Token 或 Key 时调用 doc_intake_validate。
+  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOCX、PPTX、PPT、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。需要验证 MinerU/PaddleOCR Token 或 Key 时调用 doc_intake_validate。
 compatibility: "需要 Python 环境（用户需在插件设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
 metadata:
   default-enabled: true
@@ -35,13 +35,13 @@ metadata:
 | 参数 | 类型 | 调用规则 |
 |---|---|---|
 | `source` | `string[]` | 必填。传文件路径、多个文件路径或文件夹路径。 |
-| `outputDir` | `string` | 只有用户明确要求保存，或任务需要后续读取完整大文档时传。没有保存需求时不要主动传。 |
+| `outputDir` | `string` | 只有用户明确要求保存，或任务需要后续读取完整大文档时传。没有保存需求时不要自作主张。 |
 | `backend` | `string` | 只有用户指定后端时传：`auto`、`mineru`、`paddleocr`、`local`。 |
 | `pageRange` | `string` | 用户指定 PDF 页码时传，例如 `1-5,10`。 |
 | `language` | `string` | 用户指定 OCR/识别语言时传；否则不传。 |
 | `includeMedia` | `boolean` | 用户明确不要提取图片、视频、音频时传 `false`；否则不传。 |
-| `saveJson` | `boolean` | 用户要求 JSON，或明确要求结构化保存时传 `true`；否则不传。 |
-| `summaryOnly` | `boolean` | 用户只想确认每个文件是否成功时传 `true`；传入后仍执行提取，但不返回 Markdown 正文。成功但带 warnings 的文件仍算成功。 |
+| `saveJson` | `boolean` | 用户明确要求 JSON，或明确要求结构化保存时传 `true`；否则不传。 |
+| `summaryOnly` | `boolean` | 用户/你只想确认每个文件是否成功时传 `true`；传入后仍执行提取，并自动保存到 `savePath` 后返回状态和路径。不返回 Markdown 正文。成功但带 warnings 的文件仍算成功。一般只有转换超多批量文件/构建数据库的情况传 |
 | `splitOnly` | `boolean` | 只有用户要求测试长图切割时传 `true`；正常提取不要传。 |
 
 常用调用：
@@ -68,11 +68,11 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 ## 4. 结果处理
 
-- 先读取工具返回的 `content` 和 `details.data`，再回答用户。
+- 先读取工具返回的 `content` 和 `details.data`，再回答用户；`content` 末尾的 `doc_intake_paths` 是实际输出路径信息。
 - `summaryOnly=true` 时，只根据每个文件的 `status`、`error` 和保存路径汇报结果，不要寻找或补写正文。
 - 返回正文完整时，直接基于正文回答，不要重复调用工具。
 - 返回 `mdPath` 时，正文已保存到本地；需要完整内容时读取该 Markdown 文件，不要假装已经看到了未返回的正文。
-- 返回 `imagesDir` 或媒体列表时，用户的问题涉及图片、公式预览、视频或音频，就继续读取相关媒体；不要只看文字摘要。
+- 返回 `mediaDir` 或媒体列表时，用户的问题涉及图片、公式预览、视频或音频，就继续读取相关媒体；不要只看文字摘要。
 - 返回 `contentTruncated: true`、`contentOmitted: true` 或“中间内容已省略”时，只能基于实际返回部分回答，并明确说明内容不完整；需要完整分析时先读取 `mdPath`，没有路径则请求用户允许保存或缩小范围。
 - 批量结果中逐项查看成功/失败状态和 `warnings`，不要把部分成功说成全部成功。
 - 看到后端降级警告时，在回答中说明实际使用的后端；不要声称使用了用户未要求或未成功的后端。
@@ -82,8 +82,10 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 - 用户明确给出保存目录时，原样传入 `outputDir`。
 - 用户没有要求保存时，不要擅自指定 `outputDir`。
-- 不要猜测或重写 `mdPath`、`imagesDir`、`mediaPaths`；按工具返回的真实路径读取。
-- 不要把 Markdown 中的媒体引用路径当作本地绝对路径；需要读取文件时优先使用 `mediaPaths` 或 `imagesDir`。
+- 不要猜测或重写 `mdPath`、`mediaDir`、`mediaPaths`；按工具返回的真实路径读取。
+- 媒体数未超过返回上限时，直接读取 `mediaPaths`；超过上限时先列出 `mediaDir` 再按需读取具体媒体。若返回媒体路径基准警告，只使用实际返回的路径，不要猜测缺失路径。
+- 只有返回了 `jsonPath` 才读取 JSON；不要根据文件名自行猜测 JSON 路径。
+- 不要把 Markdown 中的媒体引用路径当作本地绝对路径；需要读取文件时优先使用返回的 `mediaPaths` 或 `mediaDir`。
 
 ## 6. 错误处理
 
