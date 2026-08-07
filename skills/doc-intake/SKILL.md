@@ -83,7 +83,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - 用户明确给出保存目录时，原样传入 `outputDir`。
 - 用户没有要求保存时，不要擅自指定 `outputDir`。
 - 不要猜测或重写 `mdPath`、`mediaDir`、`mediaPaths`；按工具返回的真实路径读取。
-- 媒体数未超过返回上限时，直接读取 `mediaPaths`；超过上限时先列出 `mediaDir` 再按需读取具体媒体。若返回媒体路径基准警告，只使用实际返回的路径，不要猜测缺失路径。
+- 媒体数未超过返回上限时，直接读取 `mediaPaths`；超过上限时先列出 `mediaDir` 再按需读取具体媒体。媒体文件统一使用 `image_NNN`、`video_NNN`、`audio_NNN` 等短名称；若返回媒体路径基准警告，只使用实际返回的路径，不要猜测缺失路径。
 - 只有返回了 `jsonPath` 才读取 JSON；不要根据文件名自行猜测 JSON 路径。JSON中的 `mediaPaths` 是相对路径，Agent返回路径块中的 `mediaPaths` 才是可直接读取的绝对路径。
 - 不要把 Markdown 中的媒体引用路径当作本地绝对路径；需要读取文件时优先使用返回的 `mediaPaths` 或 `mediaDir`。
 

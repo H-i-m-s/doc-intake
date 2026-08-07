@@ -516,7 +516,7 @@ outputDir/
     └── audio_001.flac
 ```
 
-媒体命名规则：普通文档按类型分别连续编号，`image_NNN.ext` / `video_NNN.ext` / `audio_NNN.ext`；分块 PDF 会增加 `chunk_NNN_` 前缀，例如 `chunk_001_image_001.jpg`，避免并发分块之间覆盖。
+媒体命名规则：所有后端统一按类型分别连续编号，`image_NNN.ext` / `video_NNN.ext` / `audio_NNN.ext`；云端 MinerU/PaddleOCR 返回的超长原始媒体名会被插件丢弃。分块 PDF 会增加 `chunk_NNN_` 前缀，例如 `chunk_001_image_001.jpg`，避免并发分块之间覆盖。
 
 ### Markdown 中的媒体引用格式
 

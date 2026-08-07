@@ -8,6 +8,7 @@ from typing import List, Optional, Union
 import requests
 from PIL import Image
 
+from extractors._utils import classify_media, media_filename
 from logger import get_logger
 
 logger = get_logger("utils")
@@ -47,17 +48,24 @@ def normalize_images(
 
     saved_paths = []
     temp_paths = []  # 记录临时文件,后续清理
+    counters = {"image": 0, "video": 0, "audio": 0, "other": 0}
+
+    def next_destination(ext: str, fallback_kind: str = "image") -> Path:
+        kind = classify_media(ext) if ext else fallback_kind
+        if kind not in counters:
+            kind = "other"
+        counters[kind] += 1
+        return media_dir / f"{media_prefix}{media_filename(kind, counters[kind], ext)}"
 
     for i, img in enumerate(raw_images, 1):
-        # dict 格式（PaddleOCR）：按 virtual_path 的 basename 保存
+        # dict 格式（PaddleOCR）：忽略远端原始文件名，按媒体类型统一短命名
         if isinstance(img, dict):
             src_url = img.get("url", "")
             virtual_path = img.get("virtual_path", "")
             if not src_url:
                 continue
-            # 用 virtual_path 的 basename 当文件名，避免重名覆盖
-            base = Path(virtual_path).name if virtual_path else f"{i:03d}.jpg"
-            dest = media_dir / f"{media_prefix}{base}"
+            ext = Path(virtual_path).suffix.lower() if virtual_path else Path(src_url).suffix.lower()
+            dest = next_destination(ext, "image")
             try:
                 # 用 with 让 Response 走完流程后立刻释放连接,
                 # 避免 HTTP 连接池被占满 / 流未释放。
@@ -69,19 +77,19 @@ def normalize_images(
                 logger.warning(f"保存图片 {i} 失败", error=str(e), src=src_url[:200])
             continue
 
-        # mineru.Image 对象（name, data, path）—— 用 Image.name 当文件名（保留原扩展名）
+        # mineru.Image 对象（name, data, path）—— 忽略 Image.name，按扩展名统一短命名
         if hasattr(img, "data") and hasattr(img, "path") and hasattr(img, "name"):
             try:
-                dest = media_dir / f"{media_prefix}{Path(img.name).name}"
+                dest = next_destination(Path(img.name).suffix.lower(), "image")
                 img.save(str(dest))
                 saved_paths.append(str(dest))
             except Exception as e:
                 logger.warning(f"保存图片 {i} 失败", error=str(e), src=str(img)[:200])
             continue
 
-        # string/Path 格式（保留原逻辑）
-        filename = f"{i:03d}.png"
-        dest = media_dir / f"{media_prefix}{filename}"
+        # string/Path 格式：同样统一为短媒体名
+        source_suffix = Path(str(img)).suffix.lower() if isinstance(img, (str, Path)) else ".png"
+        dest = next_destination(source_suffix or ".png", "image")
 
         try:
             if isinstance(img, str) and img.startswith("http"):

@@ -19,6 +19,7 @@ from extractors.base import ExtractionResult
 from extractors.html_extractor import HtmlExtractor
 from extractors.pdf_extractor import PdfExtractor
 from pdf_splitter import crop_pdf_to_page_range, parse_page_range
+from utils import normalize_images
 
 
 def test_page_range_crops_pdf_before_upload_boundary() -> None:
@@ -126,6 +127,50 @@ def test_pdf_image_extraction_calls_extract_image_once_per_xref() -> None:
         assert len(images) == 1
         assert len(paths) == 1
         assert document.calls == [7]
+
+
+def test_cloud_media_names_are_short_and_type_based() -> None:
+    class FakeResponse:
+        content = b"image-bytes"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def raise_for_status(self):
+            return None
+
+    class FakeMinerImage:
+        name = "a_very_long_mineru_generated_name_with_many_tokens.jpeg"
+        path = "images/original.jpeg"
+        data = b"image-bytes"
+
+        def save(self, path):
+            Path(path).write_bytes(self.data)
+
+    with (
+        tempfile.TemporaryDirectory() as temp_dir,
+        patch("utils.requests.get", return_value=FakeResponse()),
+    ):
+        paths = normalize_images(
+            [
+                {
+                    "url": "https://example.com/remote-name-that-should-not-be-used.jpeg",
+                    "virtual_path": "imgs/another_extremely_long_remote_name.jpeg",
+                },
+                FakeMinerImage(),
+            ],
+            temp_dir,
+            "cloud-document",
+        )
+
+    assert [Path(path).name for path in paths] == [
+        "image_001.jpeg",
+        "image_002.jpeg",
+    ]
+    assert all(len(Path(path).name) < 32 for path in paths)
 
 
 def test_runtime_paths_use_media_dir_without_changing_saved_json_schema() -> None:
