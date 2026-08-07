@@ -797,10 +797,14 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
         json_data = None
         json_bytes = None
         if save_json:
+            json_media_paths = [
+                f"{stem}_media/{Path(media_path).name}"
+                for media_path in (result.images or [])
+            ]
             json_data = {
                 "content": final_markdown,
                 "metadata": {
-                    "mediaPaths": list(result.images or []),
+                    "mediaPaths": json_media_paths,
                     "format": meta.get("format"),
                     "reader": meta.get("reader"),
                     "backendChain": meta.get("backendChain"),

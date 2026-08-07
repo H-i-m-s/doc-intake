@@ -156,6 +156,7 @@ def test_runtime_paths_use_media_dir_without_changing_saved_json_schema() -> Non
         assert "mdPath" not in json_data["metadata"]
         assert "mediaDir" not in json_data["metadata"]
         assert "jsonPath" not in json_data["metadata"]
+        assert json_data["metadata"]["mediaPaths"] == ["input_media/image.png"]
 
 
 def test_save_result_atomic_temp_stays_in_target_directory() -> None:
@@ -176,7 +177,10 @@ def test_save_result_atomic_temp_stays_in_target_directory() -> None:
             Path(temp_dir).resolve(),
         ]
         assert Path(result.md_path).read_text(encoding="utf-8") == "content"
-        assert Path(result.metadata["jsonPath"]).exists()
+        json_path = Path(result.metadata["jsonPath"])
+        assert json_path.exists()
+        json_data = __import__("json").loads(json_path.read_text(encoding="utf-8"))
+        assert json_data["metadata"]["mediaPaths"] == []
 
 
 def test_save_result_is_atomic_and_rejects_existing_output() -> None:

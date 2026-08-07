@@ -285,7 +285,7 @@ doc-intake/
 | `pageRange` | `string` | ❌ | 全部页 | PDF 页码范围，格式 `"1-5,10,15-20"`（1-based）。仅 PDF 有效。 |
 | `language` | `string` | ❌ | `"zh"` | 文档语言，传递给 OCR / 云端 API。影响 PaddleOCR 和 MinerU 的识别语言。 |
 | `includeMedia` | `boolean` | ❌ | `true` | 是否提取媒体文件（图片/视频/音频）。设为 `false` 时只输出文本，不抽取文件。 |
-| `saveJson` | `boolean` | ❌ | `false` | 是否额外保存结构化 JSON 文件（与 .md 并列）。JSON 包含 markdown 内容 + metadata。 |
+| `saveJson` | `boolean` | ❌ | `false` | 是否额外保存结构化 JSON 文件（与 .md 并列）。JSON 包含 markdown 内容 + metadata；其中 `metadata.mediaPaths` 保存相对路径，Agent 返回的媒体路径仍为绝对路径。 |
 | `summaryOnly` | `boolean` | ❌ | `false` | 只返回每个文件的成功/失败状态和输出路径，不返回 Markdown 正文；提取和保存流程仍正常执行。成功但带 warnings 的文件仍算成功。 |
 | `splitOnly` | `boolean` | ❌ | `false` | 仅做图片分割测试，不调用后端。调试用，正常提取不要传。 |
 
@@ -457,7 +457,7 @@ Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单
 - 失败项返回 `error`，成功但存在 warnings 的文件仍算成功。
 - 如果指定了 `outputDir` 或启用了自动保存，状态项保留 `mdPath`、`mediaDir` 等路径。
 - `details.data` 保留完整结构化结果；`content` 末尾附带独立的机器可读 `doc_intake_paths` 路径块，供 Agent 直接读取。
-- 保存到磁盘的 JSON 结构不受 Agent 路径返回字段影响。
+- 保存到磁盘的 JSON 结构不受 Agent 路径返回字段影响；JSON 中的 `metadata.mediaPaths` 使用相对路径，Agent 路径块中的 `mediaPaths` 使用绝对路径。
 - 媒体数量不超过 `mediaPathReturnLimit` 时返回 `mediaDir` 和每个媒体的绝对 `mediaPaths`；超过上限时只返回 `mediaDir` 和 `mediaCount`。如果上游媒体路径缺少可用基准，则保留媒体总数量并返回警告，不静默丢弃。
 - 只有实际生成 JSON 文件时才返回 `jsonPath`。
 - 不返回 Markdown 正文，适合批量处理时只确认文件是否成功。
