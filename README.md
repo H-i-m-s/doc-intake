@@ -284,7 +284,7 @@ doc-intake/
 | `backend` | `"auto" \| "mineru" \| "paddleocr" \| "local"` | ❌ | `"auto"` | 强制指定后端。`auto` 按文件类型走默认降级链。 |
 | `pageRange` | `string` | ❌ | 全部页 | PDF 页码范围，格式 `"1-5,10,15-20"`（1-based）。仅 PDF 有效。 |
 | `language` | `string` | ❌ | `"zh"` | 文档语言，传递给 OCR / 云端 API。影响 PaddleOCR 和 MinerU 的识别语言。 |
-| `includeMedia` | `boolean` | ❌ | `true` | 是否提取媒体文件（图片/视频/音频）。设为 `false` 时只输出文本，不抽取文件。 |
+| `includeMedia` | `boolean` | ❌ | `true` | 是否提取媒体文件（图片/视频/音频）。默认提取。只有用户明确要求纯文本、不要提取或不要保存媒体时才设为 `false`；“保存 JSON”“正文可省略”“只返回摘要”都不能解释为 `false`。 |
 | `saveJson` | `boolean` | ❌ | `false` | 是否额外保存结构化 JSON 文件（与 .md 并列）。JSON 包含 markdown 内容 + metadata；其中 `metadata.mediaPaths` 保存相对路径，Agent 返回的媒体路径仍为绝对路径。 |
 | `summaryOnly` | `boolean` | ❌ | `false` | 只返回每个文件的成功/失败状态和输出路径，不返回 Markdown 正文；提取和保存流程仍正常执行。成功但带 warnings 的文件仍算成功。 |
 | `splitOnly` | `boolean` | ❌ | `false` | 仅做图片分割测试，不调用后端。调试用，正常提取不要传。 |
@@ -516,7 +516,7 @@ outputDir/
     └── audio_001.flac
 ```
 
-媒体命名规则：所有后端统一按类型分别连续编号，`image_NNN.ext` / `video_NNN.ext` / `audio_NNN.ext`；云端 MinerU/PaddleOCR 返回的超长原始媒体名会被插件丢弃。分块 PDF 会增加 `chunk_NNN_` 前缀，例如 `chunk_001_image_001.jpg`，避免并发分块之间覆盖。
+媒体命名规则：所有后端统一按类型分别连续编号，`image_NNN.ext` / `video_NNN.ext` / `audio_NNN.ext`；云端 MinerU/PaddleOCR 返回的超长原始媒体名会被插件丢弃。分块 PDF 会增加 `chunk_NNN_` 前缀，例如 `chunk_001_image_001.jpg`，避免并发分块之间覆盖。云端媒体重命名后，运行时 Markdown、Agent路径和保存的 JSON会同步使用新名称。
 
 ### Markdown 中的媒体引用格式
 

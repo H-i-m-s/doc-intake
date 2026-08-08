@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import BaseExtractor, ExtractionResult
-from ._utils import format_media_ref
+from ._utils import format_media_ref, media_filename
 from logger import get_logger
 
 logger = get_logger("pdf_extractor")
@@ -195,6 +195,7 @@ class PdfExtractor(BaseExtractor):
                         doc,
                         stem,
                         media_prefix,
+                        image_start=len(saved_images),
                     )
                     saved_images.extend(page_local_paths)
 
@@ -305,6 +306,7 @@ class PdfExtractor(BaseExtractor):
         doc,
         stem: str,
         media_prefix: str = "",
+        image_start: int = 0,
     ) -> tuple[list[tuple[float, str, str]], list[str]]:
         """从单页提取实际显示的内嵌图片。
 
@@ -325,6 +327,7 @@ class PdfExtractor(BaseExtractor):
         images_with_pos: list[tuple[float, float, str, str]] = []
         local_paths: list[str] = []
         seen: set[int] = set()
+        image_counter = image_start
 
         for info in page.get_image_info(xrefs=True):
             xref = info.get("xref", 0)
@@ -350,11 +353,12 @@ class PdfExtractor(BaseExtractor):
                 )
                 continue
 
-            out_name = f"{media_prefix}page{page_num:03d}_xref{xref}.{ext}"
+            image_counter += 1
+            out_name = f"{media_prefix}{media_filename('image', image_counter, ext)}"
             out_path = media_dir / out_name
             out_path.write_bytes(img_bytes)
             rel = f"{stem}_media/{out_name}"
-            alt = f"page{page_num:03d}_xref{xref}"
+            alt = f"image_{image_counter:03d}"
             images_with_pos.append((float(y0), float(x0), rel, alt))
             local_paths.append(str(out_path))
 

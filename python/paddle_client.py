@@ -215,23 +215,24 @@ class PaddleClient:
         # 归一化图片路径
         stem = self.settings.get("outputStem") or Path(source).stem
         media_prefix = self.settings.get("mediaPrefix", "")
+        image_path_map: dict[str, str] = {}
         normalized_images = normalize_images(
             all_raw_images,
             output_dir,
             stem,
             cleanup_temps=is_split,
             media_prefix=media_prefix,
+            path_map=image_path_map,
         )
 
-        # 构建虚拟路径 -> 本地路径 映射，供 main.py 重写 markdown <img src>
-        image_path_map: dict[str, str] = {}
-        for img_info, local_path in zip(all_raw_images, normalized_images):
-            if isinstance(img_info, dict) and "virtual_path" in img_info:
-                vp = img_info["virtual_path"]
-                # 标准化成 'imgs/xxx.jpg' （可能不含 imgs/ 前缀）
-                if not vp.startswith("imgs/"):
-                    vp = "imgs/" + Path(vp).name
-                image_path_map[vp] = local_path
+        # 将归一化阶段生成的虚拟路径映射转换为 Markdown 使用的 imgs/ 前缀。
+        normalized_path_map = dict(image_path_map)
+        image_path_map = {}
+        for virtual_path, local_path in normalized_path_map.items():
+            vp = virtual_path
+            if not vp.startswith("imgs/"):
+                vp = "imgs/" + Path(vp).name
+            image_path_map[vp] = local_path
 
         result.markdown = merged_markdown
         result.images = normalized_images

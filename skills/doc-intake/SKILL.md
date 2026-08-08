@@ -30,16 +30,16 @@ metadata:
 
 ## 2. `doc_intake` 参数
 
-只传有明确需求的参数；没有特别要求时使用默认值。
+只传工具必填参数和用户明确指定的参数。禁止自行补充其他参数，包括默认值和推荐值。其中 `source` 必须传递，其他参数仅根据用户明确需求传递。
 
 | 参数 | 类型 | 调用规则 |
 |---|---|---|
 | `source` | `string[]` | 必填。传文件路径、多个文件路径或文件夹路径。 |
-| `outputDir` | `string` | 只有用户明确要求保存，或任务需要后续读取完整大文档时传。没有保存需求时不要自作主张。 |
+| `outputDir` | `string` | 只有用户明确要求保存到特定位置时传；用户未指定时不传。 |
 | `backend` | `string` | 只有用户指定后端时传：`auto`、`mineru`、`paddleocr`、`local`。 |
 | `pageRange` | `string` | 用户指定 PDF 页码时传，例如 `1-5,10`。 |
 | `language` | `string` | 用户指定 OCR/识别语言时传；否则不传。 |
-| `includeMedia` | `boolean` | 用户明确不要提取图片、视频、音频时传 `false`；否则不传。 |
+| `includeMedia` | `boolean` | 默认就是 `true`，通常不要传。只有用户明确说“不要提取媒体”“不要保存图片/视频/音频”“只要纯文本”时才传 `false`。用户说“保存 JSON”“正文可省略”“只返回摘要”时仍然提取媒体，不能据此传 `false`。 |
 | `saveJson` | `boolean` | 用户明确要求 JSON，或明确要求结构化保存时传 `true`；否则不传。 |
 | `summaryOnly` | `boolean` | 用户/你只想确认每个文件是否成功时传 `true`；传入后仍执行提取，并自动保存到 `savePath` 后返回状态和路径。不返回 Markdown 正文。成功但带 warnings 的文件仍算成功。一般只有转换超多批量文件/构建数据库的情况传 |
 | `splitOnly` | `boolean` | 只有用户要求测试长图切割时传 `true`；正常提取不要传。 |
@@ -51,7 +51,8 @@ doc_intake(source=["report.pdf"])
 doc_intake(source=["report.pdf"], outputDir="D:/Output")
 doc_intake(source=["report.pdf"], pageRange="1-5")
 doc_intake(source=["paper.pdf"], backend="local")
-doc_intake(source=["document.docx"], includeMedia=false)
+# 只有用户明确要求纯文本时才关闭媒体提取
+# doc_intake(source=["document.docx"], includeMedia=false)
 doc_intake(source=["a.docx", "b.pptx", "c.xlsx"], outputDir="D:/Output")
 doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 ```
@@ -83,7 +84,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - 用户明确给出保存目录时，原样传入 `outputDir`。
 - 用户没有要求保存时，不要擅自指定 `outputDir`。
 - 不要猜测或重写 `mdPath`、`mediaDir`、`mediaPaths`；按工具返回的真实路径读取。
-- 媒体数未超过返回上限时，直接读取 `mediaPaths`；超过上限时先列出 `mediaDir` 再按需读取具体媒体。媒体文件统一使用 `image_NNN`、`video_NNN`、`audio_NNN` 等短名称；若返回媒体路径基准警告，只使用实际返回的路径，不要猜测缺失路径。
+- 媒体数未超过返回上限时，直接读取 `mediaPaths`；超过上限时先列出 `mediaDir` 再按需读取具体媒体。媒体文件统一使用 `image_NNN`、`video_NNN`、`audio_NNN` 等短名称；Markdown、Agent路径和保存 JSON会同步引用这些新名称。若返回媒体路径基准警告，只使用实际返回的路径，不要猜测缺失路径。
 - 只有返回了 `jsonPath` 才读取 JSON；不要根据文件名自行猜测 JSON 路径。JSON中的 `mediaPaths` 是相对路径，Agent返回路径块中的 `mediaPaths` 才是可直接读取的绝对路径。
 - 不要把 Markdown 中的媒体引用路径当作本地绝对路径；需要读取文件时优先使用返回的 `mediaPaths` 或 `mediaDir`。
 

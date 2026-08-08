@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import requests
 from PIL import Image
@@ -20,6 +20,7 @@ def normalize_images(
     stem: str,
     cleanup_temps: bool = True,
     media_prefix: str = "",
+    path_map: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """
     归一化媒体路径：统一放到 {stem}_media/ 目录
@@ -33,6 +34,7 @@ def normalize_images(
         stem: 文件名前缀（不含扩展名）
         cleanup_temps: 是否清理临时文件（分割产生的）
         media_prefix: 媒体文件名前缀，用于并发分块结果去重
+        path_map: 可选。接收虚拟媒体路径到实际本地路径的映射。
 
     Returns:
         归一化后的本地路径列表
@@ -49,6 +51,21 @@ def normalize_images(
     saved_paths = []
     temp_paths = []  # 记录临时文件,后续清理
     counters = {"image": 0, "video": 0, "audio": 0, "other": 0}
+
+    def source_key(img) -> str:
+        if isinstance(img, dict):
+            return str(img.get("virtual_path") or img.get("url") or "")
+        if hasattr(img, "path") and getattr(img, "path", None):
+            return str(img.path)
+        if isinstance(img, (str, Path)):
+            return str(img)
+        return ""
+
+    def record_saved(img, dest: Path) -> None:
+        if path_map is not None:
+            key = source_key(img)
+            if key:
+                path_map[key] = str(dest)
 
     def next_destination(ext: str, fallback_kind: str = "image") -> Path:
         kind = classify_media(ext) if ext else fallback_kind
@@ -73,6 +90,7 @@ def normalize_images(
                     response.raise_for_status()
                     dest.write_bytes(response.content)
                 saved_paths.append(str(dest))
+                record_saved(img, dest)
             except Exception as e:
                 logger.warning(f"保存图片 {i} 失败", error=str(e), src=src_url[:200])
             continue
@@ -83,6 +101,7 @@ def normalize_images(
                 dest = next_destination(Path(img.name).suffix.lower(), "image")
                 img.save(str(dest))
                 saved_paths.append(str(dest))
+                record_saved(img, dest)
             except Exception as e:
                 logger.warning(f"保存图片 {i} 失败", error=str(e), src=str(img)[:200])
             continue
@@ -111,6 +130,7 @@ def normalize_images(
                     continue
 
             saved_paths.append(str(dest))
+            record_saved(img, dest)
 
         except Exception as e:
             logger.warning(f"保存图片 {i} 失败", error=str(e), src=str(img)[:200])

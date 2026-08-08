@@ -305,22 +305,26 @@ class MinerUClient:
 
             stem = self.settings.get("outputStem") or Path(display_name or source).stem
             media_prefix = self.settings.get("mediaPrefix", "")
+            image_path_map: dict[str, str] = {}
             normalized_images = normalize_images(
-                raw_images, output_dir, stem, media_prefix=media_prefix
+                raw_images,
+                output_dir,
+                stem,
+                media_prefix=media_prefix,
+                path_map=image_path_map,
             )
             result.images = normalized_images
 
             # 构建虚拟路径 → 本地路径 映射，供 main.py 重写 markdown <img src>
             # MinerU SDK 返回的 Image.path 是 zip 内路径（如 "images/img_0.png"），
             # markdown 文本里 <img src="images/..."> 就是这种路径。重写为本地相对路径。
-            image_path_map: dict[str, str] = {}
-            for img, local_path in zip(raw_images, normalized_images):
-                if hasattr(img, "path") and img.path:
-                    vp = img.path
-                    # 标准化成 'images/xxx.ext' （如果 path 没有 images/ 前缀）
-                    if not vp.startswith("images/"):
-                        vp = "images/" + Path(vp).name
-                    image_path_map[vp] = local_path
+            normalized_path_map = dict(image_path_map)
+            image_path_map = {}
+            for virtual_path, local_path in normalized_path_map.items():
+                vp = virtual_path
+                if not vp.startswith("images/"):
+                    vp = "images/" + Path(vp).name
+                image_path_map[vp] = local_path
 
             raw_json = {
                 "markdown": result.markdown,

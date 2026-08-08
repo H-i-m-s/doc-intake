@@ -793,6 +793,8 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
         # base64 图片最后抹除，防止一坨 base64 进 markdown 让人看 / agent 渲染。
         final_markdown = _strip_data_url_images(final_markdown)
         md_bytes = final_markdown.encode("utf-8")
+        # 运行时结果也必须使用保存后的 Markdown，避免 Agent 继续看到云端原始长文件名。
+        result.markdown = final_markdown
 
         json_data = None
         json_bytes = None

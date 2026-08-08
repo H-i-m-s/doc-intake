@@ -515,7 +515,8 @@ export const parameters = {
     },
     includeMedia: {
       type: "boolean",
-      description: "是否提取媒体(图片/视频/音频,可选)",
+      default: true,
+      description: "默认值为 true。只有用户明确说不要提取、不要保存或不需要图片/视频/音频时才传 false；用户说保存 JSON、正文可省略、只返回摘要或减少正文，不等于不要提取媒体。未明确要求排除媒体时必须省略此字段。",
     },
     saveJson: {
       type: "boolean",

@@ -127,6 +127,29 @@ def test_pdf_image_extraction_calls_extract_image_once_per_xref() -> None:
         assert len(images) == 1
         assert len(paths) == 1
         assert document.calls == [7]
+        assert Path(paths[0]).name == "image_001.png"
+        assert images[0][1] == "sample_media/image_001.png"
+
+
+def test_pdf_media_names_continue_across_pages() -> None:
+    class FakePage:
+        def get_image_info(self, xrefs=True):
+            return [{"xref": 7, "bbox": (10, 20, 30, 40)}]
+
+    class FakeDocument:
+        def extract_image(self, xref):
+            return {"image": b"image-bytes", "ext": "jpeg"}
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        media_dir = Path(temp_dir)
+        first, _ = PdfExtractor._extract_page_images(
+            FakePage(), 1, media_dir, FakeDocument(), "sample", image_start=0
+        )
+        second, _ = PdfExtractor._extract_page_images(
+            FakePage(), 2, media_dir, FakeDocument(), "sample", image_start=1
+        )
+        assert first[0][1].endswith("image_001.jpeg")
+        assert second[0][1].endswith("image_002.jpeg")
 
 
 def test_cloud_media_names_are_short_and_type_based() -> None:
@@ -171,6 +194,30 @@ def test_cloud_media_names_are_short_and_type_based() -> None:
         "image_002.jpeg",
     ]
     assert all(len(Path(path).name) < 32 for path in paths)
+
+
+def test_cloud_media_renaming_updates_markdown_json_and_agent_result() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        source = Path(temp_dir) / "cloud.pdf"
+        long_virtual = "images/very_long_cloud_name_with_many_tokens.jpeg"
+        short_path = Path(temp_dir) / "cloud_media" / "image_001.jpeg"
+        result = ExtractionResult(
+            markdown=f"![cloud]({long_virtual})",
+            images=[str(short_path)],
+            metadata={"imagePathMap": {long_virtual: str(short_path)}},
+        )
+        main.save_result(result, str(source), temp_dir, save_json=True)
+
+        assert result.markdown == "![cloud](cloud_media/image_001.jpeg)"
+        assert "very_long_cloud_name" not in result.markdown
+        json_data = __import__("json").loads(
+            Path(result.metadata["jsonPath"]).read_text(encoding="utf-8")
+        )
+        assert json_data["content"] == result.markdown
+        assert json_data["metadata"]["mediaPaths"] == ["cloud_media/image_001.jpeg"]
+        runtime = main.format_result(result)
+        assert runtime["metadata"]["mediaPaths"] == [str(short_path)]
+        assert "very_long_cloud_name" not in runtime["markdown"]
 
 
 def test_runtime_paths_use_media_dir_without_changing_saved_json_schema() -> None:
