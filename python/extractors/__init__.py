@@ -29,9 +29,11 @@ def get_extractor(file_type: str, settings: dict) -> BaseExtractor:
     """根据文件类型获取对应的本地提取器"""
     extractors = {
         "docx": DocxExtractor,
+        "doc": DocxExtractor,
         "pptx": PptxExtractor,
         "ppt": PptxExtractor,
         "xlsx": XlsxExtractor,
+        "xls": XlsxExtractor,
         "xlsm": XlsxExtractor,
         "html": HtmlExtractor,
         "htm": HtmlExtractor,

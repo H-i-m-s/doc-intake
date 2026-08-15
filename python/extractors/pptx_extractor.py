@@ -6,14 +6,17 @@ markdown 引用按 kind 分别用 ![](), <video>, <audio> 渲染。
 """
 from __future__ import annotations
 
-import os
 import re
-import tempfile
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .base import BaseExtractor, ExtractionResult
+from legacy_converter import (
+    LegacyConversionError,
+    convert_legacy_document,
+    restore_original_heading,
+)
 from .emf_converter import convert_emf_to_png
 from .omml_converter import OmmlToLatexConverter
 from .mathtype_filter import filter_mathtype_previews
@@ -989,33 +992,62 @@ class PptxExtractor(BaseExtractor):
     # ========== PPT 转换 ==========
 
     def _handle_legacy_ppt(self, path, output_dir, include_images):
-        """处理旧版 .ppt 文件。
-
-        使用 DispatchEx 创建独立 PowerPoint 进程,避免与系统中已有的
-        PowerPoint 实例互相争抢 COM 锁。SaveAs 后立即 Close + Quit。
-        """
+        """处理旧版 .ppt，并复用统一的旧格式转换层。"""
         result = ExtractionResult()
         try:
-            import win32com.client
-            with tempfile.TemporaryDirectory() as tmpdir:
-                pptx_filename = f"{path.stem}.pptx"
-                pptx_path = os.path.join(tmpdir, pptx_filename)
-                abs_source = str(path.resolve())
-                powerpoint = win32com.client.DispatchEx("PowerPoint.Application")
-                try:
-                    presentation = powerpoint.Presentations.Open(abs_source)
-                    presentation.SaveAs(pptx_path, 24)
-                    presentation.Close()
-                finally:
-                    powerpoint.Quit()
-                pptx_extractor = PptxExtractor(self.settings)
-                result = pptx_extractor.extract(
-                    source=pptx_path, output_dir=output_dir, include_images=include_images
+            with convert_legacy_document(path, self.settings) as converted:
+                result = self.extract(
+                    source=str(converted.converted_path),
+                    output_dir=output_dir,
+                    include_images=include_images,
                 )
+                result.markdown = restore_original_heading(
+                    result.markdown,
+                    path.name,
+                    converted.converted_path.name,
+                )
+                result.metadata.update({
+                    "format": "ppt",
+                    "reader": "pptx_extractor",
+                    "originalFormat": converted.original_format,
+                    "convertedFormat": converted.converted_format,
+                    "conversionProvider": converted.provider,
+                    "conversionStatus": "success",
+                    "conversionWarnings": converted.warnings,
+                    "conversionDurationMs": converted.duration_ms,
+                })
+                result.warnings = converted.warnings + result.warnings
+        except LegacyConversionError as exc:
+            result.metadata.update({
+                "format": "ppt",
+                "reader": "pptx_extractor",
+                "originalFormat": "ppt",
+                "convertedFormat": "pptx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": exc.code,
+            })
+            result.warnings.append(str(exc))
+            result.markdown = f"# 错误\n\n{exc}"
         except ImportError:
+            result.metadata.update({
+                "format": "ppt",
+                "reader": "pptx_extractor",
+                "originalFormat": "ppt",
+                "convertedFormat": "pptx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": "CONVERTER_NOT_AVAILABLE",
+            })
             result.warnings.append("需要安装 pywin32: pip install pywin32")
             result.markdown = "# 错误\n\n需要安装 pywin32: pip install pywin32"
-        except Exception as e:
-            result.warnings.append(f"PPT 转换失败: {str(e)}")
-            result.markdown = f"# 错误\n\nPPT 转换失败: {str(e)}"
+        except Exception as exc:
+            result.metadata.update({
+                "format": "ppt",
+                "reader": "pptx_extractor",
+                "originalFormat": "ppt",
+                "convertedFormat": "pptx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": "CONVERSION_FAILED",
+            })
+            result.warnings.append(f"PPT 转换失败: {exc}")
+            result.markdown = f"# 错误\n\nPPT 转换失败: {exc}"
         return result

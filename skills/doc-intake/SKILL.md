@@ -1,7 +1,7 @@
 ---
 name: doc-intake
 description: >
-  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOCX、PPTX、PPT、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。需要验证 MinerU/PaddleOCR Token 或 Key 时调用 doc_intake_validate。
+  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。需要验证 MinerU/PaddleOCR Token 或 Key 时调用 doc_intake_validate。
 compatibility: "需要 Python 环境（用户需在插件设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
 metadata:
   default-enabled: true
@@ -15,7 +15,7 @@ metadata:
 
 以下情况直接调用 `doc_intake`：
 
-- 用户发送或指定 PDF、DOCX、PPTX、PPT、XLSX、XLSM、HTML、HTM 或图片文件。
+- 用户发送或指定 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML、HTM 或图片文件。
 - 用户要求读取、查看、解析、提取、识别、OCR、转 Markdown、总结或分析文件内容。
 - 用户询问文档中的文字、表格、公式、图片、视频、音频或链接。
 - 用户要求批量处理多个文件或一个文件夹。
@@ -63,7 +63,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 - PDF：默认本地后端；用户配置云端链时按设置顺序降级。
 - 图片：默认走 PaddleOCR 配置链。
-- DOCX、PPTX、XLSX、HTML、PPT：走本地 Python 解析。
+- DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM、HTML：走本地 Python 解析；旧版 DOC/XLS/PPT 会先由配置的转换层转为 OOXML，再复用对应现代格式适配器。
 - 用户要求不上传 PDF 或只用本地解析时传 `backend="local"`。
 - 不要因为本地解析失败就自行改写参数；根据返回的 `warnings` 判断是否需要建议用户改用其他后端。
 
@@ -93,6 +93,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - `PYTHON_PATH_NOT_CONFIGURED`：告知用户到插件设置中配置 `pythonPath`。
 - `INVALID_SOURCE` 或找不到文件：检查路径和文件格式，请用户提供有效路径。
 - `SPAWN_FAILED`、`PYTHON_ERROR`：说明 Python 环境或依赖启动失败，不要编造提取结果。
+- `CONVERTER_NOT_AVAILABLE`、`CONVERSION_FAILED`、`CONVERSION_OUTPUT_INVALID`、`CONVERSION_TIMEOUT`：说明旧版 Office 转换阶段失败；不要把它描述成现代 DOCX/XLSX 解析失败。优先检查 Office/pywin32 或显式配置的 LibreOffice provider。
 - 后端全部失败：展示实际错误和 `warnings`，建议用户检查配置或更换后端。
 - Token 验证失败：说明具体后端和失败原因，不要回显完整 Token。
 

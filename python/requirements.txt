@@ -18,8 +18,8 @@ html-to-markdown>=0.5.0
 # MathType 公式提取（不装则 MathType 公式退化为图片，OMML 公式不受影响）
 mtef-py>=1.0.0
 
-# ===== Windows 专用（仅 .ppt 旧格式需要）=====
+# ===== Windows 专用（旧版 Office 格式需要）=====
 
-# 旧版 .ppt 文件转 .pptx（通过 PowerPoint COM 自动化）
-# 不装则 .ppt 文件返回错误提示，.pptx 不受影响
+# 旧版 .doc/.xls/.ppt 文件转 .docx/.xlsx/.pptx（通过 Office COM 自动化）
+# 不装则旧版 Office 文件返回转换器不可用；现代 OOXML 文件不受影响
 pywin32>=300; sys_platform == "win32"

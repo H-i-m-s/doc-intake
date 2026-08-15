@@ -55,9 +55,11 @@ def detect_file_type(source: str) -> str:
         ".webp": "image",
         ".gif": "image",
         ".docx": "docx",
+        ".doc": "doc",
         ".pptx": "pptx",
         ".ppt": "ppt",
         ".xlsx": "xlsx",
+        ".xls": "xls",
         ".xlsm": "xlsm",
         ".html": "html",
         ".htm": "html",
@@ -75,7 +77,7 @@ def load_settings(args) -> dict:
     try:
         # JS 正式入口将 stdin 连接为 pipe；直接在终端运行时不读取控制台，避免阻塞。
         if not sys.stdin.isatty():
-            settings_str = sys.stdin.read()
+            settings_str = sys.stdin.read().lstrip("\ufeff")
             if settings_str and settings_str.strip():
                 loaded = json.loads(settings_str)
                 if isinstance(loaded, dict):
@@ -125,7 +127,7 @@ def select_backend_chain(
         chain = settings.get("pdfBackendChain") or ["local"]
     elif file_type == "image":
         chain = ["paddleocr"]
-    elif file_type in ("docx", "pptx", "ppt", "xlsx", "xlsm", "html", "htm"):
+    elif file_type in ("docx", "doc", "pptx", "ppt", "xlsx", "xls", "xlsm", "html", "htm"):
         chain = ["local"]
     else:
         chain = ["local"]
@@ -188,6 +190,20 @@ def extract_with_chain(
                 )
                 _annotate_chain_result(
                     result, backend_chain, current_backend, failed_atts, settings
+                )
+                return result
+
+            # 旧格式转换失败属于终止性错误，不应被包装成普通后端降级失败，
+            # 否则转换错误码和原始格式信息会在链路收尾时丢失。
+            if (result.metadata or {}).get("conversionStatus") == "failed":
+                logger.log_api_call(
+                    api_name=current_backend,
+                    success=False,
+                    duration=duration,
+                    error=(result.warnings or ["旧格式转换失败"])[-1],
+                )
+                _annotate_chain_result(
+                    result, backend_chain, None, failed_atts, settings
                 )
                 return result
 
@@ -447,6 +463,13 @@ def format_result(result: ExtractionResult):
         "backendChain": meta.get("backendChain"),
         "usedBackend": meta.get("usedBackend"),
         "usedBackends": meta.get("usedBackends"),
+        "originalFormat": meta.get("originalFormat"),
+        "convertedFormat": meta.get("convertedFormat"),
+        "conversionProvider": meta.get("conversionProvider"),
+        "conversionStatus": meta.get("conversionStatus"),
+        "conversionErrorCode": meta.get("conversionErrorCode"),
+        "conversionWarnings": meta.get("conversionWarnings"),
+        "conversionDurationMs": meta.get("conversionDurationMs"),
         "warnings": result.warnings,
         "usedBackendInChain": meta.get("usedBackendInChain"),
     }

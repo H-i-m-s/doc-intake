@@ -7,6 +7,11 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .base import BaseExtractor, ExtractionResult
+from legacy_converter import (
+    LegacyConversionError,
+    convert_legacy_document,
+    restore_original_heading,
+)
 from .emf_converter import extract_and_convert_media
 from ._utils import (
     ExtractedMedia,
@@ -59,6 +64,11 @@ class XlsxExtractor(BaseExtractor):
         **kwargs,
     ) -> ExtractionResult:
         path = self._check_file_exists(source)
+        if path.suffix.lower() == ".xls":
+            return self._handle_legacy_xls(
+                path, output_dir, include_images, max_rows, max_cols
+            )
+
         result = ExtractionResult()
         max_rows = int(
             max_rows if max_rows is not None else self.settings.get("xlsxMaxRows", 100)
@@ -116,6 +126,76 @@ class XlsxExtractor(BaseExtractor):
             "reader": "xlsx_extractor",
             "sheets": len(sheets),
         }
+        return result
+
+    def _handle_legacy_xls(
+        self,
+        path: Path,
+        output_dir: str | None,
+        include_images: bool,
+        max_rows: int | None,
+        max_cols: int | None,
+    ) -> ExtractionResult:
+        """将旧版 .xls 转为临时 .xlsx 后复用当前提取器。"""
+        result = ExtractionResult()
+        try:
+            with convert_legacy_document(path, self.settings) as converted:
+                result = self.extract(
+                    source=str(converted.converted_path),
+                    output_dir=output_dir,
+                    include_images=include_images,
+                    max_rows=max_rows,
+                    max_cols=max_cols,
+                )
+                result.markdown = restore_original_heading(
+                    result.markdown,
+                    path.name,
+                    converted.converted_path.name,
+                )
+                result.metadata.update({
+                    "format": "xls",
+                    "reader": "xlsx_extractor",
+                    "originalFormat": converted.original_format,
+                    "convertedFormat": converted.converted_format,
+                    "conversionProvider": converted.provider,
+                    "conversionStatus": "success",
+                    "conversionWarnings": converted.warnings,
+                    "conversionDurationMs": converted.duration_ms,
+                })
+                result.warnings = converted.warnings + result.warnings
+        except LegacyConversionError as exc:
+            result.metadata.update({
+                "format": "xls",
+                "reader": "xlsx_extractor",
+                "originalFormat": "xls",
+                "convertedFormat": "xlsx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": exc.code,
+            })
+            result.warnings.append(str(exc))
+            result.markdown = f"# 错误\n\n{exc}"
+        except ImportError:
+            result.metadata.update({
+                "format": "xls",
+                "reader": "xlsx_extractor",
+                "originalFormat": "xls",
+                "convertedFormat": "xlsx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": "CONVERTER_NOT_AVAILABLE",
+            })
+            result.warnings.append("需要安装 pywin32: pip install pywin32")
+            result.markdown = "# 错误\n\n需要安装 pywin32 才能转换 .xls 文件"
+        except Exception as exc:
+            result.metadata.update({
+                "format": "xls",
+                "reader": "xlsx_extractor",
+                "originalFormat": "xls",
+                "convertedFormat": "xlsx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": "CONVERSION_FAILED",
+            })
+            result.warnings.append(f"XLS 转换失败: {exc}")
+            result.markdown = f"# 错误\n\nXLS 转换失败: {exc}"
         return result
 
     def _sort_media_by_drawings(self, zf, names: set, media_files: list[str]) -> list[str]:

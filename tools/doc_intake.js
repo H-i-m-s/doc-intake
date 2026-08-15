@@ -6,7 +6,7 @@ import { statSync, readdirSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, normalize, parse, resolve } from "node:path";
 
 const SUPPORTED_EXTS = new Set([
-  ".pdf", ".docx", ".pptx", ".ppt", ".xlsx", ".xlsm",
+  ".pdf", ".doc", ".docx", ".pptx", ".ppt", ".xls", ".xlsx", ".xlsm",
   ".html", ".htm",
   ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif",
 ]);
@@ -37,13 +37,23 @@ function expandPaths(paths) {
   return result;
 }
 
+const LEGACY_OFFICE_EXTS = new Set([".doc", ".xls", ".ppt"]);
+
+function isLegacyOfficeSource(source) {
+  return LEGACY_OFFICE_EXTS.has(extname(source).toLowerCase());
+}
+
 function entryBackendKind(source, input, settings) {
   const explicit = input?.backend;
+  const ext = extname(source).toLowerCase();
   if (explicit && explicit !== "auto") {
+    if (explicit === "local" && LEGACY_OFFICE_EXTS.has(ext)) return "legacy";
     return explicit === "local" ? "local" : "api";
   }
 
-  const ext = extname(source).toLowerCase();
+  if (LEGACY_OFFICE_EXTS.has(ext)) {
+    return "legacy";
+  }
   if (ext === ".pdf") {
     const chain = settings?.pdfBackendChain || ["local"];
     return chain[0] === "local" ? "local" : "api";
@@ -117,10 +127,11 @@ function deriveMediaDir({ outputDir, mdPath, source }) {
 async function processFiles(sources, input, ctx, settings) {
   const apiSem = new Semaphore(input._apiConcurrency ?? 4);
   const localSem = new Semaphore(input._localConcurrency ?? 8);
+  const legacySem = new Semaphore(input._legacyConversionConcurrency ?? 1);
 
   const tasks = sources.map((source) => {
     const kind = entryBackendKind(source, input, settings);
-    const sem = kind === "api" ? apiSem : localSem;
+    const sem = kind === "api" ? apiSem : kind === "legacy" ? legacySem : localSem;
     return sem.run(() => runOne(source, input, ctx));
   });
 
@@ -171,6 +182,7 @@ function toFileOutput(item) {
   }).length;
   const unresolvedMediaCount = Math.max(0, rawMediaCount - mediaPaths.length);
   const saveFailed = metadata.saveStatus === "failed";
+  const conversionFailed = metadata.conversionStatus === "failed";
   const warnings = Array.isArray(result.warnings)
     ? [...result.warnings]
     : (Array.isArray(metadata.warnings) ? [...metadata.warnings] : []);
@@ -180,10 +192,15 @@ function toFileOutput(item) {
   const saveError = saveFailed
     ? warnings.find((warning) => String(warning).startsWith("保存失败")) ?? "保存失败"
     : null;
+  const conversionError = conversionFailed
+    ? warnings.at(-1) ?? metadata.conversionErrorCode ?? "旧格式转换失败"
+    : null;
   return {
     name: item.source,
-    status: saveFailed ? "failed" : "success",
-    ...(saveError ? { error: saveError } : {}),
+    status: saveFailed || conversionFailed ? "failed" : "success",
+    ...((saveError || conversionError)
+      ? { error: saveError ?? conversionError }
+      : {}),
     outputDir: absolutePath(result.outputDir),
     mdPath: absolutePath(metadata.mdPath),
     mediaDir,
@@ -193,6 +210,13 @@ function toFileOutput(item) {
     format: metadata.format ?? null,
     reader: metadata.reader ?? null,
     backendChain: metadata.backendChain ?? null,
+    originalFormat: metadata.originalFormat ?? null,
+    convertedFormat: metadata.convertedFormat ?? null,
+    conversionProvider: metadata.conversionProvider ?? null,
+    conversionStatus: metadata.conversionStatus ?? null,
+    conversionErrorCode: metadata.conversionErrorCode ?? null,
+    conversionWarnings: metadata.conversionWarnings ?? [],
+    conversionDurationMs: metadata.conversionDurationMs ?? null,
     warnings,
     usedBackendInChain: metadata.usedBackendInChain ?? null,
     usedBackend: metadata.usedBackend ?? null,
@@ -213,6 +237,17 @@ function buildFileMetadata(file, settings = {}) {
     usedBackends: file.usedBackends ?? [],
   };
   if (file.mdPath) metadata.mdPath = file.mdPath;
+  if (file.originalFormat) metadata.originalFormat = file.originalFormat;
+  if (file.convertedFormat) metadata.convertedFormat = file.convertedFormat;
+  if (file.conversionProvider) metadata.conversionProvider = file.conversionProvider;
+  if (file.conversionStatus) metadata.conversionStatus = file.conversionStatus;
+  if (file.conversionErrorCode) metadata.conversionErrorCode = file.conversionErrorCode;
+  if (Array.isArray(file.conversionWarnings) && file.conversionWarnings.length > 0) {
+    metadata.conversionWarnings = file.conversionWarnings;
+  }
+  if (file.conversionDurationMs !== null && file.conversionDurationMs !== undefined) {
+    metadata.conversionDurationMs = file.conversionDurationMs;
+  }
   if (file.mediaDir) {
     metadata.mediaDir = file.mediaDir;
     const limit = normalizeMediaPathReturnLimit(settings);
@@ -235,7 +270,7 @@ function buildAgentPathContent(filesOut, settings = {}) {
     .map((file) => {
       const metadata = buildFileMetadata(file, settings);
       const paths = {};
-      for (const key of ["mdPath", "mediaDir", "mediaPaths", "mediaCount", "jsonPath"]) {
+      for (const key of ["mdPath", "mediaDir", "mediaPaths", "mediaCount", "jsonPath", "originalFormat", "convertedFormat", "conversionProvider", "conversionStatus", "conversionErrorCode", "conversionWarnings", "conversionDurationMs"]) {
         if (metadata[key] !== undefined) paths[key] = metadata[key];
       }
       if (Object.keys(paths).length === 0 && !file.error) return null;
@@ -486,7 +521,7 @@ export function buildResult(sources, results, settings = {}, options = {}) {
 
 export const name = "doc_intake";
 export const description =
-  "提取文档/图片内容，输出 Markdown。支持 PDF（MinerU）、图片（PaddleOCR）、Office 文档（本地解析）。";
+  "提取文档/图片内容，输出 Markdown。支持 PDF（MinerU）、图片（PaddleOCR）、Office 文档（本地解析，含 DOC/XLS/PPT 旧格式转换）。";
 
 export const parameters = {
   type: "object",
@@ -546,6 +581,7 @@ export async function execute(input = {}, ctx) {
       ...input,
       _apiConcurrency: settings.maxConcurrent ?? 4,
       _localConcurrency: settings.maxConcurrentLocal ?? 8,
+      _legacyConversionConcurrency: settings.legacyConversionConcurrency ?? 1,
     };
     const results = await processFiles(sources, enrichedInput, ctx, settings);
     return buildResult(sources, results, settings, {

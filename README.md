@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.5-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-2.2.0-blue" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
   <img src="https://img.shields.io/badge/python-3.11+-yellow" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
@@ -44,6 +44,8 @@
 ## 这个插件做什么
 
 `doc-intake` 是 Hana 的文档/图片内容提取插件，目标是把各种格式的文件转化为结构化 Markdown，同时把文档中的媒体（图片、视频、音频）提取到本地。
+
+旧版 Word `.doc`、Excel `.xls` 和 PowerPoint `.ppt` 会先通过独立的旧格式转换层转为 `.docx`、`.xlsx`、`.pptx`，再复用现有 OOXML 提取器。Windows 默认使用 Microsoft Office COM；LibreOffice 只能通过显式配置作为替代 provider。转换结果会在 metadata 中保留原始格式、转换后格式、provider、状态和兼容性警告。
 
 **核心设计原则：**
 
@@ -236,8 +238,9 @@ doc-intake/
 │   │   ├── base.py               # 基类 BaseExtractor + ExtractionResult 数据结构
 │   │   ├── _utils.py             # 公共工具（媒体分类/命名/渲染、XML namespace、表格）
 │   │   ├── docx_extractor.py     # DOCX 提取（文本/表格/公式/图/视/音）
-│   │   ├── pptx_extractor.py     # PPTX 提取（文本/表格/公式/图/视/音、.ppt 转换）
-│   │   ├── xlsx_extractor.py     # XLSX/XLSM 提取（表格/图片锚定）
+│   │   ├── pptx_extractor.py     # PPTX 提取（文本/表格/公式/图/视/音、旧版转换）
+│   │   ├── xlsx_extractor.py     # XLSX/XLSM/旧版 XLS 提取（表格/图片锚定）
+│   │   ├── legacy_converter.py   # DOC/XLS/PPT → OOXML 临时转换层
 │   │   ├── html_extractor.py     # HTML 提取（元数据/链接/代码块/远程媒体下载）
 │   │   ├── pdf_extractor.py      # PDF 本地兜底（PyMuPDF 文本+内嵌图）
 │   │   ├── emf_converter.py      # EMF/WMF → PNG 转换 + 媒体通用抽取
@@ -265,9 +268,11 @@ doc-intake/
 |------|--------|------|------|
 | PDF | `.pdf` | MinerU → PaddleOCR → Local | 链式降级，扫描件走 OCR |
 | Word | `.docx` | Local | 文本/表格/公式/图片/视频/音频 |
+| Word（旧版） | `.doc` | Local（Office COM → `.docx`） | 转换后复用 DOCX 提取器；复杂内容可能有兼容性差异 |
 | PowerPoint | `.pptx` | Local | 文本/表格/公式/图片/视频/音频 |
-| PowerPoint (旧版) | `.ppt` | Local (COM→pptx) | 需要 pywin32，自动转 pptx 后处理 |
+| PowerPoint (旧版) | `.ppt` | Local（Office COM → `.pptx`） | 需要 pywin32，自动转 pptx 后处理 |
 | Excel | `.xlsx` / `.xlsm` | Local | 表格/图片锚定 |
+| Excel（旧版） | `.xls` | Local（Office COM → `.xlsx`） | 转换后复用 XLSX 提取器；宏不保留，复杂对象需验证 |
 | HTML | `.html` / `.htm` | Local | 元数据/链接/代码块/远程媒体 |
 | 图片 | `.jpg` `.jpeg` `.png` `.bmp` `.tiff` `.tif` `.webp` `.gif` | PaddleOCR | 自动长图分割 |
 
@@ -384,7 +389,11 @@ doc-intake/
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `maxConcurrent` | `number` | `4` | 云端 API 后端并发数（MinerU / PaddleOCR）。 |
-| `maxConcurrentLocal` | `number` | `8` | 本地后端并发数（DOCX / PPTX / HTML 等）。 |
+| `maxConcurrentLocal` | `number` | `8` | 普通本地解析并发数（DOCX / PPTX / HTML 等）。旧版 Office 转换使用独立并发限。 |
+| `legacyConversionProvider` | `string` | `auto` | 旧版 `.doc` / `.xls` / `.ppt` 转换 provider：`auto`、`office_com`、`libreoffice`、`disabled`。 |
+| `libreOfficePath` | `string` | `""` | LibreOffice 可执行文件绝对路径；仅选择 `libreoffice` 或 auto 且无 Office COM 时使用。 |
+| `legacyConversionConcurrency` | `number` | `1` | 旧版 Office 转换并发上限。COM 默认串行。 |
+| `legacyConversionTimeoutMs` | `number` | `180000` | LibreOffice 旧格式转换超时时间（毫秒）。 |
 | `maxRetries` | `number` | `3` | API 临时错误最大重试次数（429 / 5xx / 网络抖动）。 |
 | `retryBaseDelayMs` | `number` | `1000` | 重试基础退避毫秒（5xx/network 按 `base × 2^attempt`；429 独立用 8s base）。 |
 | `keyRetryOnFailure` | `boolean` | `true` | Key 失败时自动重试下一个。 |

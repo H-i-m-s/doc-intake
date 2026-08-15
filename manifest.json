@@ -4,7 +4,7 @@
   "name": "Doc Intake",
   "version": "2.2.0",
   "trust": "restricted",
-  "description": "文档/图片内容提取工具。支持 MinerU（PDF）、PaddleOCR（图片）、本地 Python 库（DOCX/PPTX/XLSX/HTML），输出结构化 Markdown。支持公式转 LaTeX、EMF 转 PNG。",
+  "description": "文档/图片内容提取工具。支持 MinerU（PDF）、PaddleOCR（图片）、本地 Python 库（DOC/DOCX/PPT/PPTX/XLS/XLSX/HTML），旧版 Office 格式先转换为 OOXML 后复用现有适配器，输出结构化 Markdown。支持公式转 LaTeX、EMF 转 PNG。",
   "contributes": {
     "configuration": {
       "properties": {
@@ -117,6 +117,29 @@
           "type": "number",
           "default": 8,
           "title": "本地后端并发限（同时多少路本地 DOCX / PPTX 解析，无 API 限制）"
+        },
+        "legacyConversionProvider": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "office_com", "libreoffice", "disabled"],
+          "title": "旧版 Office 转换后端（.doc/.xls/.ppt）"
+        },
+        "libreOfficePath": {
+          "type": "string",
+          "default": "",
+          "title": "LibreOffice 可执行文件路径（仅选择 libreoffice 时填写）"
+        },
+        "legacyConversionConcurrency": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "title": "旧版 Office 转换并发限（COM 默认建议为 1）"
+        },
+        "legacyConversionTimeoutMs": {
+          "type": "number",
+          "default": 180000,
+          "minimum": 1000,
+          "title": "旧版 Office 转换超时（毫秒，LibreOffice 生效）"
         },
         "maxRetries": {
           "type": "number",

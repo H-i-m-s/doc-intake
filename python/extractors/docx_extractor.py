@@ -8,6 +8,11 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .base import BaseExtractor, ExtractionResult
+from legacy_converter import (
+    LegacyConversionError,
+    convert_legacy_document,
+    restore_original_heading,
+)
 from .emf_converter import extract_and_convert_media
 from .omml_converter import OmmlToLatexConverter
 from ._utils import (
@@ -74,6 +79,9 @@ class DocxExtractor(BaseExtractor):
         **kwargs,
     ) -> ExtractionResult:
         path = self._check_file_exists(source)
+        if path.suffix.lower() == ".doc":
+            return self._handle_legacy_doc(path, output_dir, include_images)
+
         result = ExtractionResult()
 
         with zipfile.ZipFile(path) as zf:
@@ -113,6 +121,67 @@ class DocxExtractor(BaseExtractor):
             )
 
         result.metadata = {"format": "docx", "reader": "docx_extractor"}
+        return result
+
+    def _handle_legacy_doc(self, path: Path, output_dir: str | None, include_images: bool) -> ExtractionResult:
+        """将旧版 .doc 转为临时 .docx 后复用当前提取器。"""
+        result = ExtractionResult()
+        try:
+            with convert_legacy_document(path, self.settings) as converted:
+                result = self.extract(
+                    source=str(converted.converted_path),
+                    output_dir=output_dir,
+                    include_images=include_images,
+                )
+                result.markdown = restore_original_heading(
+                    result.markdown,
+                    path.name,
+                    converted.converted_path.name,
+                )
+                result.metadata.update({
+                    "format": "doc",
+                    "reader": "docx_extractor",
+                    "originalFormat": converted.original_format,
+                    "convertedFormat": converted.converted_format,
+                    "conversionProvider": converted.provider,
+                    "conversionStatus": "success",
+                    "conversionWarnings": converted.warnings,
+                    "conversionDurationMs": converted.duration_ms,
+                })
+                result.warnings = converted.warnings + result.warnings
+        except LegacyConversionError as exc:
+            result.metadata.update({
+                "format": "doc",
+                "reader": "docx_extractor",
+                "originalFormat": "doc",
+                "convertedFormat": "docx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": exc.code,
+            })
+            result.warnings.append(str(exc))
+            result.markdown = f"# 错误\n\n{exc}"
+        except ImportError:
+            result.metadata.update({
+                "format": "doc",
+                "reader": "docx_extractor",
+                "originalFormat": "doc",
+                "convertedFormat": "docx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": "CONVERTER_NOT_AVAILABLE",
+            })
+            result.warnings.append("需要安装 pywin32: pip install pywin32")
+            result.markdown = "# 错误\n\n需要安装 pywin32 才能转换 .doc 文件"
+        except Exception as exc:
+            result.metadata.update({
+                "format": "doc",
+                "reader": "docx_extractor",
+                "originalFormat": "doc",
+                "convertedFormat": "docx",
+                "conversionStatus": "failed",
+                "conversionErrorCode": "CONVERSION_FAILED",
+            })
+            result.warnings.append(f"DOC 转换失败: {exc}")
+            result.markdown = f"# 错误\n\nDOC 转换失败: {exc}"
         return result
 
     def _select_media_files(self, zf, media_files: list[str], mathtype_equations: list[dict]) -> list[str]:
