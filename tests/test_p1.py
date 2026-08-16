@@ -88,6 +88,330 @@ def test_xlsx_truncation_warning_and_limits() -> None:
     assert any("超过 2 列" in warning for warning in result.warnings)
 
 
+def test_xlsx_zero_limits_keep_all_content_without_truncation() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        xlsx_path = Path(temp_dir) / "unlimited.xlsx"
+        sheet_xml = (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1"><c r="A1"><v>1</v></c>'
+            '<c r="C1"><v>3</v></c></row><row r="3">'
+            '<c r="A3"><v>303</v></c></row></sheetData></worksheet>'
+        )
+        workbook_xml = (
+            '<?xml version="1.0"?><workbook '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        )
+        rels_xml = (
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>'
+        )
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            archive.writestr("xl/workbook.xml", workbook_xml)
+            archive.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+
+        result = XlsxExtractor({
+            "xlsxMaxRows": 0,
+            "xlsxMaxCols": 0,
+        }).extract(str(xlsx_path))
+
+    assert "303" in result.markdown
+    assert any(line.startswith("| 303 |") for line in result.markdown.splitlines())
+    assert not result.warnings
+
+
+def test_xls_numeric_filter_uses_shortest_round_trip_text() -> None:
+    from extractors.xlsx_extractor import _load_legacy_numeric_overrides
+
+    fake_cell = SimpleNamespace(ctype=2, value=68460.100000000006)
+    fake_sheet = SimpleNamespace(
+        name="Sheet1",
+        nrows=1,
+        ncols=1,
+        cell=lambda row, col: fake_cell,
+    )
+    fake_xlrd = SimpleNamespace(
+        XL_CELL_NUMBER=2,
+        XL_CELL_DATE=3,
+        open_workbook=lambda path, formatting_info=False: SimpleNamespace(
+            sheets=lambda: [fake_sheet]
+        ),
+    )
+    with patch.dict(sys.modules, {"xlrd": fake_xlrd}):
+        overrides, warning = _load_legacy_numeric_overrides(Path("sample.xls"))
+
+    assert warning is None
+    assert overrides[("Sheet1", "A1")] == "68460.1"
+
+    fake_cell.value = 100000.0
+    with patch.dict(sys.modules, {"xlrd": fake_xlrd}):
+        overrides, warning = _load_legacy_numeric_overrides(Path("sample.xls"))
+    assert warning is None
+    assert overrides[("Sheet1", "A1")] == "100000"
+
+    fake_cell.ctype = 3
+    with patch.dict(sys.modules, {"xlrd": fake_xlrd}):
+        overrides, warning = _load_legacy_numeric_overrides(Path("sample.xls"))
+    assert warning is None
+    assert overrides == {}
+
+
+def test_xlsx_formula_cache_is_not_overridden() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        xlsx_path = Path(temp_dir) / "formula.xlsx"
+        sheet_xml = (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1"><c r="A1"><f>SUM(B1:B2)</f>'
+            '<v>68460.100000000006</v></c></row></sheetData></worksheet>'
+        )
+        workbook_xml = (
+            '<?xml version="1.0"?><workbook '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        )
+        rels_xml = (
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>'
+        )
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            archive.writestr("xl/workbook.xml", workbook_xml)
+            archive.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+
+        result = XlsxExtractor({
+            "xlsxMaxRows": 0,
+            "xlsxMaxCols": 0,
+        }).extract(
+            str(xlsx_path),
+            numeric_overrides={("Sheet1", "A1"): "68460.1"},
+        )
+
+    formula_row = next(
+        line for line in result.markdown.splitlines() if line.startswith("| 68460.100000000006 |")
+    )
+    assert formula_row == "| 68460.100000000006 |"
+
+
+def test_xlsx_zero_row_limit_keeps_rows_but_applies_column_limit() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        xlsx_path = Path(temp_dir) / "zero-row-limit.xlsx"
+        sheet_xml = (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1"><c r="A1"><v>1</v></c><c r="C1"><v>3</v></c></row>'
+            '<row r="3"><c r="A3"><v>303</v></c><c r="C3"><v>305</v></c></row>'
+            '</sheetData></worksheet>'
+        )
+        workbook_xml = (
+            '<?xml version="1.0"?><workbook '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        )
+        rels_xml = (
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>'
+        )
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            archive.writestr("xl/workbook.xml", workbook_xml)
+            archive.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+
+        result = XlsxExtractor({
+            "xlsxMaxRows": 0,
+            "xlsxMaxCols": 2,
+        }).extract(str(xlsx_path))
+
+    assert "| 303 |" in result.markdown
+    assert "305" not in result.markdown
+    assert any("超过 2 列" in warning for warning in result.warnings)
+    assert not any("超过" in warning and "行" in warning for warning in result.warnings)
+
+
+def test_xlsx_negative_limits_are_rejected() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        xlsx_path = Path(temp_dir) / "negative-limit.xlsx"
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            archive.writestr(
+                "xl/workbook.xml",
+                '<?xml version="1.0"?><workbook '
+                'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            )
+            archive.writestr(
+                "xl/_rels/workbook.xml.rels",
+                '<?xml version="1.0"?><Relationships '
+                'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+                'Target="worksheets/sheet1.xml"/></Relationships>',
+            )
+            archive.writestr(
+                "xl/worksheets/sheet1.xml",
+                '<?xml version="1.0"?><worksheet '
+                'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>',
+            )
+
+        try:
+            XlsxExtractor({"xlsxMaxRows": -1, "xlsxMaxCols": 0}).extract(
+                str(xlsx_path)
+            )
+        except ValueError as exc:
+            assert "不能小于 0" in str(exc)
+        else:
+            raise AssertionError("negative Excel limit should be rejected")
+
+
+def test_xlsx_uses_only_content_width_and_skips_empty_sheets() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        xlsx_path = Path(temp_dir) / "content-boundary.xlsx"
+        sheet_xml = (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>编号</t></is></c>'
+            '<c r="B1" t="inlineStr"><is><t>x</t></is></c>'
+            '<c r="C1" t="inlineStr"><is><t>y</t></is></c>'
+            '<c r="Z1"/></row><row r="2">'
+            '<c r="A2"><v>1</v></c><c r="B2"><v>0.123456789012345</v></c>'
+            '<c r="C2"><v>59652.3433795158</v></c><c r="Z2"/></row></sheetData>'
+            '</worksheet>'
+        )
+        empty_sheet_xml = (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData/></worksheet>'
+        )
+        workbook_xml = (
+            '<?xml version="1.0"?><workbook '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/>'
+            '<sheet name="Sheet2" sheetId="2" r:id="rId2"/></sheets></workbook>'
+        )
+        rels_xml = (
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/>'
+            '<Relationship Id="rId2" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet2.xml"/></Relationships>'
+        )
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            archive.writestr("xl/workbook.xml", workbook_xml)
+            archive.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+            archive.writestr("xl/worksheets/sheet2.xml", empty_sheet_xml)
+
+        result = XlsxExtractor({"xlsxMaxRows": 100, "xlsxMaxCols": 50}).extract(
+            str(xlsx_path)
+        )
+
+    assert "## Sheet: Sheet1" in result.markdown
+    assert "## Sheet: Sheet2" not in result.markdown
+    assert "59652.3433795158" in result.markdown
+    assert "0.123456789012345" in result.markdown
+    first_data_line = next(
+        line for line in result.markdown.splitlines() if line.startswith("| 1 |")
+    )
+    assert first_data_line.count("|") == 4
+
+
+def test_xlsx_preserves_raw_numeric_text_character_for_character() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        xlsx_path = Path(temp_dir) / "numeric-text.xlsx"
+        sheet_xml = (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1">'
+            '<c r="A1"><v>12345678901234567</v></c>'
+            '<c r="B1"><v>0.123456789012345678</v></c>'
+            '<c r="C1"><v>23602.880000000001</v></c>'
+            '</row></sheetData></worksheet>'
+        )
+        workbook_xml = (
+            '<?xml version="1.0"?><workbook '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        )
+        rels_xml = (
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>'
+        )
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            archive.writestr("xl/workbook.xml", workbook_xml)
+            archive.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+
+        result = XlsxExtractor({"xlsxMaxRows": 100, "xlsxMaxCols": 50}).extract(
+            str(xlsx_path)
+        )
+
+    assert "12345678901234567" in result.markdown
+    assert "0.123456789012345678" in result.markdown
+    row = next(line for line in result.markdown.splitlines() if line.startswith("| 12345678901234567 |"))
+    assert row == "| 12345678901234567 | 0.123456789012345678 | 23602.880000000001 |"
+
+
+def test_xlsx_explicit_xls_limits_and_truncated_sheet_signal() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        xlsx_path = Path(temp_dir) / "truncated.xlsx"
+        sheet_xml = (
+            '<?xml version="1.0"?><worksheet '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="101"><c r="A101"><v>42</v></c></row>'
+            '<row r="102"><c r="BA102"><v>99</v></c></row></sheetData></worksheet>'
+        )
+        workbook_xml = (
+            '<?xml version="1.0"?><workbook '
+            'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        )
+        rels_xml = (
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>'
+        )
+        with zipfile.ZipFile(xlsx_path, "w") as archive:
+            archive.writestr("xl/workbook.xml", workbook_xml)
+            archive.writestr("xl/_rels/workbook.xml.rels", rels_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+
+        result = XlsxExtractor({
+            "xlsxMaxRows": 100,
+            "xlsxMaxCols": 50,
+        }).extract(str(xlsx_path), max_rows=100, max_cols=50)
+
+    assert "## Sheet: Data" in result.markdown
+    assert "[内容因行数或列数限制未保留]" in result.markdown
+    assert "[Empty sheet]" not in result.markdown
+    assert any("超过 100 行" in warning for warning in result.warnings)
+    assert any("超过 50 列" in warning for warning in result.warnings)
+
+
 def test_mineru_pdf_limits() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         pdf_path = Path(temp_dir) / "sample.pdf"

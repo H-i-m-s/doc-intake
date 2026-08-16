@@ -362,6 +362,7 @@ def _extract_with_backend(
             pdf_bytes=pdf_bytes,
             display_name=display_name,
             page_offset=page_offset,
+            # Excel 统一行列上限：.xls、.xlsx、.xlsm 共用同一套配置。
             max_rows=settings.get("xlsxMaxRows"),
             max_cols=settings.get("xlsxMaxCols"),
         )

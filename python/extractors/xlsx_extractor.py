@@ -1,6 +1,7 @@
 """XLSX 文档提取器"""
 from __future__ import annotations
 
+import math
 import re
 import zipfile
 from pathlib import Path
@@ -34,6 +35,65 @@ def _cell_ref_to_col_index(ref: str) -> int:
     return result
 
 
+def _normalize_excel_limit(value: int | None, default: int) -> int | None:
+    """将 Excel 行列限制归一化；0 表示不限制，正数表示具体上限。"""
+    if value is None:
+        value = default
+    value = int(value)
+    if value < 0:
+        raise ValueError("Excel 行列限制不能小于 0")
+    return None if value == 0 else value
+
+
+def _column_index_to_letters(index: int) -> str:
+    """将 1-based 列号转换为 Excel 列字母。"""
+    letters: list[str] = []
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        letters.append(chr(ord("A") + remainder))
+    return "".join(reversed(letters))
+
+
+def _legacy_numeric_text(value: object) -> str:
+    """将 BIFF 双精度数转为短十进制文本，去除展开尾数和无意义的 .0。"""
+    number = float(value)
+    if not math.isfinite(number):
+        return str(value)
+    if number.is_integer():
+        return str(int(number))
+    return repr(number)
+
+
+def _load_legacy_numeric_overrides(
+    path: Path,
+) -> tuple[dict[tuple[str, str], str], str | None]:
+    """读取旧版 XLS 的数值并用最短可回读十进制文本表示。"""
+    try:
+        import xlrd
+    except ImportError:
+        return {}, "未安装 xlrd，旧版 XLS 数值将保留转换后 XLSX 的原始文本"
+
+    overrides: dict[tuple[str, str], str] = {}
+    try:
+        workbook = xlrd.open_workbook(str(path), formatting_info=False)
+        for sheet in workbook.sheets():
+            for row_index in range(sheet.nrows):
+                for col_index in range(sheet.ncols):
+                    cell = sheet.cell(row_index, col_index)
+                    if cell.ctype not in (xlrd.XL_CELL_NUMBER, xlrd.XL_CELL_DATE):
+                        continue
+                    ref = f"{_column_index_to_letters(col_index + 1)}{row_index + 1}"
+                    # 只覆盖普通 BIFF 数值；日期、公式、布尔、错误和文本不进入此映射。
+                    if cell.ctype != xlrd.XL_CELL_NUMBER:
+                        continue
+                    # BIFF 数值本身是双精度数；使用最短可回读十进制表示，
+                    # 可去掉 68460.100000000006 这类二进制展开，但不会按显示格式截断。
+                    overrides[(sheet.name, ref)] = _legacy_numeric_text(cell.value)
+        return overrides, None
+    except Exception as exc:
+        return {}, f"读取旧版 XLS 数值失败，将保留转换后 XLSX 的原始文本: {exc}"
+
+
 def _cell_ref_to_row_col(ref: str) -> tuple[int, int]:
     """将单元格引用（如 B2）转换为 (行号, 列索引)"""
     match = re.match(r"([A-Z]+)(\d+)", ref)
@@ -61,6 +121,7 @@ class XlsxExtractor(BaseExtractor):
         include_images: bool = True,
         max_rows: int | None = None,
         max_cols: int | None = None,
+        numeric_overrides: dict[tuple[str, str], str] | None = None,
         **kwargs,
     ) -> ExtractionResult:
         path = self._check_file_exists(source)
@@ -70,14 +131,12 @@ class XlsxExtractor(BaseExtractor):
             )
 
         result = ExtractionResult()
-        max_rows = int(
-            max_rows if max_rows is not None else self.settings.get("xlsxMaxRows", 100)
+        max_rows = _normalize_excel_limit(
+            max_rows, self.settings.get("xlsxMaxRows", 100)
         )
-        max_cols = int(
-            max_cols if max_cols is not None else self.settings.get("xlsxMaxCols", 50)
+        max_cols = _normalize_excel_limit(
+            max_cols, self.settings.get("xlsxMaxCols", 50)
         )
-        if max_rows <= 0 or max_cols <= 0:
-            raise ValueError("xlsxMaxRows 和 xlsxMaxCols 必须大于 0")
 
         truncation_warnings: list[str] = []
         with zipfile.ZipFile(path) as zf:
@@ -117,7 +176,7 @@ class XlsxExtractor(BaseExtractor):
             result.markdown = self._extract_text(
                 zf, sheets, strings, path.name, names, max_rows, max_cols,
                 include_images, media_map, media_anchors, path.stem,
-                truncation_warnings,
+                truncation_warnings, numeric_overrides,
             )
 
         result.warnings.extend(truncation_warnings)
@@ -138,14 +197,25 @@ class XlsxExtractor(BaseExtractor):
     ) -> ExtractionResult:
         """将旧版 .xls 转为临时 .xlsx 后复用当前提取器。"""
         result = ExtractionResult()
+        # 旧版 XLS 仅转换为临时 XLSX，行列限制仍沿用 Excel 统一配置。
+        max_rows = _normalize_excel_limit(
+            max_rows, self.settings.get("xlsxMaxRows", 100)
+        )
+        max_cols = _normalize_excel_limit(
+            max_cols, self.settings.get("xlsxMaxCols", 50)
+        )
+        numeric_overrides, numeric_warning = _load_legacy_numeric_overrides(path)
         try:
             with convert_legacy_document(path, self.settings) as converted:
                 result = self.extract(
                     source=str(converted.converted_path),
                     output_dir=output_dir,
                     include_images=include_images,
-                    max_rows=max_rows,
-                    max_cols=max_cols,
+                    # 递归解析临时 XLSX 时，None 会被解释为“读取默认配置”；
+                    # 用 0 显式传递“不限制”，避免旧版 XLS 被重新套用 100/50 默认值。
+                    max_rows=0 if max_rows is None else max_rows,
+                    max_cols=0 if max_cols is None else max_cols,
+                    numeric_overrides=numeric_overrides,
                 )
                 result.markdown = restore_original_heading(
                     result.markdown,
@@ -163,6 +233,8 @@ class XlsxExtractor(BaseExtractor):
                     "conversionDurationMs": converted.duration_ms,
                 })
                 result.warnings = converted.warnings + result.warnings
+                if numeric_warning:
+                    result.warnings.append(numeric_warning)
         except LegacyConversionError as exc:
             result.metadata.update({
                 "format": "xls",
@@ -438,13 +510,14 @@ class XlsxExtractor(BaseExtractor):
         strings: list[str],
         filename: str,
         names: set,
-        max_rows: int,
-        max_cols: int,
+        max_rows: int | None,
+        max_cols: int | None,
         include_images: bool = True,
         media_map: dict[int, ExtractedMedia] | None = None,
         media_anchors: dict | None = None,
         stem: str = "",
         truncation_warnings: list[str] | None = None,
+        numeric_overrides: dict[tuple[str, str], str] | None = None,
     ) -> str:
         """提取 XLSX 文本内容。
 
@@ -457,7 +530,8 @@ class XlsxExtractor(BaseExtractor):
             media_map = {}
         if media_anchors is None:
             media_anchors = {}
-
+        if numeric_overrides is None:
+            numeric_overrides = {}
         for sheet_info in sheets:
             sheet_name = sheet_info["name"]
             sheet_file = sheet_info.get("file", "")
@@ -473,27 +547,44 @@ class XlsxExtractor(BaseExtractor):
                 sheet_root = ET.fromstring(sheet_xml)
 
                 rows_out = []
+                sheet_has_content = False
+                source_has_content = False
+                truncated_by_limit = False
 
                 for row in sheet_root.iter():
                     if _local_name(row.tag) != "row":
                         continue
 
                     row_index = int(row.get("r", "0"))
-                    if row_index > max_rows:
+                    cells = [child for child in row if _local_name(child.tag) == "c"]
+                    for source_cell in cells:
+                        source_value = ""
+                        for source_node in source_cell.iter():
+                            if _local_name(source_node.tag) == "v":
+                                source_value = source_node.text or ""
+                                break
+                        if (
+                            source_value != ""
+                            or any(_local_name(node.tag) in ("f", "is") for node in source_cell.iter())
+                        ):
+                            source_has_content = True
+                    if max_rows is not None and row_index > max_rows:
+                        if cells and source_has_content:
+                            truncated_by_limit = True
                         continue
 
-                    values = [""] * max_cols
+                    cell_values: dict[int, str] = {}
+                    row_has_content = False
 
-                    for cell in row:
-                        if _local_name(cell.tag) != "c":
-                            continue
+                    for cell in cells:
 
                         cell_ref = cell.get("r", "")
                         if not cell_ref:
                             continue
 
                         col_index = _cell_ref_to_col_index(cell_ref)
-                        if col_index > max_cols:
+                        if max_cols is not None and col_index > max_cols:
+                            truncated_by_limit = True
                             continue
 
                         value = ""
@@ -509,22 +600,24 @@ class XlsxExtractor(BaseExtractor):
                             except (ValueError, IndexError):
                                 pass
 
-                        try:
-                            if cell_type not in ("s", "inlineStr") and value:
-                                display: object = float(value)
-                                raw = str(value)
-                                if "." in raw:
-                                    frac = raw.split(".", 1)[1]
-                                    if frac and set(frac) <= {"0"}:
-                                        display = int(display)
-                                else:
-                                    display = int(display)
-                            else:
-                                display = value
-                        except (ValueError, TypeError):
+                        # XLSX 的 <v> 是单元格底层值，不是 Excel 按 number format 渲染后的显示值。
+                        # 直接保留 XML 中的原始文本，禁止 float 往返、四舍五入、去尾或科学计数法改写。
+                        has_formula = any(
+                            _local_name(node.tag) == "f" for node in cell.iter()
+                        )
+                        if cell_type == "inlineStr":
+                            display = _element_text(cell)
+                        elif has_formula:
+                            # 公式结果以转换后 OOXML 的缓存值为准，避免用 xlrd 的旧缓存覆盖 COM 重算结果。
                             display = value
+                        else:
+                            display = numeric_overrides.get((sheet_name, cell_ref), value)
 
-                        values[col_index - 1] = str(display) if display else ""
+                        cell_text = str(display) if display is not None else ""
+                        if cell_text != "":
+                            row_has_content = True
+                            sheet_has_content = True
+                            cell_values[col_index] = cell_text
 
                         # 检查该单元格是否有媒体(图/视/音)
                         cell_key = f"R{row_index}C{col_index}"
@@ -535,17 +628,21 @@ class XlsxExtractor(BaseExtractor):
                                 rel = f"{stem}_media/{Path(m.local_path).name}"
                                 icon = {"image": "📷", "video": "🎬", "audio": "🎵"}.get(m.kind, "📎")
                                 ref = f"[{icon}]({rel})"
-                                values[col_index - 1] = (
-                                    f"{values[col_index - 1]} {ref}" if values[col_index - 1] else ref
+                                cell_values[col_index] = (
+                                    f"{cell_values.get(col_index, '')} {ref}".strip()
                                 )
+                                row_has_content = True
+                                sheet_has_content = True
 
-                    if any(values):
+                    if row_has_content:
+                        used_width = max(cell_values)
+                        values = [cell_values.get(index, "") for index in range(1, used_width + 1)]
                         while len(rows_out) < row_index - 1:
-                            rows_out.append([""] * max_cols)
+                            rows_out.append([])
                         rows_out.append(values)
 
                 if any(
-                    int(row.get("r", "0")) > max_rows
+                    max_rows is not None and int(row.get("r", "0")) > max_rows
                     for row in sheet_root.iter()
                     if _local_name(row.tag) == "row"
                 ) and truncation_warnings is not None:
@@ -553,13 +650,16 @@ class XlsxExtractor(BaseExtractor):
                         f"工作表“{sheet_name}”超过 {max_rows} 行，已截断"
                     )
                 if any(
-                    _cell_ref_to_col_index(cell.get("r", "")) > max_cols
+                    max_cols is not None and _cell_ref_to_col_index(cell.get("r", "")) > max_cols
                     for cell in sheet_root.iter()
                     if _local_name(cell.tag) == "c"
                 ) and truncation_warnings is not None:
                     truncation_warnings.append(
                         f"工作表“{sheet_name}”超过 {max_cols} 列，已截断"
                     )
+
+                if not source_has_content and not sheet_has_content:
+                    continue
 
                 lines.append(f"## Sheet: {sheet_name}")
                 lines.append("")
@@ -572,8 +672,11 @@ class XlsxExtractor(BaseExtractor):
                         while len(row) < used_width:
                             row.append("")
                     lines.append(_markdown_table(rows_out))
-                else:
-                    lines.append("[Empty sheet]")
+                    if truncated_by_limit:
+                        lines.append("")
+                        lines.append("[部分内容因行数或列数限制未保留]")
+                elif truncated_by_limit:
+                    lines.append("[内容因行数或列数限制未保留]")
 
                 # 未锚定的媒体在表格后列出(跨 sheet 汇总,只在最后一个 sheet 后打一次,
                 # 避免每 sheet 都重复列。)

@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "doc-intake",
   "name": "Doc Intake",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "trust": "restricted",
   "description": "文档/图片内容提取工具。支持 MinerU（PDF）、PaddleOCR（图片）、本地 Python 库（DOC/DOCX/PPT/PPTX/XLS/XLSX/HTML），旧版 Office 格式先转换为 OOXML 后复用现有适配器，输出结构化 Markdown。支持公式转 LaTeX、EMF 转 PNG。",
   "contributes": {
@@ -271,14 +271,14 @@
         "xlsxMaxRows": {
           "type": "number",
           "default": 100,
-          "minimum": 1,
-          "title": "XLSX 最大提取行数"
+          "minimum": 0,
+          "title": "Excel 表格最大提取行数（适用于 XLS/XLSX/XLSM；0 表示不限制）"
         },
         "xlsxMaxCols": {
           "type": "number",
           "default": 50,
-          "minimum": 1,
-          "title": "XLSX 最大提取列数"
+          "minimum": 0,
+          "title": "Excel 表格最大提取列数（适用于 XLS/XLSX/XLSM；0 表示不限制）"
         },
         "autoSave": {
           "type": "boolean",

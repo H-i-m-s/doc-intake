@@ -408,8 +408,8 @@ doc-intake/
 | `htmlExtractImages` | `boolean` | `true` | 提取并下载所有图片。 |
 | `htmlExtractCodeBlocks` | `boolean` | `true` | 提取代码块并标注语言。 |
 | `htmlHeadingStyle` | `"ATX" \| "SETEXT"` | `"ATX"` | Markdown 标题风格。 |
-| `xlsxMaxRows` | `number` | `100` | XLSX 最大提取行数，超过时在 warnings 中提示截断。 |
-| `xlsxMaxCols` | `number` | `50` | XLSX 最大提取列数，超过时在 warnings 中提示截断。 |
+| `xlsxMaxRows` | `number` | `100` | Excel 表格最大提取行数，适用于 `.xls`、`.xlsx`、`.xlsm`；`0` 表示不限制，正数表示具体上限。 |
+| `xlsxMaxCols` | `number` | `50` | Excel 表格最大提取列数，适用于 `.xls`、`.xlsx`、`.xlsm`；`0` 表示不限制，正数表示具体上限。 |
 | `maxRemoteImagesPerHtml` | `number` | `100` | HTML 页面最多下载多少远程图片。 |
 
 ### Agent 返回机制说明
@@ -427,7 +427,12 @@ Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单
 
 这个方案来自实际探针验证，不代表 4 是 Hana 的硬上限。增加块数只能扩大工具结果的承载量，仍会受到 Agent 上下文、模型上下文窗口、provider 请求限制和输入成本影响。当前默认值优先取稳定余量，而不是追求最大块数。
 
-#### 超出总容量时的决策
+#### Excel 提取范围与 Agent 返回容量
+
+Excel 行列上限和 Agent 返回容量是两个独立层次：
+
+- `xlsxMaxRows` / `xlsxMaxCols` 作用于 Excel 解析阶段，统一适用于 `.xls`、`.xlsx`、`.xlsm`。正数决定解析器最多把多少行、多少列写入 Markdown；设置为 `0` 时不限制，保存 Markdown 或 JSON 会包含源表中的全部可提取内容。
+- `inlineBlockBytes` / `inlineBlockCount` 只作用于工具结果返回给 Agent 的正文容量。它们不会减少解析器已经提取的数据，也不会缩短已保存的 Markdown 或 JSON。
 
 返回层按最终 Markdown 内容大小判断，不按文件数量判断：
 
@@ -435,7 +440,7 @@ Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单
 2. 内容超限且已有本地保存结果：返回处理摘要和路径，完整正文从 `mdPath` 读取。
 3. 内容超限且没有本地保存结果：跨多个 text block 保留开头和结尾，中间插入省略提示，并标记结果不完整。
 
-因此，`content` 适合 Agent 直接阅读，`details.data` 适合程序读取结构化元信息，本地 Markdown 文件是大文档的完整兜底。
+因此，`xlsxMaxRows` / `xlsxMaxCols` 控制“提取多少数据”，`inlineBlockBytes` / `inlineBlockCount` 控制“当场发送给 Agent 多少正文”。本地 Markdown 文件是大文档的完整兜底，但它也只包含 Excel 行列提取上限以内的内容。
 
 #### 配置项
 
