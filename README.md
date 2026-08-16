@@ -142,11 +142,12 @@ Hana 自带 `office-documents` skill，它的设计思路是「一个 skill 干�
 
 **操作**：在 Hana 的 Skills 管理界面中卸载 `office-documents`。卸载后 Agent 不会再优先调用它，文档请求会走 `doc-intake`。
 
-#### 4. 推荐关闭HanaAgent自带的office-read-document工具（如果您已开启）
+#### 4. 对HanaAgent的推荐设置：
 
-具体位置：设置-助手（然后一直往下划，找到“工具”）-关闭Office
-
-此工具（Hana自带的office读取工具）会让agent优先调用内置工具读取，发现无法读取则会私自写py脚本，不调用doc-intake插件
+1. 推荐关闭HanaAgent自带的office-read-document工具（如果您已开启）
+	具体位置：设置-助手（然后一直往下划，找到“工具”）-关闭Office
+	此工具（Hana自带的office读取工具）会让agent优先调用内置工具读取，发现无法读取则会私自写py脚本，不调用doc-intake插件
+2. 推荐将助手切换为“无”，因为“无”会更听话一点。不管是平时让他干活，还是让他遵循本插件的skill表现都会更好一些
 
 #### 5. 推荐开启保存到本地
 
