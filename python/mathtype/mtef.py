@@ -15,6 +15,12 @@ except ImportError:
 
 oleCbHdr = 28
 
+# 本实现只覆盖 MTEF v5。其它版本（例如 v3）按 v5 解析会把 reader 带偏，
+# 与其带着错误状态硬读，不如直接判不合法，交给上层退化成公式预览图。
+MTEF_SUPPORTED_VERSION = 5
+# readDimensionArrays 的迭代硬上限：正常数据远达不到，只用于兜住畸形输入。
+MTEF_MAX_DIMENSION_ITER = 65536
+
 # MTEFV5
 class MTEF:
     def __init__(self):
@@ -53,20 +59,16 @@ class MTEF:
 
         # Header
         self.mMtefVer = Helper.bytes2int(self.reader.read(1)) # uint8
+        # 版本不匹配就别往下读了：继续按 v5 解析只会把 reader 带到错误位置。
+        if self.mMtefVer != MTEF_SUPPORTED_VERSION:
+            self.Valid = False
+            return None
         self.mPlatform = Helper.bytes2int(self.reader.read(1)) # uint8
         self.mProduct = Helper.bytes2int(self.reader.read(1)) # uint8
         self.mVersion = Helper.bytes2int(self.reader.read(1)) # uint8
         self.mVersionSub = Helper.bytes2int(self.reader.read(1)) # uint8
         self.mApplication, _ = self.readNullTerminatedString()
         self.mInline = Helper.bytes2int(self.reader.read(1)) # uint8
-
-        print('(DEBUG)MTEF.readRecord.mMtefVer:', self.mMtefVer)
-        print('(DEBUG)MTEF.readRecord.mPlatform:', self.mPlatform)
-        print('(DEBUG)MTEF.readRecord.mProduct:', self.mProduct)
-        print('(DEBUG)MTEF.readRecord.mVersion:', self.mVersion)
-        print('(DEBUG)MTEF.readRecord.mVersionSub:', self.mVersionSub)
-        print('(DEBUG)MTEF.readRecord.mApplication:', self.mApplication)
-        print('(DEBUG)MTEF.readRecord.mInline:', self.mInline)
 
         # Body
         while True:
@@ -299,20 +301,29 @@ class MTEF:
                 else:
                     print('MTEF.readDimensionArrays.error: invalid bytes')
 
+        iterations = 0
         while True:
             if shareData['count'] >= size:
-                print('(DEBUG)MTEF.readDimensionArrays:break with size=', size)
                 break
 
-            ch = 0 # uint8
-            ch =  Helper.bytes2int(self.reader.read(1))
-
-            # print('(DEBUG)MTEF.readDimensionArrays.ch:', ch)
+            raw = self.reader.read(1) # uint8
+            if len(raw) != 1:
+                # 数据里始终没出现终止符（0x0f）就已经读到末尾。旧实现会在这里
+                # 无限空转：read() 返回 b'' → bytes2int 得 0 → fx(0) 反复执行，
+                # 而 count 只在读到终止符时才增长，于是永远退不出循环。
+                self.Valid = False
+                break
+            ch = Helper.bytes2int(raw)
 
             hi = (ch & 0xf0) / 16
             lo = ch & 0x0f
             fx(hi)
             fx(lo)
+
+            iterations += 1
+            if iterations > MTEF_MAX_DIMENSION_ITER:
+                self.Valid = False
+                break
             
         return shareData['array'], None
 

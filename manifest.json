@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "doc-intake",
   "name": "Doc Intake",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "entry": "index.js",
   "icon": "assets/icon.svg",
   "minAppVersion": "0.978.0",
@@ -31,14 +31,13 @@
           "pdfBackendChain": {
             "type": "string",
             "title": "PDF 后端降级链",
-            "default": "local",
-            "description": "按顺序尝试，失败自动降级到下一档。用 > 或 ; 分隔，例如 mineru>paddleocr>local"
+            "default": "",
+            "description": "留空 = 自动 mineru>paddleocr>local。也可显式填写，按顺序尝试，失败自动降级到下一档。用 > 或 ; 分隔，例如 mineru>paddleocr>local"
           },
           "mineruCredentials": {
             "type": "string",
             "title": "MinerU Token",
             "default": "",
-            "sensitive": true,
             "description": "多个用分号分隔。获取地址：https://mineru.net/apiManage/token"
           },
           "mineruModelVersion": {
@@ -66,7 +65,6 @@
             "type": "string",
             "title": "PaddleOCR Token",
             "default": "",
-            "sensitive": true,
             "description": "多个用分号分隔。获取地址：https://aistudio.baidu.com/account/accessToken"
           },
           "paddleUseDocOrientationClassify": {

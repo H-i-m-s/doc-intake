@@ -19,7 +19,6 @@ from legacy_converter import (
 )
 from .emf_converter import convert_emf_to_png
 from .omml_converter import OmmlToLatexConverter
-from .mathtype_filter import filter_mathtype_previews
 from ._utils import (
     ExtractedMedia,
     classify_media,
@@ -85,7 +84,7 @@ class PptxExtractor(BaseExtractor):
                 return result
 
             # 第一步：解析结构
-            slides, media_list = self._parse_structure(zf, names)
+            slides = self._parse_structure(zf)
 
             # 获取 MathType 公式
             mathtype_equations = []
@@ -96,7 +95,7 @@ class PptxExtractor(BaseExtractor):
                     logger.warning("MathType 提取失败，公式将退化为图片", error=str(e), source=source)
 
             # 第二步：确定媒体列表(图片/视频/音频,按 slide 出现顺序排)
-            used_media = self._determine_media(slides, media_list, zf)
+            used_media = self._determine_media(slides, zf)
 
             # 第三步：按 kind 分别连续编号
             media_records = self._assign_numbers(used_media)
@@ -108,11 +107,26 @@ class PptxExtractor(BaseExtractor):
             )
 
             # 第五步：抽取媒体文件
+            # 只抽 markdown 里真正引用到的媒体。公式 OLE 的预览图现在一律收集进来
+            # （见 _scan_fallback_preview），但 MTEF 解得出 LaTeX 的那些用不上它们；
+            # 不筛就会把一堆没用的公式预览图也写进输出目录。
+            # 文件名是 image_001.png 这种纯 ASCII 计数名，直接做子串判断即可。
             if include_images and output_dir and media_records:
-                extracted = self._extract_files(
-                    media_records, zf, output_dir, path.stem
-                )
-                result.images = [m.local_path for m in extracted]
+                referenced = {
+                    info["new_name"]
+                    for info in media_records.values()
+                    if info.get("new_name") and info["new_name"] in result.markdown
+                }
+                if referenced:
+                    to_extract = {
+                        media_path: info
+                        for media_path, info in media_records.items()
+                        if info["new_name"] in referenced
+                    }
+                    extracted = self._extract_files(
+                        to_extract, zf, output_dir, path.stem
+                    )
+                    result.images = [m.local_path for m in extracted]
 
         result.metadata = {
             "format": "pptx",
@@ -152,7 +166,7 @@ class PptxExtractor(BaseExtractor):
 
     # ========== 第一步：解析结构 ==========
 
-    def _parse_structure(self, zf, names):
+    def _parse_structure(self, zf):
         """解析 PPTX 结构"""
         slides = []
 
@@ -182,14 +196,11 @@ class PptxExtractor(BaseExtractor):
         except Exception:
             pass
 
-        media_list = sorted(name for name in names if name.startswith("ppt/media/"))
-        media_list = filter_mathtype_previews(media_list, zf)
-
-        return slides, media_list
+        return slides
 
     # ========== 第二步：确定媒体列表 ==========
 
-    def _determine_media(self, slides, media_list, zf):
+    def _determine_media(self, slides, zf):
         """扫描每个 slide,找出所有被引用的媒体(图/视/音),返回按出现顺序的字典列表。
 
         每条 dict: {media_path, kind, ext, alt, type}
@@ -404,15 +415,22 @@ class PptxExtractor(BaseExtractor):
                     )
 
     def _scan_fallback_preview(self, elem, rid_to_info, used_media, seen):
-        """在 AlternateContent.Fallback 中收集 Equation.3 预览图。"""
-        has_equation3 = False
+        """在 AlternateContent.Fallback 中收集公式 OLE 的预览图。
+
+        只要是公式 OLE（progId 含 "Equation"）就收集它的 Fallback 预览图。
+        收进来不等于用得上：MTEF 能解出来的公式会以 LaTeX 呈现，预览图不会
+        出现在 markdown 里，落盘阶段会被跳过（见 extract 第五步）。
+        它真正兜底的是解不出来的那类（如旧版 Equation.3），这时这张预览图
+        就是公式留下的唯一痕迹。
+        """
+        has_equation = False
         for child in elem.iter():
             if _local_name(child.tag) == "oleObj":
                 prog_id = child.get("progId", "")
-                if prog_id == "Equation.3":
-                    has_equation3 = True
+                if "Equation" in prog_id:
+                    has_equation = True
                     break
-        if not has_equation3:
+        if not has_equation:
             return
         for child in elem.iter():
             if _local_name(child.tag) == "blip":
@@ -726,7 +744,7 @@ class PptxExtractor(BaseExtractor):
         for child in gf.iter():
             tag = _local_name(child.tag)
             if tag == "oleObj":
-                content = self._extract_ole(child, gf, media_records, zf)
+                content = self._extract_ole(child, gf, media_records, zf, mathtype_map)
                 if content:
                     parts.append(content)
                 break
@@ -768,16 +786,16 @@ class PptxExtractor(BaseExtractor):
             return ""
         return _markdown_table(rows, trailing_blank=True)
 
-    def _extract_ole(self, ole, graphic_frame, media_records, zf):
+    def _extract_ole(self, ole, graphic_frame, media_records, zf, mathtype_map):
         prog_id = ole.get("progId", "")
         rId = ole.get(f"{_R_NS}id", "")
 
         if "Equation" in prog_id:
-            slide_mathtype_map = self._build_slide_mathtype_map(
-                zf, getattr(self, '_current_slide_path', ""), []
-            )
-            if rId and rId in slide_mathtype_map:
-                return f"${slide_mathtype_map[rId]}$"
+            # 本页的 rId → LaTeX 映射由 _extract_content 统一构建后逐层传进来。
+            # 这里曾自己用空列表重建映射，导致映射恒为空、MathType 解出的 LaTeX 被丢弃，
+            # 只能退回预览图（没有预览图的公式则彻底消失）。
+            if rId and rId in mathtype_map:
+                return f"${mathtype_map[rId]}$"
 
             preview = self._get_ole_preview(graphic_frame, media_records, zf)
             if preview:
@@ -798,22 +816,28 @@ class PptxExtractor(BaseExtractor):
 
     def _find_preview_by_rid(self, rid, media_records, zf):
         stem = getattr(self, '_current_stem', '')
-        for name in zf.namelist():
-            if name.startswith("ppt/slides/_rels/") and name.endswith(".rels"):
-                rels_xml = zf.read(name).decode("utf-8")
-                for match in re.finditer(
-                    f'Id="{rid}"[^>]*Target="[^"]*media/([^"]+)"', rels_xml
-                ):
-                    media_name = match.group(1)
-                    original_path = f"ppt/media/{media_name}"
-                    if original_path in media_records:
-                        info = media_records[original_path]
-                        if info["kind"] == "image":
-                            return format_media_ref(
-                                f"{stem}_media/{info['new_name']}",
-                                "image",
-                                info.get("alt", "formula") or "formula",
-                            )
+        # 只在当前 slide 的 rels 里找。rId 是每页独立编号的(slide1 和 slide5 都有
+        # rId3)，跨页搜索会把别的页的预览图当成本页的，挂上错误的公式图片。
+        slide_path = getattr(self, '_current_slide_path', None)
+        if not slide_path:
+            return None
+        rels_name = f"ppt/slides/_rels/{Path(slide_path).name}.rels"
+        if rels_name not in zf.namelist():
+            return None
+        rels_xml = zf.read(rels_name).decode("utf-8")
+        for match in re.finditer(
+            f'Id="{rid}"[^>]*Target="[^"]*media/([^"]+)"', rels_xml
+        ):
+            media_name = match.group(1)
+            original_path = f"ppt/media/{media_name}"
+            if original_path in media_records:
+                info = media_records[original_path]
+                if info["kind"] == "image":
+                    return format_media_ref(
+                        f"{stem}_media/{info['new_name']}",
+                        "image",
+                        info.get("alt", "formula") or "formula",
+                    )
         return None
 
     def _extract_pic_media(self, elem, media_records, zf, stem, slide_path):

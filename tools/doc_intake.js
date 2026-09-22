@@ -1,6 +1,6 @@
 import { extractDocument } from "../lib/service.js";
 import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
-import { getSettings } from "../lib/settings.js";
+import { getSettings, DEFAULT_PDF_BACKEND_CHAIN } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
 import { DocIntakeError } from "../lib/errors.js";
 import { spawn } from "node:child_process";
@@ -62,7 +62,10 @@ function entryBackendKind(source, input, settings) {
     return "legacy";
   }
   if (ext === ".pdf") {
-    const chain = settings?.pdfBackendChain || ["local"];
+    // 留空按自动档理解：mineru > paddleocr > local
+  const chain = settings?.pdfBackendChain?.length
+    ? settings.pdfBackendChain
+    : DEFAULT_PDF_BACKEND_CHAIN;
     return chain[0] === "local" ? "local" : "api";
   }
   if ([".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif"].includes(ext)) {

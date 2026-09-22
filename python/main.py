@@ -107,6 +107,10 @@ def determine_output_dir(args, settings) -> Optional[str]:
     return None
 
 
+# PDF 后端降级链留空时的自动档：先云端 MinerU，再 PaddleOCR，最后本地。
+DEFAULT_PDF_BACKEND_CHAIN = ["mineru", "paddleocr", "local"]
+
+
 def select_backend_chain(
     file_type: str,
     explicit_backend: str,
@@ -124,7 +128,7 @@ def select_backend_chain(
         return [explicit_backend]
 
     if file_type == "pdf":
-        chain = settings.get("pdfBackendChain") or ["local"]
+        chain = settings.get("pdfBackendChain") or list(DEFAULT_PDF_BACKEND_CHAIN)
     elif file_type == "image":
         chain = ["paddleocr"]
     elif file_type in ("docx", "doc", "pptx", "ppt", "xlsx", "xls", "xlsm", "html", "htm"):
@@ -777,11 +781,8 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
 
     md_path = output_path / f"{filename}.md"
     json_path = output_path / f"{filename}.json"
-    if md_path.exists() or json_path.exists():
-        result.metadata["saveStatus"] = "failed"
-        raise FileExistsError(
-            f"输出文件已存在，默认拒绝覆盖: {md_path}"
-        )
+    # 直接覆盖同名产物：提取本身可重复执行，超时重试、修完 bug 重跑都依赖这一点。
+    # 写入走 atomic_write（临时文件 + os.replace），不会留下半截文件。
 
     # 只有全部写入并回读验证成功后，才把路径写入结果。
     stem = Path(filename).stem
