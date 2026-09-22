@@ -1,0 +1,1 @@
+{"version":3,"file":"public-data.js","sourceRoot":"","sources":["../../src/app-contract/public-data.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AACH,uFAAuF;AACvF,MAAM,CAAC,MAAM,kCAAkC,GAAG,yBAAyB,CAAC;AAC5E,MAAM,CAAC,MAAM,+BAA+B,GAAG,sBAAsB,CAAC;AACtE,MAAM,CAAC,MAAM,gCAAgC,GAAG,MAAM,CAAC,MAAM,CAAC;IAC5D,kCAAkC;IAClC,+BAA+B;CACvB,CAAC,CAAC"}

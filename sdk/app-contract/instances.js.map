@@ -1,0 +1,1 @@
+{"version":3,"file":"instances.js","sourceRoot":"","sources":["../../src/app-contract/instances.ts"],"names":[],"mappings":"AAOA,uFAAuF;AACvF,MAAM,CAAC,MAAM,+BAA+B,GAAG,sBAA+B,CAAC;AA+F/E,MAAM,CAAC,MAAM,oBAAoB,GAAG,MAAM,CAAC,MAAM,CAAC;IAChD,QAAQ,EAAE,MAAM,EAAE,KAAK,EAAE,QAAQ,EAAE,MAAM,EAAE,OAAO,EAAE,MAAM,EAAE,SAAS,EAAE,eAAe;CAC9E,CAAC,CAAC"}

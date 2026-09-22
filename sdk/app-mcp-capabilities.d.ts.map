@@ -1,0 +1,1 @@
+{"version":3,"file":"app-mcp-capabilities.d.ts","sourceRoot":"","sources":["../src/app-mcp-capabilities.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AACH,2EAA2E;AAC3E,eAAO,MAAM,0BAA0B,EAAG,iBAA0B,CAAC;AACrE,eAAO,MAAM,uBAAuB,EAAG,cAAuB,CAAC;AAC/D,eAAO,MAAM,yBAAyB,EAAG,gBAAyB,CAAC;AAEnE,eAAO,MAAM,wBAAwB,gEAI1B,CAAC;AAEZ,MAAM,MAAM,gBAAgB,GAAG,CAAC,OAAO,wBAAwB,CAAC,CAAC,MAAM,CAAC,CAAC"}

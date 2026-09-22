@@ -2,39 +2,46 @@ import { extractDocument } from "../lib/service.js";
 import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
 import { getSettings } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
-import { statSync, readdirSync } from "node:fs";
+import { DocIntakeError } from "../lib/errors.js";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { basename, dirname, extname, isAbsolute, join, normalize, parse, resolve } from "node:path";
 
-const SUPPORTED_EXTS = new Set([
-  ".pdf", ".doc", ".docx", ".pptx", ".ppt", ".xls", ".xlsx", ".xlsm",
-  ".html", ".htm",
-  ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif",
-]);
+const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 
-function isSupported(filePath) {
-  return SUPPORTED_EXTS.has(extname(filePath).toLowerCase());
-}
-
-function expandPaths(paths) {
-  const result = [];
-  for (const p of paths) {
-    try {
-      const stat = statSync(p);
-      if (stat.isDirectory()) {
-        for (const f of readdirSync(p)) {
-          const fullPath = join(p, f);
-          if (statSync(fullPath).isFile() && isSupported(fullPath)) {
-            result.push(fullPath);
-          }
-        }
-      } else if (stat.isFile() && isSupported(p)) {
-        result.push(p);
+// v2 App 的 JS 进程跑在 Node Permission Model 下，裸 fs 读许可根以外的路径会被拒。
+// 路径展开（目录枚举、存在性、后缀过滤）交给被 spawn 的 Python 子进程完成；
+// 语义与 v1 的 expandPaths 一致：无效路径与不支持的后缀静默跳过。
+function expandSourcesWithPython(pythonExe, paths) {
+  const scriptPath = join(CURRENT_DIR, "..", "python", "list_sources.py");
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonExe, [scriptPath], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, PYTHONUTF8: "1" },
+      windowsHide: true,
+      timeout: 60000,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    child.on("error", (error) => {
+      reject(new Error(`展开路径失败: ${error.message}`));
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`展开路径失败(退出码 ${code}): ${(stderr || stdout).slice(0, 300)}`));
+        return;
       }
-    } catch {
-      // 路径无效则跳过
-    }
-  }
-  return result;
+      try {
+        const parsed = JSON.parse(stdout);
+        resolve(Array.isArray(parsed?.sources) ? parsed.sources : []);
+      } catch {
+        reject(new Error(`展开路径输出解析失败: ${stdout.slice(0, 300)}`));
+      }
+    });
+    child.stdin.end(JSON.stringify(Array.isArray(paths) ? paths : []));
+  });
 }
 
 const LEGACY_OFFICE_EXTS = new Set([".doc", ".xls", ".ppt"]);
@@ -571,12 +578,18 @@ export const parameters = {
 
 export async function execute(input = {}, ctx) {
   try {
-    const sources = expandPaths(input.source || []);
+    const settings = getSettings(ctx);
+    if (!settings.pythonPath) {
+      throw new DocIntakeError(
+        "未在应用设置中指定 Python 环境 (pythonPath)。请打开 App 设置面板填写。",
+        { code: "PYTHON_PATH_NOT_CONFIGURED", details: { configKey: "pythonPath" } },
+      );
+    }
+    const sources = await expandSourcesWithPython(settings.pythonPath, input.source || []);
     if (sources.length === 0) {
       throw new Error("没有找到可解析的文件，或路径无效");
     }
 
-    const settings = getSettings(ctx);
     const enrichedInput = {
       ...input,
       _apiConcurrency: settings.maxConcurrent ?? 4,

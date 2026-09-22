@@ -1,0 +1,1 @@
+{"version":3,"file":"app-catalog-capabilities.js","sourceRoot":"","sources":["../src/app-catalog-capabilities.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AACH,4EAA4E;AAC5E,MAAM,CAAC,MAAM,yBAAyB,GAAG,gBAAyB,CAAC;AACnE,MAAM,CAAC,MAAM,4BAA4B,GAAG,mBAA4B,CAAC;AAEzE,MAAM,CAAC,MAAM,4BAA4B,GAAG,MAAM,CAAC,MAAM,CAAC;IACxD,yBAAyB;IACzB,4BAA4B;CACpB,CAAC,CAAC"}

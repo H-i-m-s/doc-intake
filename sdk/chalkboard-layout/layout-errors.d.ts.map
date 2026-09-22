@@ -1,0 +1,1 @@
+{"version":3,"file":"layout-errors.d.ts","sourceRoot":"","sources":["../../src/chalkboard-layout/layout-errors.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AACH,MAAM,MAAM,yBAAyB,GACjC,gBAAgB,GAChB,aAAa,GACb,mBAAmB,GACnB,WAAW,CAAC;AAEhB,qBAAa,qBAAsB,SAAQ,KAAK;IAC9C,QAAQ,CAAC,IAAI,EAAE,yBAAyB,CAAC;gBAE7B,IAAI,EAAE,yBAAyB,EAAE,OAAO,EAAE,MAAM;CAK7D"}

@@ -29,7 +29,7 @@ export async function execute(input = {}, ctx) {
     const pythonExe = settings.pythonPath;
     if (!pythonExe) {
       throw new DocIntakeError(
-        "未在插件配置中指定 Python 环境 (pythonPath)。请打开插件配置面板填写。",
+        "未在应用设置中指定 Python 环境 (pythonPath)。请打开 App 设置面板填写。",
         {
           code: "PYTHON_PATH_NOT_CONFIGURED",
           details: { configKey: "pythonPath" },
@@ -52,8 +52,8 @@ export async function execute(input = {}, ctx) {
 
     // 没有配置任何凭证
     if (validationSettings.mineruCredentials.length === 0 && validationSettings.paddleTokens.length === 0) {
-      const text = "⚠️ 未配置任何 Token，请先在插件设置中配置 MinerU 或 PaddleOCR 的凭证。\n\n" +
-        "在设置 → 插件 → Doc Intake 中配置：\n" +
+      const text = "⚠️ 未配置任何 Token，请先在应用设置中配置 MinerU 或 PaddleOCR 的凭证。\n\n" +
+        "在设置 → 应用 → Doc Intake 中配置：\n" +
         "- mineruCredentials：MinerU Token（获取地址：https://mineru.net/apiManage/token）\n" +
         "- paddleTokens：PaddleOCR Token（获取地址：https://aistudio.baidu.com/account/accessToken）\n" +
         "多个 Token 用分号（;）分隔。";
@@ -142,7 +142,7 @@ function formatResults(data) {
   }
 
   if ((!data.mineru || data.mineru.length === 0) && (!data.paddle || data.paddle.length === 0)) {
-    lines.push("⚠️ 未配置任何 Token，请先在插件设置中配置凭证。");
+    lines.push("⚠️ 未配置任何 Token，请先在应用设置中配置凭证。");
   }
 
   const summary = data.summary || { total: 0, valid: 0 };

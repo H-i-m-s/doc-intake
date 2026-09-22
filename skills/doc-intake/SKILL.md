@@ -2,7 +2,7 @@
 name: doc-intake
 description: >
   必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。需要验证 MinerU/PaddleOCR Token 或 Key 时调用 doc_intake_validate。
-compatibility: "需要 Python 环境（用户需在插件设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
+compatibility: "需要 Python 环境（用户需在 App 设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
 metadata:
   default-enabled: true
 ---
@@ -59,7 +59,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 ## 3. 后端选择
 
-默认不传 `backend`，让插件按文件类型和设置中的降级链处理。
+默认不传 `backend`，让应用按文件类型和设置中的降级链处理。
 
 - PDF：默认本地后端；用户配置云端链时按设置顺序降级。
 - 图片：默认走 PaddleOCR 配置链。
@@ -90,7 +90,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 ## 6. 错误处理
 
-- `PYTHON_PATH_NOT_CONFIGURED`：告知用户到插件设置中配置 `pythonPath`。
+- `PYTHON_PATH_NOT_CONFIGURED`：告知用户到 App 设置中配置 `pythonPath`。
 - `INVALID_SOURCE` 或找不到文件：检查路径和文件格式，请用户提供有效路径。
 - `SPAWN_FAILED`、`PYTHON_ERROR`：说明 Python 环境或依赖启动失败，不要编造提取结果。
 - `CONVERTER_NOT_AVAILABLE`、`CONVERSION_FAILED`、`CONVERSION_OUTPUT_INVALID`、`CONVERSION_TIMEOUT`：说明旧版 Office 转换阶段失败；不要把它描述成现代 DOCX/XLSX 解析失败。优先检查 Office/pywin32 或显式配置的 LibreOffice provider。
