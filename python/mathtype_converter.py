@@ -1,7 +1,8 @@
 """MathType 公式转换器
 
 支持从 DOCX/PPTX 中提取 MathType OLE 对象并转换为 LaTeX。
-基于 MTEF-py 库实现。
+MTEF 两套各自独立：v5（MathType 4/6/7）走 mtef_v5 + mtef_v5_latex，v3（Equation
+Editor 3.x）走 mtef_v3 + mtef_v3_latex，都按官方规范实现。
 """
 from __future__ import annotations
 
@@ -30,10 +31,13 @@ class MathTypeConverter:
         self._mtef_available = None
     
     def _check_mtef_available(self) -> bool:
-        """检查 MTEF 库是否可用"""
+        """检查 MTEF 解析与渲染模块是否可用"""
         if self._mtef_available is None:
             try:
-                from mtef import MTEF
+                import mtef_v3          # noqa: F401
+                import mtef_v3_latex    # noqa: F401
+                import mtef_v5          # noqa: F401
+                import mtef_v5_latex    # noqa: F401
                 self._mtef_available = True
             except ImportError:
                 self._mtef_available = False
@@ -183,29 +187,57 @@ class MathTypeConverter:
             else:
                 mtef_body = eq_data[cbHdr:cbHdr + cbSize]
             
-            # 解析 MTEF
-            from mtef import MTEF
-            mtef = MTEF()
-            mtef.reader = io.BytesIO(mtef_body)
-            mtef.readRecord()
-            
-            if not mtef.Valid:
-                # v5 读不动：可能是 MTEF v3（Equation Editor 3.x，progId Equation.3）。
-                # 交给 v3 那一套；它失败仍返回 None，由上层退回公式预览图。
-                return self._parse_v3_to_latex(mtef_body)
-
-            mtef.makeAST()
-            latex = mtef.Translate()
-            
-            # 清理 LaTeX（移除调试信息）
-            if latex:
-                latex = self._clean_latex(latex)
-            
-            return latex
+            # 解析 MTEF：body 首字节就是版本号，按版本分派。这一步不再猜：
+            # v5 走 mtef_v5 + mtef_v5_latex，v3 走 mtef_v3 + mtef_v3_latex，
+            # 两边任何一步不确定都返回 None，由上层退回该公式的预览图。
+            if mtef_body and mtef_body[0] == 5:
+                return self._parse_v5_to_latex(mtef_body)
+            return self._parse_v3_to_latex(mtef_body)
             
         except Exception as e:
             return None
     
+    def _parse_v5_to_latex(self, mtef_body: bytes) -> Optional[str]:
+        """MTEF v5（MathType 4/6/7）→ LaTeX。
+
+        解析与渲染各一套：python/mathtype/mtef_v5.py 与 mtef_v5_latex.py。旧的
+        mtef.py（mtef-go 的 Python 移植）已不再走这条路径。任何一步不确定就返回
+        None，调用方退回该公式的预览图——宁可给一张对的图，不给一段错的 LaTeX。
+        """
+        try:
+            import mtef_v5
+            import mtef_v5_latex
+        except ImportError as e:
+            self.logger.warning("MTEF v5 模块不可用", error=str(e))
+            return None
+
+        # 只处理真正的 MTEF v5：body 首字节就是版本号。不加这道门的话，任何读不动的
+        # 数据都会被按 v5 读一遍，可能从垃圾字节里猜出错解。
+        if not mtef_body or mtef_body[0] != 5:
+            return None
+
+        try:
+            eq = mtef_v5.parse(mtef_body)
+        except Exception as e:
+            self.logger.warning("MTEF v5 解析异常", error=str(e))
+            return None
+
+        if not eq.complete or eq.errors:
+            # errors 里是「没遇到 END 就到底」「未知记录类型」这类提示：只要有一条，
+            # 说明有地方没读懂，宁可退回公式预览图
+            self.logger.warning("MTEF v5 没走满或有读不懂的记录，退回预览图",
+                                consumed=eq.consumed, total=eq.total,
+                                errors=eq.errors[:3])
+            return None
+
+        latex, notes = mtef_v5_latex.render(eq)
+        if not latex:
+            self.logger.warning("MTEF v5 渲染失败，退回预览图", notes=notes)
+            return None
+
+        self.logger.debug("MTEF v5 转出 LaTeX", preview=latex[:60])
+        return self._clean_latex(latex)
+
     def _parse_v3_to_latex(self, mtef_body: bytes) -> Optional[str]:
         """MTEF v3（Equation Editor 3.x）→ LaTeX。
 
