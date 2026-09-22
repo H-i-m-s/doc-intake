@@ -48,12 +48,12 @@ __all__ = ["render", "render_equation", "self_test"]
 # 自测基准：样本公式（Equation.3）渲染结果应与它的兜底预览图逐项一致
 EXPECTED_LATEX = (
     r"\begin{gathered} "
-    r"\left[ \begin{bmatrix} X \\ P(x) \end{bmatrix} \right]="
-    r"\left[ \begin{bmatrix} a_{1} & a_{2} \\ 0.01 & 0.99 \end{bmatrix} \right] \\ "
-    r"\left[ \begin{bmatrix} Y \\ P(y) \end{bmatrix} \right]="
-    r"\left[ \begin{bmatrix} b_{1} & b_{2} \\ 0.4 & 0.6 \end{bmatrix} \right] \\ "
-    r"\left[ \begin{bmatrix} Z \\ P(z) \end{bmatrix} \right]="
-    r"\left[ \begin{bmatrix} c_{1} & c_{2} \\ 0.5 & 0.5 \end{bmatrix} \right] "
+    r"\left[ \begin{matrix} X \\ P(x) \end{matrix} \right]="
+    r"\left[ \begin{matrix} a_{1} & a_{2} \\ 0.01 & 0.99 \end{matrix} \right] \\ "
+    r"\left[ \begin{matrix} Y \\ P(y) \end{matrix} \right]="
+    r"\left[ \begin{matrix} b_{1} & b_{2} \\ 0.4 & 0.6 \end{matrix} \right] \\ "
+    r"\left[ \begin{matrix} Z \\ P(z) \end{matrix} \right]="
+    r"\left[ \begin{matrix} c_{1} & c_{2} \\ 0.5 & 0.5 \end{matrix} \right] "
     r"\end{gathered}"
 )
 
@@ -363,6 +363,11 @@ class Renderer:
         return out
 
     def matrix(self, m) -> str:
+        """矩阵内容。
+
+        用 matrix 而不是 bmatrix：MTEF 里矩阵本身不带分隔符，那对括号来自外面
+        的围栏（tmBRACK 之类）。用 bmatrix 会自带一对括号，和围栏叠成两对。
+        """
         cells = m.resolved_cells
         if not cells:
             return self.fail("矩阵没有单元")
@@ -374,7 +379,7 @@ class Renderer:
         rows = []
         for i in range(0, len(rendered), cols):
             rows.append(" & ".join(rendered[i:i + cols]))
-        return r"\begin{bmatrix} %s \end{bmatrix}" % r" \\ ".join(rows)
+        return r"\begin{matrix} %s \end{matrix}" % r" \\ ".join(rows)
 
 
 def render(eq) -> Tuple[Optional[str], List[str]]:
