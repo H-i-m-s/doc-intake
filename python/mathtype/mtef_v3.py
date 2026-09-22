@@ -124,6 +124,14 @@ NUDGE_LARGE_REQUIRES_BOTH = True
 #   "byte"   —— 一个字段占一个字节。
 MATRIX_PARTS_MODE = "flow"
 
+# CHAR 记录的 xfLAUTO(0x01) 位是否开一个「附饰列表」。
+# True  —— 上游 mathtypejx 与 Ruby records3 一致的做法：该位表示后面跟一个以
+#          END 收尾的子列表。
+# False —— 不开列表，下标/附饰模板以兄弟身份跟在后面。
+# 实测：置 False 只能解到 163/457 字节、字符序列也对不上，所以 True 才是对的。
+# 这个开关留着只为记录那次实验：它排除了「子列表是误读」这个假设。
+CHAR_EMBELL_LIST = True
+
 # v3 的模板选择子编号（与 v5 不同）
 SELECTORS = {
     0: "tmANGLE", 1: "tmPAREN", 2: "tmBRACE", 3: "tmBRACK", 4: "tmBAR",
@@ -531,7 +539,7 @@ class _Parser:
             typeface = s.int8() + 128
             mt_code = s.mtef16()
             rec = CharRec(typeface=typeface, mt_code=mt_code, options=options, nudge=nudge)
-            if options & OPT_EMBELL:
+            if CHAR_EMBELL_LIST and options & OPT_EMBELL:
                 rec.embellishments = self.object_list()
             return rec
 

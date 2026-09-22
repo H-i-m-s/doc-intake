@@ -190,8 +190,10 @@ class MathTypeConverter:
             mtef.readRecord()
             
             if not mtef.Valid:
-                return None
-            
+                # v5 读不动：可能是 MTEF v3（Equation Editor 3.x，progId Equation.3）。
+                # 交给 v3 那一套；它失败仍返回 None，由上层退回公式预览图。
+                return self._parse_v3_to_latex(mtef_body)
+
             mtef.makeAST()
             latex = mtef.Translate()
             
@@ -204,6 +206,44 @@ class MathTypeConverter:
         except Exception as e:
             return None
     
+    def _parse_v3_to_latex(self, mtef_body: bytes) -> Optional[str]:
+        """MTEF v3（Equation Editor 3.x）→ LaTeX。
+
+        v3 的解析与渲染是完全独立的另一套，见 python/mathtype/mtef_v3.py 与
+        mtef_v3_latex.py 的文件头。任何一步不确定就返回 None，调用方会退回
+        该公式的预览图——宁可给一张对的图，不给一段错的 LaTeX。
+        """
+        try:
+            import mtef_v3
+            import mtef_v3_latex
+        except ImportError as e:
+            self.logger.warning("MTEF v3 模块不可用", error=str(e))
+            return None
+
+        # 只处理真正的 MTEF v3：body 首字节就是版本号。不加这道门的话，
+        # 任何「v5 解析失败」的公式都会被 v3 读一遍，可能从垃圾字节里猜出错解。
+        if not mtef_body or mtef_body[0] != 3:
+            return None
+
+        try:
+            eq = mtef_v3.parse(mtef_body)
+        except Exception as e:
+            self.logger.warning("MTEF v3 解析异常", error=str(e))
+            return None
+
+        if eq.header.mtef_version != 3 or not eq.complete:
+            self.logger.warning("MTEF v3 未走满，退回预览图",
+                                consumed=eq.consumed, total=eq.total)
+            return None
+
+        latex, notes = mtef_v3_latex.render(eq)
+        if not latex:
+            self.logger.warning("MTEF v3 渲染失败，退回预览图", notes=notes)
+            return None
+
+        self.logger.debug("MTEF v3 转出 LaTeX", preview=latex[:60])
+        return self._clean_latex(latex)
+
     def _clean_latex(self, latex: str) -> str:
         """清理 LaTeX 字符串"""
         if not latex:
@@ -253,12 +293,10 @@ class MathTypeConverter:
         for pattern in mathtype_patterns:
             result["mathtype_count"] += len(re.findall(pattern, xml_content, re.IGNORECASE))
         
-        # 统计 Equation.3（旧版，不支持）
+        # 统计 Equation.3（旧版）。注意：现在已经支持，由 mtef_v3 那一套解析；
+        # 这里只是计数，不再列为不支持的格式。
         equation3_count = len(re.findall(r'progid="Equation\.3"', xml_content, re.IGNORECASE))
         result["equation3_count"] = equation3_count
-        
-        if equation3_count > 0:
-            result["unsupported"].append(f"Equation.3 ({equation3_count}个)")
         
         return result
 
