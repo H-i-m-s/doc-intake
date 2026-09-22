@@ -15,7 +15,7 @@ Office 里的公式有四种来源，doc-intake 分四条路处理：
 | 来源 | 标识 | 处理方式 |
 |---|---|---|
 | OMML（Office 2007+ 原生公式） | `m:oMath` | `extractors/omml_converter.py` |
-| MathType（progId `Equation.DSMT4`） | MTEF v5 | `mathtype/mtef.py` |
+| MathType（progId `Equation.DSMT4`） | MTEF v5 | `mathtype/mtef_v5.py` + `mtef_v5_latex.py` |
 | **Equation Editor 3.x（本文）** | progId **`Equation.3`**，MTEF v3 | `mathtype/mtef_v3.py` + `mtef_v3_latex.py` |
 | 无法解析 | 任意 | 用公式的兜底预览图（WMF/EMF 转 PNG） |
 
@@ -189,7 +189,8 @@ $\int\nolimits_{-\infty}^{+\infty}$ 左右摆。
 python/
 ├── mathtype_converter.py      # 公式转换的统一入口，v3 / v5 在这里分流
 └── mathtype/
-    ├── mtef.py                # MTEF v5（Equation.DSMT4）
+    ├── mtef_v5.py             # MTEF v5 字节流 -> 记录树
+    ├── mtef_v5_latex.py       # 记录树 -> LaTeX
     ├── mtef_v3.py             # 本文主角：v3 字节流 -> 记录树
     ├── mtef_v3_latex.py       # 记录树 -> LaTeX
     ├── chars.py               # 码位 -> LaTeX 符号表
@@ -346,7 +347,7 @@ obj21（$\sum_i P_i$）、obj24（$\int\limits_R$）、obj25（分段函数的�
 1. **矩阵分隔线的 2 bit 取值顺序**（首字节高位还是低位）无从验证：语料里八个矩阵
    的分隔线取值全是 0。目前只按规范补齐字节数，取值不影响渲染。若有画了分隔线的
    样本，应补一条自测。
-2. **`SIZE` 与 `RULER` 记录的读法沿用 v5 的 `mtef.py`**（mathtypejx 与 Ruby gem 也
+2. **`SIZE` 与 `RULER` 记录的读法沿用 v5 的 `mtef_v5.py`**（mathtypejx 与 Ruby gem 也
    都这么委托），没有单独的 v3 样本可验。
 3. **限位「下限在前」是实测结论，与规范正文相反**。规范若在别处（或别的版本）另有
    说法，以字节为准，但要重新核对第四节的物证。

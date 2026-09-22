@@ -200,9 +200,9 @@ class MathTypeConverter:
     def _parse_v5_to_latex(self, mtef_body: bytes) -> Optional[str]:
         """MTEF v5（MathType 4/6/7）→ LaTeX。
 
-        解析与渲染各一套：python/mathtype/mtef_v5.py 与 mtef_v5_latex.py。旧的
-        mtef.py（mtef-go 的 Python 移植）已不再走这条路径。任何一步不确定就返回
-        None，调用方退回该公式的预览图——宁可给一张对的图，不给一段错的 LaTeX。
+        解析与渲染各一套：python/mathtype/mtef_v5.py 与 mtef_v5_latex.py。任何一步
+        不确定就返回 None，调用方退回该公式的预览图——宁可给一张对的图，不给一段错
+        的 LaTeX。
         """
         try:
             import mtef_v5

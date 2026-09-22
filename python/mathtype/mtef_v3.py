@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """MTEF v3（Equation Editor 3.x / MathType 3.x）记录解析器。
 
-本模块是 python/mathtype/mtef.py（只覆盖 v5）的并列另一套，不是它的分支条件。
+本模块与 mtef_v5.py（覆盖 v5）是并列的两套，不是同一份代码的分支条件。
 两套不能互相套用，因为差异不在某个字段，而在分层方式：
 
 1. 记录头编码不同。v3 把一个字节掰成两半：高 4 位是选项、低 4 位是记录类型；
    v5 是一个字节纯类型，选项另起一个字节。
-2. 分层方式不同。v3 真嵌套，子对象列表以 END 收尾；v5 是平铺流，靠 mtef.py
-   的 makeAST() 事后重建嵌套。
+2. 分层方式不同。v3 真嵌套，子对象列表以 END 收尾；v5 也是真嵌套，但记录头与
+   记录类型是另一套（原先的 mtef.py 把 v5 当平铺流读，已删除）。
 3. 文件头不同。v3 头只有 5 字节（版本/平台/产品/版本号/子版本号）；v5 头是
    5 字节 + 以 NUL 结尾的 mApplication 字符串 + 1 字节内联标志。
 4. 模板选择子编号是另一套。v3 里 14=分式、13=根号、15/44=上下标；v5 里
@@ -582,7 +582,7 @@ class _Parser:
                            name=bytes(name).decode("latin-1"))
 
         if rec_type == SIZE:
-            # 沿用 v5 的 mtef.py 的读法（上游也这么委托），见文件头「未验证项」
+            # 沿用 v5 侧 mtef_v5.py 的读法（上游也这么委托），见文件头「未验证项」
             sel = s.int8()
             if sel == 101:
                 return SizeRec(size_select=101, point_size=s.mtef16())

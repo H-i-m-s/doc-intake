@@ -4,8 +4,8 @@
 配合 python/mathtype/mtef_v3.py 使用：那个模块按官方规范把字节解成记录树，这里
 按规范「Template Subobject Order」把记录树翻成 LaTeX。
 
-为什么不复用 mtef.py 的 makeLatex
----------------------------------
+为什么不复用旧的 mtef.py 的 makeLatex（该模块已删除）
+----------------------------------------------------
 1. 它按 v5 的选择子编号分派（tmROOT=10、tmFRACT=11、tmSUB=27…），v3 是另一套
    （13 根号、14 分式、15/44 上下标）；在它里面加 v3 分支会把两套编号糅进同一
    个函数。
@@ -35,6 +35,23 @@ LINE 占位。用 30 个真实对象核对后采用下表：
 
 下限/上限的数量由 variation 决定（规范里的 tvXXX 变体表），空槽会以 xfNULL 的
 LINE 出现，所以按 variation 给出该有的角色序列，再按顺序取非空槽。
+
+函数名（fnFUNCTION 风格）
+------------------------
+规范的 CHAR 选项位 0x1 是 xfAUTO，但实测字母几乎都带这一位（语料 904 个字符里 349
+个），所以它认不出函数名。改用字体风格：typeface=2（fnFUNCTION）的字符才是函数名的
+组成部分。v3 语料里这样的连续字母只有 log（24 次）和 lim（1 次），此前按斜体字母串
+渲染（-logP(x)、lim 斜体），与预览图里的正体不符。现在凑成词，命中已知算符就出
+\log、\lim，其余按正体文本处理。
+
+括号也可能带这一风格（MathType 把函数参数的分隔符也标上），所以只认字母；非字母的
+fnFUNCTION 字符照常按符号表渲染。
+
+字体风格字段本身
+--------------
+解析器存的 typeface 已经去过偏置，渲染器早先又减了一遍 128，于是 fnTEXT 的正体包裹
+与「/mathmode 优先查找」都没生效（⋅、≤、× 这类只在 mathmode 表里有条目的符号退化
+成原样 Unicode）。已改成直接用 c.typeface。
 
 硬闸：任何一条不满足就返回 None，由调用方退回公式预览图——
 - 遇到没实现的模板 / 附饰：不猜；
@@ -128,6 +145,19 @@ EMBELLS = {
 }
 EMBELL_INLINE = {5, 6, 18}  # 撇号是后缀，不是包裹
 
+# 函数名：fnFUNCTION 风格的连续字母凑成词，命中就出算符（顺带把间距交给 LaTeX）。
+# 实测 v3 语料里只有 log（24 次）和 lim（1 次）两串。
+FUNC_OPS = {
+    "sin": r"\sin", "cos": r"\cos", "tan": r"\tan", "cot": r"\cot",
+    "sec": r"\sec", "csc": r"\csc", "arcsin": r"\arcsin", "arccos": r"\arccos",
+    "arctan": r"\arctan", "sinh": r"\sinh", "cosh": r"\cosh", "tanh": r"\tanh",
+    "log": r"\log", "ln": r"\ln", "lg": r"\lg", "exp": r"\exp",
+    "lim": r"\lim", "max": r"\max", "min": r"\min", "sup": r"\sup",
+    "inf": r"\inf", "det": r"\det", "gcd": r"\gcd", "deg": r"\deg",
+    "dim": r"\dim", "ker": r"\ker", "arg": r"\arg", "mod": r"\bmod",
+    "Pr": r"\Pr",
+}
+
 MARKER_NAMES = {"MarkerRec", "FutureRec", "FontRec", "SizeRec"}
 # 字号标记：FULL / SUB / SUB2 -> 目标层级（SUB2 是下下标的字号）
 SIZE_MARKERS = {10: 0, 11: 1, 12: 2}
@@ -174,7 +204,10 @@ class Renderer:
         `I(x` `SUB` `i` `)` 显示成下降的小 i（$I(x_i)$），而不是平排的 xi。
         """
         out: List[str] = []
-        for r in recs:
+        i = 0
+        n = len(recs)
+        while i < n:
+            r = recs[i]
             rt = getattr(r, "record_type", None)
             if type(r).__name__ == "MarkerRec" and rt in SIZE_MARKERS:
                 target = SIZE_MARKERS[rt]
@@ -184,8 +217,14 @@ class Renderer:
                 while self.size_depth < target:
                     out.append("_{")
                     self.size_depth += 1
+                i += 1
+                continue
+            if type(r).__name__ == "CharRec" and self.is_func_letter(r):
+                word, i = self.take_func_word(recs, i)
+                out.append(self.func_word(word))
                 continue
             out.append(self.record(r))
+            i += 1
         return join(out)
 
     def record(self, r) -> str:
@@ -211,13 +250,48 @@ class Renderer:
         """模板槽位渲染成非空字符串列表（按出现顺序）。"""
         return [s for s in (self.record(x) for x in t.slots) if s]
 
+    # ── 函数名 ───────────────────────────────────────
+
+    def is_func_letter(self, c) -> bool:
+        """fnFUNCTION 风格（typeface=2）的字母。"""
+        return (c.typeface == 2 and 0x20 <= c.mt_code < 0x7F
+                and chr(c.mt_code).isalpha())
+
+    def take_func_word(self, recs, i: int) -> Tuple[str, int]:
+        """从 i 起取连续的 fnFUNCTION 字母，凑成一个词。"""
+        word = []
+        while i < len(recs):
+            c = recs[i]
+            if type(c).__name__ == "CharRec" and self.is_func_letter(c):
+                word.append(chr(c.mt_code))
+                i += 1
+            else:
+                break
+        return "".join(word), i
+
+    def func_word(self, word: str) -> str:
+        if word in FUNC_OPS:
+            return FUNC_OPS[word]
+        return r"\mathrm{%s}" % word
+
     # ── 字符 ───────────────────────────────────────────────
 
+    @staticmethod
+    def _symbol_keys(mtcode: int, typeface: int) -> List[str]:
+        plain = "char/0x%04x" % mtcode
+        mathmode = plain + "/mathmode"
+        # 与 mtef_v5_latex 同口径：MTExtra / 空格风格先查 mathmode，其余先查原样。
+        # 之前只查一个键，⋅、≤、×、∞ 这类只在 mathmode 表里有条目的符号会退化成原样
+        # Unicode（渲染上不算错，但与 v5 侧不一致）。
+        if typeface in (11, 24):
+            return [mathmode, plain]
+        return [plain, mathmode]
+
     def symbol(self, mtcode: int, typeface: int) -> str:
-        extend = "/mathmode" if typeface in (11, 24) else ""
-        s = Chars.get("char/0x%04x%s" % (mtcode, extend))
-        if s:
-            return s
+        for key in self._symbol_keys(mtcode, typeface):
+            s = Chars.get(key)
+            if s:
+                return s
         ch = chr(mtcode)
         return SpecialChar.get(ch, ch)
 
@@ -225,8 +299,11 @@ class Renderer:
         if c.typeface == 22:
             # fnEXPAND：可拉伸的括号/大运算符字形，由模板自己输出
             return ""
-        text = self.symbol(c.mt_code, c.typeface - 128)
-        if c.typeface - 128 == 1:  # fnTEXT
+        # 注意：解析器存的 typeface 已经去过偏置（int8()+128），这里不要再减 128。
+        # 早先按原始字节处理，于是「fnTEXT 正体包裹」与「/mathmode 优先查找」两处都成了
+        # 死代码：⋅、≤、× 这类只在 mathmode 表里有条目的符号会退化成原样 Unicode。
+        text = self.symbol(c.mt_code, c.typeface)
+        if c.typeface == 1:  # fnTEXT
             text = "{ \\rm{ %s } }" % text
         for e in c.embellishments or []:
             text = self.apply_embellishment(text, e)
@@ -365,8 +442,12 @@ class Renderer:
         if not low and not up:
             return main
         key = "".join(main.split()).lower()
-        if key in LIM_OPS:
-            return "%s%s%s" % (LIM_OPS[key],
+        op = LIM_OPS.get(key)
+        if op is None and main in LIM_OPS.values():
+            # 主槽已经是渲染好的算符（fnFUNCTION 正体，例如 \lim）
+            op = main
+        if op is not None:
+            return "%s%s%s" % (op,
                                "_{%s}" % low if low else "",
                                "^{%s}" % up if up else "")
         out = main
