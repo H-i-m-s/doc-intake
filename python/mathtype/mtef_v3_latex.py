@@ -170,13 +170,40 @@ def _needs_gap(prev: str, cur: str) -> bool:
     return bool(cur) and bool(_CMD_TAIL.search(prev))
 
 
+def _ends_with_script(s: str) -> bool:
+    """s 是否以「_{...}」或「^{...}」这类上下标组结尾，用来挡 double subscript。
+
+    同一个基上挂两层同向上下标（\sigma_{Fd}^{2}_{i}）真 LaTeX 会报 Double subscript，
+    KaTeX 直接不渲染。join 遇到「上一段以脚本组结尾、这一段又以 _ 或 ^ 开头」就补一个
+    空组 {}，变成合法的 {}_{...}，视觉完全一致。"""
+    if not s.endswith("}"):
+        return False
+    depth = 0
+    i = len(s) - 1
+    while i >= 0:
+        ch = s[i]
+        if ch == "}":
+            depth += 1
+        elif ch == "{":
+            depth -= 1
+            if depth == 0:
+                return i > 0 and s[i - 1] in "_^"
+        elif ch == "\\":
+            i -= 1
+        i -= 1
+    return False
+
+
 def join(parts: List[str]) -> str:
     out: List[str] = []
     for s in parts:
         if not s:
             continue
-        if out and _needs_gap(out[-1], s):
-            out.append(" ")
+        if out:
+            if _needs_gap(out[-1], s):
+                out.append(" ")
+            elif s[0] in "_^" and _ends_with_script(out[-1]):
+                out.append("{}")
         out.append(s)
     return "".join(out)
 
