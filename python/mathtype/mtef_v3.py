@@ -29,25 +29,27 @@ mathtypejx (MIT) 的 records3.py / stream.py
 实测
 ----
 拿 D:\\Agent\\各种类型文件\\公式图表测试.pptx 里的 oleObject3.bin
-（progId=Equation.3，6656 字节）验证：457 字节 body 全部消耗完，解出的 59 个
-mt_code 与该公式的兜底预览图逐字对上（X/P(x)、a1 a2、0.01 0.99、Y/P(y)、
-b1 b2、0.4 0.6、Z/P(z)、c1 c2、0.5 0.5）。可用 `python mtef_v3.py --selftest`
-复现。
+（progId=Equation.3，6656 字节）验证：457 字节 body 全部消耗完，解出的 62 个
+mt_code 与该公式的兜底预览图逐字对上（X/P(x)、a₁ a₂、0.01 0.99、Y/P(y)、
+b₁ b₂、0.4 0.6、Z/P(z)、c₁ c₂、0.5 0.5）。六个矩阵的单元摊平结果也与预览图
+逐格一致。可用 `python mtef_v3.py --selftest` 复现。
 
-已知未闭合项（真接入前要定案）
-------------------------------
-1. MATRIX 的单元切分。分隔线的打包已经定案，见 MATRIX_PARTS_MODE 的 "flow"：
-   行与列的分隔线连成一条 nibble 流，2x2 占 3 字节。剩下没定的是「单元」
-   怎么分：实测样本里 2x1 矩阵的 cell 列表是 [CHAR X, LINE P(x), CHAR '[',
-   CHAR ']']（多出的是结尾的方括号字形），2x2 矩阵只切出 [CHAR a₁, FULL,
-   LINE]，0.01 / 0.99 落在矩阵外。字符和顺序已正确，缺的是分组边界——
-   疑似 FULL 是单元的引导标记、END 是单元的收尾。要更多 v3 样本才能定案。
-   MatrixRec.cell_count_anomaly 只作提示，不能当结论。
-2. nudge 的大值分支条件。上游 mathtypejx 要求「两字节同时为 -128」才走大值
-   分支；而 v5 的 mtef.py 用「任一为 -128」。同一段数据两种规则给出的记录长度
-   不同，会整体错位。本模块默认按上游（同时为 -128），可用模块常量
-   NUDGE_LARGE_REQUIRES_BOTH 切成另一种。
-3. SIZE / RULER 直接沿用了 v5 的读法（上游也是这么委托的），v3 是否完全一致
+矩阵单元的摊平是启发式，不是规范
+--------------------------------
+分隔线的打包已定案（MATRIX_PARTS_MODE 的 "flow"：行与列连成一条 nibble 流，
+2x2 占 3 字节）。单元怎么分则靠 resolve_matrix_cells()：穿过 LINE 容器，丢掉
+FULL / SUB 这类标记和 fnEXPAND 拉伸括号字形。这条规则从单个样本归纳而来，
+但六个矩阵（3 个 2x1、3 个 2x2）的摊平结果与该公式的兜底预览图逐格一致。
+它是启发式而非规范，调用方应拿 rows*cols 复核：对不上时
+MatrixRec.cell_count_anomaly 为 True，此时该退回公式预览图，别硬渲染。
+
+其它未单独验证项
+----------------
+1. nudge 的大值分支条件。上游 mathtypejx 要求「两字节同时为 -128」才走大值
+   分支；而 v5 的 mtef.py 用「任一为 -128」。两种规则给出的记录长度不同，会
+   整体错位。本模块默认按上游（同时为 -128），可用常量 NUDGE_LARGE_REQUIRES_BOTH
+   切成另一种。实测样本按默认读法才能整段对齐，但这个结论只有一份样本支撑。
+2. SIZE / RULER 直接沿用了 v5 的读法（上游也是这么委托的），v3 是否完全一致
    未单独验证。
 """
 
@@ -65,6 +67,7 @@ __all__ = [
     "extract_native_stream",
     "iter_chars",
     "char_sequence",
+    "resolve_matrix_cells",
     "self_test",
 ]
 
@@ -317,14 +320,23 @@ class MatrixRec:
         return max(0, self.rows) * max(0, self.cols)
 
     @property
+    def resolved_cells(self) -> List[object]:
+        """摊平后的单元项。见 resolve_matrix_cells()。"""
+        return resolve_matrix_cells(self)
+
+    @property
     def cell_count_anomaly(self) -> bool:
-        """见「已知未闭合项」第 1 条：样本里这个值是 True。"""
-        return self.expected_cells > 0 and len(self.cells) != self.expected_cells
+        """摊平后单元数仍与行列数不符时为 True。见「已知未闭合项」第 1 条。"""
+        n = len(self.resolved_cells)
+        return self.expected_cells > 0 and n != self.expected_cells
 
     def label(self) -> str:
+        n = len(self.resolved_cells)
         s = "MATRIX %dx%d rowparts=%s colparts=%s 单元 %d/%d" % (
             self.rows, self.cols, self.row_parts, self.col_parts,
-            len(self.cells), self.expected_cells)
+            n, self.expected_cells)
+        if len(self.cells) != n:
+            s += "（原始 %d 项，摊平后 %d）" % (len(self.cells), n)
         if self.cell_count_anomaly:
             s += "  <- 单元数与行列数不符"
         return s
@@ -624,6 +636,41 @@ def _walk(records: List[object]) -> Iterator[object]:
             child = getattr(r, attr, None)
             if child:
                 yield from _walk(child)
+
+
+def resolve_matrix_cells(matrix: "MatrixRec") -> List[object]:
+    """把矩阵子树摊平成单元项。
+
+    Equation.3 写出来的矩阵，单元外面常包着一层 LINE，而且夹有 FULL 标记；
+    直接数对象列表的项数会多出/少掉。摊平规则：
+
+    - 标记类记录（FULL / SUB / SUB2 / SYM / SUBSYM）丢掉；
+    - typeface == 22（fnEXPAND，可拉伸的括号字形）的 CHAR 丢掉；
+    - LINE 如果顶层混有非 CHAR 的内容，当作容器继续下钻；
+      顶层只有 CHAR（或为空）的就当一个单元（空的丢掉）。
+
+    这条规则在现有样本上成立（2x1 得 2 项、2x2 得 4 项），但它是从单个样本
+    归纳出来的启发式，不是规范。调用方拿到结果后应再比一下行列数。
+    """
+
+    def collect(records: List[object]) -> List[object]:
+        out: List[object] = []
+        for r in records:
+            if isinstance(r, MarkerRec):
+                continue
+            if isinstance(r, CharRec) and r.typeface == 22:
+                continue
+            if isinstance(r, LineRec):
+                inner = r.objects
+                if any(not isinstance(c, CharRec) for c in inner):
+                    out.extend(collect(inner))
+                elif inner:
+                    out.append(r)
+                continue
+            out.append(r)
+        return out
+
+    return collect(matrix.cells)
 
 
 def parse(body: bytes) -> V3Equation:
