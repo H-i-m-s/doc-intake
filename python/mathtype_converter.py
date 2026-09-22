@@ -231,9 +231,12 @@ class MathTypeConverter:
             self.logger.warning("MTEF v3 解析异常", error=str(e))
             return None
 
-        if eq.header.mtef_version != 3 or not eq.complete:
-            self.logger.warning("MTEF v3 未走满，退回预览图",
-                                consumed=eq.consumed, total=eq.total)
+        if eq.header.mtef_version != 3 or not eq.complete or eq.errors:
+            # errors 里是「没遇到 END 就到底」「未知记录类型」这类提示：
+            # 只要有一条，说明有地方没读懂，宁可退回公式预览图
+            self.logger.warning("MTEF v3 没走满或有读不懂的记录，退回预览图",
+                                consumed=eq.consumed, total=eq.total,
+                                errors=eq.errors[:3])
             return None
 
         latex, notes = mtef_v3_latex.render(eq)

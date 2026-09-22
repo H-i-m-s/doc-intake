@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """MTEF v3（Equation Editor 3.x / MathType 3.x）记录解析器。
 
-本模块是 python/mathtype/mtef.py（只覆盖 v5）的**并列另一套**，不是它的分支
-条件。两套不能互相套用，因为差异不在某个字段，而在分层方式：
+本模块是 python/mathtype/mtef.py（只覆盖 v5）的并列另一套，不是它的分支条件。
+两套不能互相套用，因为差异不在某个字段，而在分层方式：
 
 1. 记录头编码不同。v3 把一个字节掰成两半：高 4 位是选项、低 4 位是记录类型；
    v5 是一个字节纯类型，选项另起一个字节。
@@ -20,37 +20,44 @@ END，几十字节内就"正常"结束，得到一个空公式。
 
 规则依据
 --------
-mathtypejx (MIT) 的 records3.py / stream.py
-    https://github.com/a917470154/mathtypejx
-其上游是 jure/mathtype 的 Ruby records3/*.rb（`records3/mtef.rb` 等）。
-本文件是按上述公开实现重写的 Python 版本，保留了署名。正式并入本仓库前，
-请先确认 doc-intake 的许可与 MIT 兼容。
+MathType 官方 MTEF v3 规范（Equation Editor 3.x / MathType 3.5）：
+    https://rtf2latex2e.sourceforge.net/MTEF3.html
+该页是 rtf2latex2e 项目从 Wayback 抢救下来的 MathType 技术文档存档。本模块的
+分层、选项位、nudge、字号、矩阵分隔线打包，都按该规范实现。
+
+旁证是 mathtypejx (MIT) 的 records3.py / stream.py（上游为 jure/mathtype 的
+Ruby records3/*.rb）。两者都用「子对象列表读到 END 就收」的贪心读法，互相吻合
+不构成正确性证据，所以只作旁证。
 
 实测
 ----
-拿 D:\\Agent\\各种类型文件\\公式图表测试.pptx 里的 oleObject3.bin
-（progId=Equation.3，6656 字节）验证：457 字节 body 全部消耗完，解出的 62 个
-mt_code 与该公式的兜底预览图逐字对上（X/P(x)、a₁ a₂、0.01 0.99、Y/P(y)、
-b₁ b₂、0.4 0.6、Z/P(z)、c₁ c₂、0.5 0.5）。六个矩阵的单元摊平结果也与预览图
-逐格一致。可用 `python mtef_v3.py --selftest` 复现。
+两份语料合计 30 个对象，全部逐字节走满：
+1. D:\\Agent\\各种类型文件\\公式图表测试.pptx 的 oleObject3.bin；
+2. D:\\Agent\\各种类型文件\\[2]第二章_信息与信息论.pptx 的 30 个 Equation.3
+   对象（product=1 Equation Editor，产品版本 3.1）。
+自测：python mtef_v3.py --selftest
 
-矩阵单元的摊平是启发式，不是规范
---------------------------------
-分隔线的打包已定案（MATRIX_PARTS_MODE 的 "flow"：行与列连成一条 nibble 流，
-2x2 占 3 字节）。单元怎么分则靠 resolve_matrix_cells()：穿过 LINE 容器，丢掉
-FULL / SUB 这类标记和 fnEXPAND 拉伸括号字形。这条规则从单个样本归纳而来，
-但六个矩阵（3 个 2x1、3 个 2x2）的摊平结果与该公式的兜底预览图逐格一致。
-它是启发式而非规范，调用方应拿 rows*cols 复核：对不上时
-MatrixRec.cell_count_anomaly 为 True，此时该退回公式预览图，别硬渲染。
+矩阵
+----
+MATRIX 的子对象列表按规范是「每格一个 LINE，自左到右、自上而下」。列表里会夹
+着 FULL / SUB 这类标记记录（本来就不产出内容），统计单元时跳过。**不需要任何
+"摊平"子结构的规则**——早期版本之所以要摊平，是因为 CHAR 的附饰位读错了（见
+下条），把后面的记录吞进了矩阵列表。
 
-其它未单独验证项
-----------------
-1. nudge 的大值分支条件。上游 mathtypejx 要求「两字节同时为 -128」才走大值
-   分支；而 v5 的 mtef.py 用「任一为 -128」。两种规则给出的记录长度不同，会
-   整体错位。本模块默认按上游（同时为 -128），可用常量 NUDGE_LARGE_REQUIRES_BOTH
-   切成另一种。实测样本按默认读法才能整段对齐，但这个结论只有一份样本支撑。
-2. SIZE / RULER 直接沿用了 v5 的读法（上游也是这么委托的），v3 是否完全一致
-   未单独验证。
+CHAR 的附饰位
+-------------
+规范：CHAR 的 tag 选项位 0x1 是 xfAUTO（可作函数名识别），0x2 才是 xfEMBELL
+（后跟一个以 END 收尾的附饰列表）。这一位一度读成 0x1，而字母几乎都带 xfAUTO，
+于是每个字母后面都多吞一个列表，把后续内容（括号、等号）吞进子结构，渲染出
+x_{i) 这类错位结果。当时只有一道公式，这个错恰好被"围栏裁到收尾字形"的补救
+规则掩盖了。
+
+"围栏裁到收尾字形"已删除：规范说明围栏类（ParBoxClass）的子对象是「主槽位、
+左围栏字符、右围栏字符」，括号由模板自己携带，不需要裁切。
+
+选项位按记录类型解释
+--------------------
+LINE 的 0x1 是 xfNULL（没有子对象，连 END 也省），与 CHAR 的 0x1 含义不同。
 """
 
 from __future__ import annotations
@@ -62,12 +69,15 @@ __all__ = [
     "ByteStream",
     "V3Header",
     "V3Equation",
+    "MatrixRec",
     "parse",
     "parse_equation_native",
     "extract_native_stream",
     "iter_chars",
     "char_sequence",
-    "resolve_matrix_cells",
+    "matrix_cells",
+    "template_class",
+    "TMPL_CLASSES",
     "self_test",
 ]
 
@@ -97,64 +107,70 @@ TYPE_NAMES = {
     12: "SUB2", 13: "SYM", 14: "SUBSYM", 15: "FUTURE",
 }
 
-# 选项位：在 tag 字节的高 4 位
-OPT_NUDGE = 0x08        # xfLMOVE，后跟 nudge
-OPT_EMBELL = 0x01       # CHAR 记录：后跟附饰列表
-OPT_FUNC = 0x02         # CHAR 记录
-OPT_LINE_NULL = 0x01    # LINE 记录：xfNULL，没有子对象
-OPT_LINE_RULER = 0x02   # LINE/PILE：xfRULER，后跟标尺
-OPT_LINE_LSPACE = 0x04  # LINE 记录：xfLSPACE，后跟行距
+# 选项位在 tag 字节的高 4 位。同一数值在不同记录类型上含义不同，按类型解释。
+OPT_NUDGE = 0x08        # 所有结构记录：xfLMOVE，后跟 nudge
+OPT_CHAR_FUNC = 0x01    # CHAR：xfAUTO，可作为函数名识别
+OPT_EMBELL = 0x02       # CHAR：xfEMBELL，后跟附饰列表
+OPT_LINE_NULL = 0x01    # LINE：xfNULL，没有子对象，也没有 END
+OPT_LINE_RULER = 0x02   # LINE / PILE：xfRULER，后跟标尺
+OPT_LINE_LSPACE = 0x04  # LINE：xfLSPACE，后跟行距
 
 # OLE 复合文件里 Equation Native 流的头长度（EQNOLEFILEHDR）
 OLE_HEADER_SIZE = 28
 # MTEF v3 头长度：没有 mApplication、没有内联标志
 V3_HEADER_SIZE = 5
 
-# 见「已知未闭合项」第 2 条
-NUDGE_LARGE_REQUIRES_BOTH = True
-
-# MATRIX 行/列分隔线的打包方式。见「已知未闭合项」第 1 条。
-#   "flow"   —— 行与列的分隔线连成一条 nibble 流，末尾补一次字节。
-#               实测样本（2x2）行 3 + 列 3 = 6 个 nibble = 3 字节，只有这一种能把
-#               a₁ 的 'a' 保留下来。默认。
-#   "nibble" —— 上游 mathtypejx 的读法：每个数组各自按 nibble 读再对齐，2x2 会
-#               吃 4 字节，多吞 1 字节，导致矩阵第一格错位。
-#   "bit2"   —— Ruby gem records3/matrix.rb 的读法：字段各占 2 bit。对应 MathType
-#               3.x 写的另一套方言，对 Equation.3 样本会错位。
-#   "byte"   —— 一个字段占一个字节。
-MATRIX_PARTS_MODE = "flow"
-
-# CHAR 记录的 xfLAUTO(0x01) 位是否开一个「附饰列表」。
-# True  —— 上游 mathtypejx 与 Ruby records3 一致的做法：该位表示后面跟一个以
-#          END 收尾的子列表。
-# False —— 不开列表，下标/附饰模板以兄弟身份跟在后面。
-# 实测：置 False 只能解到 163/457 字节、字符序列也对不上，所以 True 才是对的。
-# 这个开关留着只为记录那次实验：它排除了「子列表是误读」这个假设。
-CHAR_EMBELL_LIST = True
-
-# v3 的模板选择子编号（与 v5 不同）
+# v3 的模板选择子编号（规范里的「Template Selectors and Variations」表）
 SELECTORS = {
     0: "tmANGLE", 1: "tmPAREN", 2: "tmBRACE", 3: "tmBRACK", 4: "tmBAR",
-    5: "tmDBAR", 6: "tmFLOOR", 7: "tmCEILING", 8: "tmINTERVAL",
-    9: "tmINTERVAL", 10: "tmINTERVAL", 11: "tmINTERVAL", 12: "tmINTERVAL",
-    13: "tmROOT", 14: "tmFRACT", 15: "tmSCRIPT", 16: "tmUBAR", 17: "tmOBAR",
-    18: "tmARROW", 19: "tmARROW", 20: "tmARROW", 21: "tmINTEG", 22: "tmINTEG",
-    23: "tmINTEG", 24: "tmINTEG", 25: "tmINTEG", 26: "tmINTEG", 27: "tmHBRACE",
-    28: "tmHBRACE", 29: "tmSUM", 30: "tmSUM", 31: "tmPROD", 32: "tmPROD",
-    33: "tmCOPROD", 34: "tmCOPROD", 35: "tmUNION", 36: "tmUNION",
-    37: "tmINTER", 38: "tmINTER", 39: "tmLIM", 40: "tmLDIV", 41: "tmFRACT",
-    42: "tmINTOP", 43: "tmSUMOP", 44: "tmSCRIPT", 45: "tmDIRAC", 46: "tmVEC",
-    47: "tmVEC", 48: "tmBOX",
+    5: "tmDBAR", 6: "tmFLOOR", 7: "tmCEILING", 8: "tmLBLB", 9: "tmRBRB",
+    10: "tmRBLB", 11: "tmLBRP", 12: "tmLPRB", 13: "tmROOT", 14: "tmFRACT",
+    15: "tmSCRIPT", 16: "tmUBAR", 17: "tmOBAR", 18: "tmLARROW", 19: "tmRARROW",
+    20: "tmBARROW", 21: "tmSINT", 22: "tmDINT", 23: "tmTINT", 24: "tmSSINT",
+    25: "tmDSINT", 26: "tmTSINT", 27: "tmUHBRACE", 28: "tmLHBRACE", 29: "tmSUM",
+    30: "tmISUM", 31: "tmPROD", 32: "tmIPROD", 33: "tmCOPROD", 34: "tmICOPROD",
+    35: "tmUNION", 36: "tmIUNION", 37: "tmINTER", 38: "tmIINTER", 39: "tmLIM",
+    40: "tmLDIV", 41: "tmSLFRACT", 42: "tmINTOP", 43: "tmSUMOP", 44: "tmLSCRIPT",
+    45: "tmDIRAC", 46: "tmUARROW", 47: "tmOARROW", 48: "tmOARC",
 }
+
+# 选择子 -> 槽位类。类决定子对象的种类与顺序，见规范「Template Subobject Order」。
+TMPL_CLASSES = {}
+for _i in range(0, 13):
+    TMPL_CLASSES[_i] = "ParBox"       # 主槽位、左围栏字符、右围栏字符
+TMPL_CLASSES[13] = "RootBox"          # 主槽位、被开方槽位
+TMPL_CLASSES[14] = "FracBox"          # 分子槽位、分母槽位
+TMPL_CLASSES[15] = "ScrBox"           # 下标槽位、上标槽位
+TMPL_CLASSES[16] = "BarBox"           # 主槽位
+TMPL_CLASSES[17] = "BarBox"
+for _i in (18, 19, 20):
+    TMPL_CLASSES[_i] = "ArroBox"      # 主槽位、箭头字符
+for _i in (21, 22, 23, 24, 25, 26, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 42, 43):
+    TMPL_CLASSES[_i] = "BigOp"        # 主槽位、上槽位、下槽位、大运算符字符
+TMPL_CLASSES[27] = "HBrBox"           # 主槽位、小槽位、花括号字符
+TMPL_CLASSES[28] = "HBrBox"
+TMPL_CLASSES[39] = "LimBox"           # 主槽位、下槽位、上槽位
+TMPL_CLASSES[40] = "LDivBox"          # 被除槽位、商槽位
+TMPL_CLASSES[41] = "SlashBox"         # 分子槽位、分母槽位
+TMPL_CLASSES[44] = "ScrBox"           # 前置上下标：下标槽位、上标槽位
+TMPL_CLASSES[45] = "DiracBox"         # 左槽位、右槽位、左尖括号、竖线、右尖括号
+TMPL_CLASSES[46] = "VectorBox"        # 主槽位
+TMPL_CLASSES[47] = "VectorBox"
+TMPL_CLASSES[48] = "ArcBox"           # 主槽位
+del _i
 
 # 选择子 15 和 44 是「上下标」类，具体是哪种由 variation 决定
 SCRIPT_VARIATIONS = {0: "tmSUP", 1: "tmSUB", 2: "tmSUBSUP"}
 
 
+def template_class(index: int) -> str:
+    return TMPL_CLASSES.get(index, "?")
+
+
 def selector_name(index: int, variation: int) -> str:
     """把 v3 的选择子编号翻成可读名字。"""
     if index in (15, 44):
-        return SCRIPT_VARIATIONS.get(variation, "tmSUB")
+        return SCRIPT_VARIATIONS.get(variation, "tmSCRIPT")
     return SELECTORS.get(index, "tmUNKNOWN_%d" % index)
 
 
@@ -162,16 +178,12 @@ def selector_name(index: int, variation: int) -> str:
 
 
 class ByteStream:
-    """带半字节精度的 MTEF 字节流读取器。
-
-    nibble() 与 uint8() 可以混用：读完一个 nibble 后再读字节时，会把挂起的
-    半个字节补齐。MATRIX 的分隔线是 2 bit 打包的，所以这个能力是必需的。
-    """
+    """MTEF 字节流读取器。标签与选项混在一个字节里，但没有跨字节的半字节字段，
+    所以按字节读就够了。"""
 
     def __init__(self, data: bytes):
         self.data = data
         self.pos = 0
-        self._pending_nibble: Optional[int] = None
 
     @property
     def remaining(self) -> int:
@@ -182,13 +194,6 @@ class ByteStream:
             raise EOFError("读 %d 字节越界：pos=%d 长度=%d" % (n, self.pos, len(self.data)))
 
     def uint8(self) -> int:
-        if self._pending_nibble is not None:
-            low = self._pending_nibble
-            self._pending_nibble = None
-            self._need(1)
-            high = self.data[self.pos]
-            self.pos += 1
-            return (high << 4) | low
         self._need(1)
         b = self.data[self.pos]
         self.pos += 1
@@ -212,22 +217,6 @@ class ByteStream:
         lo = self.uint8()
         hi = self.uint8()
         return (hi << 8) | lo
-
-    def nibble(self) -> int:
-        """读一个半字节（4 bit），先高后低。"""
-        if self._pending_nibble is not None:
-            v = self._pending_nibble
-            self._pending_nibble = None
-            return v
-        self._need(1)
-        b = self.data[self.pos]
-        self.pos += 1
-        self._pending_nibble = b & 0x0F
-        return (b >> 4) & 0x0F
-
-    def align_byte(self) -> None:
-        """丢弃挂起的半字节，对齐到下一个字节边界。"""
-        self._pending_nibble = None
 
     def skip(self, n: int) -> None:
         self._need(n)
@@ -272,9 +261,14 @@ class TmplRec:
     nudge: Optional[Tuple[int, int]] = None
     slots: List[object] = field(default_factory=list)
 
+    @property
+    def tmpl_class(self) -> str:
+        return template_class(self.selector_index)
+
     def label(self) -> str:
-        s = "TMPL #%d %s var=%d tattr=0x%02X" % (
-            self.selector_index, self.selector, self.variation, self.template_options)
+        s = "TMPL #%d %s var=%d 类=%s tattr=0x%02X" % (
+            self.selector_index, self.selector, self.variation,
+            self.tmpl_class, self.template_options)
         if self.nudge:
             s += " nudge%s" % (self.nudge,)
         return s
@@ -329,12 +323,12 @@ class MatrixRec:
 
     @property
     def resolved_cells(self) -> List[object]:
-        """摊平后的单元项。见 resolve_matrix_cells()。"""
-        return resolve_matrix_cells(self)
+        """单元项，按规范就是子对象列表里的那些 LINE。见 matrix_cells()。"""
+        return matrix_cells(self)
 
     @property
     def cell_count_anomaly(self) -> bool:
-        """摊平后单元数仍与行列数不符时为 True。见「已知未闭合项」第 1 条。"""
+        """单元项数与行列数不符时为 True。"""
         n = len(self.resolved_cells)
         return self.expected_cells > 0 and n != self.expected_cells
 
@@ -344,7 +338,7 @@ class MatrixRec:
             self.rows, self.cols, self.row_parts, self.col_parts,
             n, self.expected_cells)
         if len(self.cells) != n:
-            s += "（原始 %d 项，摊平后 %d）" % (len(self.cells), n)
+            s += "（列表里另有 %d 项标记）" % (len(self.cells) - n)
         if self.cell_count_anomaly:
             s += "  <- 单元数与行列数不符"
         return s
@@ -386,7 +380,7 @@ class SizeRec:
 
 @dataclass
 class MarkerRec:
-    """FULL / SUB / SUB2 / SYM / SUBSYM：无数据。"""
+    """FULL / SUB / SUB2 / SYM / SUBSYM：无数据，只影响字号。"""
 
     record_type: int
 
@@ -423,6 +417,7 @@ class V3Equation:
     records: List[object] = field(default_factory=list)
     consumed: int = 0
     total: int = 0
+    errors: List[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
@@ -456,24 +451,20 @@ class _Parser:
 
     # -- nudge --
     def nudge(self) -> Tuple[int, int]:
-        small_dx = self.s.int8()
-        small_dy = self.s.int8()
-        if NUDGE_LARGE_REQUIRES_BOTH:
-            big = (small_dx == -128 and small_dy == -128)
-        else:
-            big = (small_dx == -128 or small_dy == -128)
-        if big:
-            dx = self.s.mtef16()
-            dy = self.s.mtef16()
-            return (dx, dy)
-        return (small_dx - 128, small_dy - 128)
+        """小的 nudge 是 2 个字节，各自偏置 128；放不下时先写两个 128，
+        再跟两个 16 位无偏值（规范「Nudge values」）。"""
+        a = self.s.uint8()
+        b = self.s.uint8()
+        if a == 128 and b == 128:
+            return (self.s.mtef16(), self.s.mtef16())
+        return (a - 128, b - 128)
 
     # -- 标尺 --
     def ruler(self) -> str:
         n = self.s.int8()
         if n < 0:
             n = 0
-        n = min(n, 20)  # 与上游一致：防止畸形数据把流读穿
+        n = min(n, 20)  # 防止畸形数据把流读穿
         for _ in range(n):
             self.s.int8()
             self.s.mtef16()
@@ -481,34 +472,16 @@ class _Parser:
 
     # -- 行/列分隔线 --
     def parts(self, rows: int, cols: int):
-        """读行/列分隔线，返回 (row_parts, col_parts)。打包方式见 MATRIX_PARTS_MODE。"""
+        """行/列分隔线各 行(列)+1 个值，每个 2 bit，各自补齐到字节边界。"""
         s = self.s
-        n_row, n_col = rows + 1, cols + 1
-        if n_row <= 0 or n_col <= 0:
-            return [], []
-        if MATRIX_PARTS_MODE == "byte":
-            return ([s.uint8() for _ in range(n_row)],
-                    [s.uint8() for _ in range(n_col)])
-        if MATRIX_PARTS_MODE == "bit2":
-            def take(count):
-                nbytes = (count * 2 + 7) // 8
-                raw = [s.uint8() for _ in range(nbytes)]
-                bits = "".join(format(b, "08b") for b in raw)
-                return [int(bits[i * 2:i * 2 + 2], 2) for i in range(count)]
-            return take(n_row), take(n_col)
-        if MATRIX_PARTS_MODE == "nibble":
-            # 上游 mathtypejx：每个数组各自 nibble + 对齐
-            def take(count):
-                out = [s.nibble() & 0x3 for _ in range(count)]
-                if (count * 2) % 8:
-                    s.align_byte()
-                return out
-            return take(n_row), take(n_col)
-        # flow：行列连成一条 nibble 流，末尾只补一次
-        fields = [s.nibble() for _ in range(n_row + n_col)]
-        if ((n_row + n_col) * 4) % 8:
-            s.align_byte()
-        return fields[:n_row], fields[n_row:]
+
+        def take(count: int) -> List[int]:
+            nbytes = (count * 2 + 7) // 8
+            raw = [s.uint8() for _ in range(nbytes)]
+            bits = "".join(format(b, "08b") for b in raw)
+            return [int(bits[i * 2:i * 2 + 2], 2) for i in range(count)]
+
+        return take(max(0, rows) + 1), take(max(0, cols) + 1)
 
     # -- 子对象列表：遇 END 收尾 --
     def object_list(self) -> List[object]:
@@ -539,7 +512,7 @@ class _Parser:
             typeface = s.int8() + 128
             mt_code = s.mtef16()
             rec = CharRec(typeface=typeface, mt_code=mt_code, options=options, nudge=nudge)
-            if CHAR_EMBELL_LIST and options & OPT_EMBELL:
+            if options & OPT_EMBELL:
                 rec.embellishments = self.object_list()
             return rec
 
@@ -586,7 +559,6 @@ class _Parser:
             v_just = s.int8()
             rows = max(0, s.int8())
             cols = max(0, s.int8())
-            # 行/列分隔线，各 行(列)+1 个字段。打包方式见 MATRIX_PARTS_MODE
             row_parts, col_parts = self.parts(rows, cols)
             rec = MatrixRec(rows=rows, cols=cols, valign=valign, h_just=h_just,
                             v_just=v_just, row_parts=row_parts,
@@ -610,10 +582,10 @@ class _Parser:
                            name=bytes(name).decode("latin-1"))
 
         if rec_type == SIZE:
-            # 沿用上游的委托实现（与 v5 同形，见「已知未闭合项」第 3 条）
+            # 沿用 v5 的 mtef.py 的读法（上游也这么委托），见文件头「未验证项」
             sel = s.int8()
             if sel == 101:
-                return SizeRec(size_select=101, point_size=-s.mtef16())
+                return SizeRec(size_select=101, point_size=s.mtef16())
             if sel == 100:
                 lsize = s.uint8()
                 dsize = s.mtef16()
@@ -625,7 +597,7 @@ class _Parser:
             return MarkerRec(record_type=rec_type)
 
         if rec_type == RULER:
-            return EmbellRec(code=-1, options=options)  # 占位：v3 的独立标尺记录
+            return MarkerRec(record_type=rec_type)  # 独立标尺记录，无内容
 
         if rec_type == FUTURE:
             length = s.mt_uint()
@@ -646,39 +618,16 @@ def _walk(records: List[object]) -> Iterator[object]:
                 yield from _walk(child)
 
 
-def resolve_matrix_cells(matrix: "MatrixRec") -> List[object]:
-    """把矩阵子树摊平成单元项。
+def matrix_cells(matrix: "MatrixRec") -> List[object]:
+    """矩阵的单元。
 
-    Equation.3 写出来的矩阵，单元外面常包着一层 LINE，而且夹有 FULL 标记；
-    直接数对象列表的项数会多出/少掉。摊平规则：
-
-    - 标记类记录（FULL / SUB / SUB2 / SYM / SUBSYM）丢掉；
-    - typeface == 22（fnEXPAND，可拉伸的括号字形）的 CHAR 丢掉；
-    - LINE 如果顶层混有非 CHAR 的内容，当作容器继续下钻；
-      顶层只有 CHAR（或为空）的就当一个单元（空的丢掉）。
-
-    这条规则在现有样本上成立（2x1 得 2 项、2x2 得 4 项），但它是从单个样本
-    归纳出来的启发式，不是规范。调用方拿到结果后应再比一下行列数。
+    规范：MATRIX 的子对象列表就是「每格一个 LINE，自左到右、自上而下」。列表里
+    夹杂的标记记录（FULL / SUB / SUB2 / SYM / SUBSYM）与 future 记录不产出内容，
+    直接跳过。若结果个数与 rows*cols 不符，MatrixRec.cell_count_anomaly 为 True，
+    调用方应退回公式预览图，不要硬渲染。
     """
-
-    def collect(records: List[object]) -> List[object]:
-        out: List[object] = []
-        for r in records:
-            if isinstance(r, MarkerRec):
-                continue
-            if isinstance(r, CharRec) and r.typeface == 22:
-                continue
-            if isinstance(r, LineRec):
-                inner = r.objects
-                if any(not isinstance(c, CharRec) for c in inner):
-                    out.extend(collect(inner))
-                elif inner:
-                    out.append(r)
-                continue
-            out.append(r)
-        return out
-
-    return collect(matrix.cells)
+    return [c for c in matrix.cells
+            if type(c).__name__ not in ("MarkerRec", "FutureRec")]
 
 
 def parse(body: bytes) -> V3Equation:
@@ -686,10 +635,9 @@ def parse(body: bytes) -> V3Equation:
     parser = _Parser(body)
     header = parser.header()
     records = parser.object_list()
-    eq = V3Equation(header=header, records=records,
-                    consumed=parser.s.pos, total=len(body))
-    eq.errors = parser.errors  # type: ignore[attr-defined]
-    return eq
+    return V3Equation(header=header, records=records,
+                      consumed=parser.s.pos, total=len(body),
+                      errors=parser.errors)
 
 
 def parse_equation_native(stream: bytes) -> V3Equation:
@@ -751,9 +699,8 @@ def char_sequence(eq: V3Equation) -> List[int]:
 
 SAMPLE_PPTX = r"D:\Agent\各种类型文件\公式图表测试.pptx"
 SAMPLE_EMBED = "ppt/embeddings/oleObject3.bin"
+CORPUS_PPTX = r"D:\Agent\各种类型文件\[2]第二章_信息与信息论.pptx"
 # 实测得到的字符序列，作为自测基准。
-# 注意 'a' 在 '1' 前面：a₁ 是「CHAR 'a' + 附饰里的 tmSUB 模板」；
-# 早先按 mathtypejx 的逐数组对齐读法会多吃 1 字节，把 a 吞掉，得到 =1a2。
 EXPECTED_CODES = [
     0x0058, 0x0050, 0x0028, 0x0078, 0x0029, 0x005B, 0x005D, 0x003D,
     0x0061, 0x0031, 0x0061, 0x0032,
@@ -765,6 +712,8 @@ EXPECTED_CODES = [
     0x0063, 0x0031, 0x0063, 0x0032,
     0x0030, 0x002E, 0x0035, 0x0030, 0x002E, 0x0035, 0x005B, 0x005D,
 ]
+# 语料的规模（对象总数 / 有真实 MTEF 的个数），用来防止语料被挪走后自测假通过
+CORPUS_EXPECTED = (30, 29)
 
 
 def _print_tree(records: List[object], depth: int = 0, limit: int = 400) -> int:
@@ -797,12 +746,68 @@ def _demo(stream: bytes) -> None:
     print("字符 %d 个：%s" % (len(codes), glyphs))
     for e in getattr(eq, "errors", [])[:5]:
         print("提示：%s" % e)
-    if eq.anomaly:
-        print("警告：有 MATRIX 的单元数与行列数不符 —— 见文件头「已知未闭合项」第 1 条")
+    for m in _walk(eq.records):
+        if isinstance(m, MatrixRec) and m.cell_count_anomaly:
+            print("警告：%s" % m.label())
+
+
+def _corpus_report() -> int:
+    """把 29 个公式语料跑一遍，报告解析质量。"""
+    import io
+    import os
+    import zipfile
+
+    try:
+        import olefile
+    except ImportError:
+        print("没有 olefile，跳过语料自测")
+        return 2
+
+    if not os.path.exists(CORPUS_PPTX):
+        print("语料不存在，跳过：%s" % CORPUS_PPTX)
+        return 2
+
+    total = real = clean = anomaly = 0
+    with zipfile.ZipFile(CORPUS_PPTX) as z:
+        names = sorted((n for n in z.namelist()
+                        if n.startswith("ppt/embeddings/") and n.endswith(".bin")),
+                       key=lambda s: int("".join(c for c in s if c.isdigit()) or 0))
+        for name in names:
+            total += 1
+            ole = olefile.OleFileIO(io.BytesIO(z.read(name)))
+            raw = None
+            try:
+                for entry in ole.listdir():
+                    if "/".join(entry).split("/")[-1].strip("\x01") == "Equation Native":
+                        raw = ole.openstream("/".join(entry)).read()
+                        break
+            finally:
+                ole.close()
+            if not raw or len(raw) < 33 or raw[28] != 3:
+                continue
+            cb_body = int.from_bytes(raw[8:12], "little")
+            if cb_body <= 12:
+                continue  # 空壳对象：MTEF 里只有 FULL + END
+            real += 1
+            eq = parse_equation_native(raw)
+            if eq.complete and not eq.errors:
+                clean += 1
+            if eq.anomaly:
+                anomaly += 1
+
+    print("语料：%s" % CORPUS_PPTX)
+    print("对象 %d 个，其中 v3 有数据 %d 个" % (total, real))
+    print("走满且无错误提示：%d" % clean)
+    print("矩阵单元数与行列数不符：%d" % anomaly)
+    want_total, want_real = CORPUS_EXPECTED
+    ok = (total == want_total and real == want_real
+          and clean == want_real and anomaly == 0)
+    print("结论：%s" % ("通过" if ok else "不通过（解析质量有变化，请人工核对）"))
+    return 0 if ok else 1
 
 
 def self_test() -> int:
-    """用真实样本跑一遍，断言能走完且字符序列正确。"""
+    """用真实样本跑一遍，断言能走完、字符序列正确、矩阵单元数自洽。"""
     import zipfile
 
     print("样本：%s" % SAMPLE_PPTX)
@@ -829,6 +834,12 @@ def self_test() -> int:
         if len(codes) != len(EXPECTED_CODES):
             print("失败：字符个数不符")
         ok = False
+    for m in _walk(eq.records):
+        if isinstance(m, MatrixRec):
+            print("  %s" % m.label())
+            if m.cell_count_anomaly:
+                print("失败：%s" % m.label())
+                ok = False
     print("结论：%s" % ("通过" if ok else "不通过"))
     return 0 if ok else 1
 
@@ -837,13 +848,16 @@ if __name__ == "__main__":
     import sys
 
     if "--selftest" in sys.argv:
-        sys.exit(self_test())
+        rc = self_test()
+        print()
+        rc2 = _corpus_report()
+        sys.exit(max(rc, rc2))
 
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     if not args:
         print(__doc__)
         print("用法：")
-        print("  python mtef_v3.py --selftest              跑内置样本自测")
+        print("  python mtef_v3.py --selftest              跑内置样本与语料自测")
         print("  python mtef_v3.py <oleObject.bin>         解析单个 OLE 嵌入对象")
         sys.exit(0)
 

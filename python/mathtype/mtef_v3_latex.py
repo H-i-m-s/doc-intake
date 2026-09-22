@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """把 MTEF v3 记录树渲染成 LaTeX。
 
-配合 python/mathtype/mtef_v3.py 使用：那个模块把字节解成记录树，这里把记录树
-翻成 LaTeX。
+配合 python/mathtype/mtef_v3.py 使用：那个模块按官方规范把字节解成记录树，这里
+按规范「Template Subobject Order」把记录树翻成 LaTeX。
 
 为什么不复用 mtef.py 的 makeLatex
 ---------------------------------
@@ -13,30 +13,40 @@
 3. 它假定 ast.children 按 v5 的槽位顺序排布，而 v3 的槽位里混着 SUB / FULL
    这类标记记录。
 
-两条关键规则（都是从实测字节里逼出来的，不是从规范抄的）
---------------------------------------------------------
-A. **围栏裁到自己的收尾字形。** 实测样本里，一段围栏的内容结束处紧跟着它自己的
-   拉伸字形（如 tmBRACK 的 0x005D），之后才是「=」和后半个公式。而解码器按
-   「子对象列表读到 END 就收」的通用规则会把后面的东西也收进围栏的槽位。所以
-   这里按「谁的子树里含这个收尾字形」切开，把尾巴还给父层。
-B. **标记记录（FULL / SUB / …）不产出内容**，拉伸字形也不产出（由围栏自己输出
-   \\left…\\right）。
+槽位顺序（依据实测，与规范正文有两处出入，均已核对）
+--------------------------------------------------
+规范给的是「类 -> 子对象顺序」，实际字节里槽位位置是固定的，空槽以 xfNULL 的
+LINE 占位。用 30 个真实对象核对后采用下表：
 
-为什么不能拿引用实现当验收标准：mathtypejx 和 Ruby gem 用的是同一套「列表读到
-END 就收」的贪心规则，两边解出的树一样贪心，它们互相吻合不构成正确性证据。
-本文件的验收标准是公式的兜底预览图。
+- 围栏 ParBox：主槽位、左围栏字符、右围栏字符。括号由模板自带，不裁切。
+- 大运算符 BigOp：**主槽位、下槽位、上槽位、运算符字符**。规范正文写作
+  「upper slot, lower slot」，但 obj11（tmSUM var=1，上下限都有）的字节顺序是
+  「i=2」在前、「N」在后；obj21（tmSUM var=0，只有下限）的下限落在第 1 位，
+  两句都指向「下限在前」。
+- 极限 LimBox：主槽位、下槽位、上槽位（obj3 的 tmLIM var=0 是「只带上限」，
+  取值落在第 3 个槽，与此一致）。
+- 上下标 ScrBox：下标槽位、上标槽位；**底不是子对象**，是它前面那个字符，
+  所以脚本渲染成后缀（前置上下标 44 渲染成前缀）。
+- 分式 FracBox、斜线分式 SlashBox：分子槽位、分母槽位。
+- 根号 RootBox：主槽位（次数）、被开方槽位。
+- 上下划线 BarBox、向量 VectorBox、弧 ArcBox：主槽位。
+- 括号箭头 ArroBox：主槽位、箭头字符；水平花括号 HBrBox：主槽位、小槽位、花括号。
+- 长除 LDivBox：被除槽位、商槽位。LaTeX 没有对应写法，直接退让。
+
+下限/上限的数量由 variation 决定（规范里的 tvXXX 变体表），空槽会以 xfNULL 的
+LINE 出现，所以按 variation 给出该有的角色序列，再按顺序取非空槽。
 
 硬闸：任何一条不满足就返回 None，由调用方退回公式预览图——
 - 遇到没实现的模板 / 附饰：不猜；
-- 矩阵单元数与行列数不符：不渲染（摊平是启发式，见 mtef_v3.py 文件头）；
-- \\left 与 \\right 不配对：结构没理清，不渲染。
+- 矩阵单元数与行列数不符：不渲染；
+- \\left 与 \\right 不配对：结构没理清；
+- 花括号不配对：出过错（x_{i) 那批），宁可给图。
 宁可给一张对的图，不给一段错的 LaTeX。
 """
 from __future__ import annotations
 
-import dataclasses
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 try:  # 包内导入（python/mathtype 作为包被引用时）
     from .chars import Chars, SpecialChar
@@ -57,30 +67,70 @@ EXPECTED_LATEX = (
     r"\end{gathered}"
 )
 
-# v3 的选择子编号（与 v5 不同，依据 mathtypejx records3.py；实测样本中
-# sel=15 var=1 确实是下标，故采用这一套而不是 Ruby records3 的那套 v5 编号）
-FENCE_GLYPHS = {
-    "tmANGLE": (r"\langle", r"\rangle", 0x27E8, 0x27E9),
-    "tmPAREN": ("(", ")", 0x0028, 0x0029),
-    "tmBRACE": (r"\{", r"\}", 0x007B, 0x007D),
-    "tmBRACK": ("[", "]", 0x005B, 0x005D),
-    "tmBAR": ("|", "|", 0x007C, 0x007C),
-    "tmDBAR": (r"\|", r"\|", 0x2016, 0x2016),
-    "tmFLOOR": (r"\lfloor", r"\rfloor", 0x230A, 0x230B),
-    "tmCEILING": (r"\lceil", r"\rceil", 0x2308, 0x2309),
+# 围栏类：选择子 -> (左, 右)。variation 1 只留左、2 只留右（另一半写 '.'）
+FENCES = {
+    "tmANGLE": (r"\langle", r"\rangle"),
+    "tmPAREN": ("(", ")"),
+    "tmBRACE": (r"\{", r"\}"),
+    "tmBRACK": ("[", "]"),
+    "tmBAR": ("|", "|"),
+    "tmDBAR": (r"\|", r"\|"),
+    "tmFLOOR": (r"\lfloor", r"\rfloor"),
+    "tmCEILING": (r"\lceil", r"\rceil"),
+    "tmLBLB": (r"\{", r"\{"),
+    "tmRBRB": (r"\}", r"\}"),
+    "tmRBLB": (r"\}", r"\{"),
+    "tmLBRP": (r"\{", "("),
+    "tmLPRB": ("(", r"\{"),
 }
-FENCE_SELECTORS = set(FENCE_GLYPHS)
+
+# 大运算符：选择子 -> (LaTeX 命令, 变体 -> 该有的限角色, 上下摆?)。None 表示用
+# 槽位里的运算符字符本身（tmINTOP / tmSUMOP 是用户自选的符号）。
+# 角色：l = 下限，u = 上限。上下摆=True 时加 \limits（「总和式」，限位叠在上下），
+# False 时加 \nolimits（「积分式」，限位摆在左右）。
+BIGOPS: Dict[str, Tuple[Optional[str], Dict[int, Tuple[str, ...]], bool]] = {
+    "tmSINT":   (r"\int",  {0: (), 1: ("l",), 2: ("l", "u"), 3: (), 4: ("l",)}, False),
+    "tmDINT":   (r"\iint", {0: (), 1: ("l",), 2: (), 3: ("l",)}, False),
+    "tmTINT":   (r"\iiint", {0: (), 1: ("l",), 2: (), 3: ("l",)}, False),
+    "tmSSINT":  (r"\int",  {0: ("l", "u"), 1: ("l",), 2: ("l",)}, True),
+    "tmDSINT":  (r"\iint", {0: ("l",), 1: ("l",)}, True),
+    "tmTSINT":  (r"\iiint", {0: ("l",), 1: ("l",)}, True),
+    "tmSUM":    (r"\sum",  {0: ("l",), 1: ("l", "u"), 2: ()}, True),
+    "tmISUM":   (r"\sum",  {0: ("l",), 1: ("l", "u")}, False),
+    "tmPROD":   (r"\prod", {0: ("l",), 1: ("l", "u"), 2: ()}, True),
+    "tmIPROD":  (r"\prod", {0: ("l",), 1: ("l", "u")}, False),
+    "tmCOPROD": (r"\coprod", {0: ("l",), 1: ("l", "u"), 2: ()}, True),
+    "tmICOPROD": (r"\coprod", {0: ("l",), 1: ("l", "u")}, False),
+    "tmUNION":  (r"\bigcup", {0: ("l",), 1: ("l", "u"), 2: ()}, True),
+    "tmIUNION": (r"\bigcup", {0: ("l",), 1: ("l", "u")}, False),
+    "tmINTER":  (r"\bigcap", {0: ("l",), 1: ("l", "u"), 2: ()}, True),
+    "tmIINTER": (r"\bigcap", {0: ("l",), 1: ("l", "u")}, False),
+    "tmINTOP":  (None, {0: ("u",), 1: ("l",), 2: ("l", "u")}, False),
+    "tmSUMOP":  (None, {0: ("u",), 1: ("l",), 2: ("l", "u")}, True),
+}
+# 围道积分：变体 3/4（单积分）、2（双积分）、2（三积分）换成围道符号
+CONTOUR = {"tmSINT": 3, "tmDINT": 2, "tmTINT": 2}
+CONTOUR_CMD = {"tmSINT": r"\oint", "tmDINT": r"\oiint", "tmTINT": r"\oiiint"}
+
+# 极限：变体 -> 限角色（只有上、只有下、两个都有）
+LIM_ROLES = {0: ("u",), 1: ("l",), 2: ("l", "u")}
+# 极限的名字：主槽位里是字面文本（l、i、m 三个字符），转成 LaTeX 算符
+LIM_OPS = {"lim": r"\lim", "max": r"\max", "min": r"\min", "sup": r"\sup",
+           "inf": r"\inf", "det": r"\det", "gcd": r"\gcd"}
+
+# 附饰（EMBELL 记录）。码位表见规范「EMBELL record」。
+EMBELLS = {
+    2: r"\dot", 3: r"\ddot", 4: r"\dddot",
+    5: "'", 6: "''", 18: "'''",
+    8: r"\tilde", 9: r"\hat",
+    16: r"\bar", 17: r"\overline",
+    19: r"\frown", 20: r"\smile",
+}
+EMBELL_INLINE = {5, 6, 18}  # 撇号是后缀，不是包裹
 
 MARKER_NAMES = {"MarkerRec", "FutureRec", "FontRec", "SizeRec"}
-ACCENTS = {
-    2: r"\dot", 3: r"\ddot", 4: r"\dddot",
-    8: r"\tilde", 9: r"\hat", 10: r"\not",
-    11: r"\vec", 12: r"\overleftarrow", 13: r"\overrightarrow",
-    16: r"\underline", 17: r"\bar", 21: r"\cancel",
-    25: r"\dot", 26: r"\ddot", 27: r"\dddot",
-    29: r"\underline", 30: r"\tilde", 33: r"\overrightarrow", 34: r"\overleftarrow",
-}
-PRIMES = {5: "'", 6: "''", 7: "'''", 18: "'''", 14: "'", 15: "'", 36: "'", 37: "'"}
+# 字号标记：FULL / SUB / SUB2 -> 目标层级（SUB2 是下下标的字号）
+SIZE_MARKERS = {10: 0, 11: 1, 12: 2}
 
 _CMD_TAIL = re.compile(r"\\[a-zA-Z]+$")
 
@@ -101,38 +151,12 @@ def join(parts: List[str]) -> str:
     return "".join(out)
 
 
-def _replace_objects(line, objects):
-    """造一个 objects 被换掉的 LINE 副本，不改原树。"""
-    try:
-        return dataclasses.replace(line, objects=list(objects))
-    except Exception:
-        return line
-
-
-def _is_glyph(r, code: int) -> bool:
-    """是否就是那个拉伸字形字符本身（不是「含它的子树」）。"""
-    return (type(r).__name__ == "CharRec"
-            and getattr(r, "mt_code", -1) == code
-            and getattr(r, "typeface", -1) == 22)
-
-
-def _subtree_has_glyph(r, code: int) -> bool:
-    """子树里是否含这个码位的拉伸字形（fnEXPAND，typeface 22）。"""
-    if type(r).__name__ == "CharRec":
-        return getattr(r, "mt_code", -1) == code and getattr(r, "typeface", -1) == 22
-    for a in ("objects", "slots", "lines", "cells", "embellishments"):
-        ch = getattr(r, a, None)
-        if ch and any(_subtree_has_glyph(c, code) for c in ch):
-            return True
-    return False
-
-
 class Renderer:
     def __init__(self):
         self.ok = True
         self.notes: List[str] = []
-        # 归位回来的 LINE：它们其实是新的一行，交给 rows_of 处理
-        self.extra_rows: list = []
+        # 行内字号层级：SUB 开一层下标，SUB2 再开一层，FULL 全部收掉
+        self.size_depth = 0
 
     def fail(self, why: str) -> str:
         if self.ok:
@@ -140,61 +164,52 @@ class Renderer:
         self.ok = False
         return ""
 
-    # ── 调度（带尾巴归还） ─────────────────────────────────
+    # ── 调度 ───────────────────────────────────────────────
 
     def records(self, recs) -> str:
-        """渲染一串记录。围栏裁下来的尾巴会插回当前列表继续处理；
-        尾巴里的 LINE 则记成「新的一行」（见 rows_of）。"""
-        pending = list(recs)
-        out: List[str] = []
-        idx = 0
-        while idx < len(pending):
-            r = pending[idx]
-            idx += 1
-            s, hoisted = self.record2(r)
-            if s:
-                out.append(s)
-            if hoisted:
-                inline = []
-                for h in hoisted:
-                    if type(h).__name__ == "LineRec":
-                        self.extra_rows.append(h)
-                    else:
-                        inline.append(h)
-                pending[idx:idx] = inline
-        return join(out)
+        """渲染一串记录。
 
-    def items(self, recs) -> List[str]:
-        """非空项列表，供 \\frac / 上下标这类按槽位取内容的场景使用。"""
+        字号标记（FULL / SUB / SUB2）在这里处理：它们是行内状态，不止改变字号，
+        还带基线下降，所以落成 LaTeX 的嵌套下标。实测依据：obj4 的预览图里
+        `I(x` `SUB` `i` `)` 显示成下降的小 i（$I(x_i)$），而不是平排的 xi。
+        """
         out: List[str] = []
         for r in recs:
-            s, _ = self.record2(r)
-            if s:
-                out.append(s)
-        return out
+            rt = getattr(r, "record_type", None)
+            if type(r).__name__ == "MarkerRec" and rt in SIZE_MARKERS:
+                target = SIZE_MARKERS[rt]
+                while self.size_depth > target:
+                    out.append("}")
+                    self.size_depth -= 1
+                while self.size_depth < target:
+                    out.append("_{")
+                    self.size_depth += 1
+                continue
+            out.append(self.record(r))
+        return join(out)
 
     def record(self, r) -> str:
-        s, _ = self.record2(r)
-        return s
-
-    def record2(self, r) -> Tuple[str, list]:
         name = type(r).__name__
         if name == "CharRec":
-            return self.char(r), []
+            return self.char(r)
         if name == "TmplRec":
             return self.tmpl(r)
         if name == "LineRec":
-            return self.records(r.objects), []
+            return self.records(r.objects)
         if name == "PileRec":
-            return self.pile(r), []
+            return self.pile(r)
         if name == "MatrixRec":
-            return self.matrix(r), []
+            return self.matrix(r)
         if name == "EmbellRec":
             code = getattr(r, "code", -1)
-            return ("" if code < 0 else self.prefix_accent(code)), []
+            return "" if code < 0 else self.embell_accents(code, "")
         if name in MARKER_NAMES:
-            return "", []  # FULL / SUB / SUB2 / SYM / SUBSYM / 字体 / 字号：不出内容
-        return self.fail("未知记录类型 %s" % name), []
+            return ""  # FULL / SUB / SUB2 / SYM / SUBSYM / 字体 / 字号：不出内容
+        return self.fail("未知记录类型 %s" % name)
+
+    def slots(self, t) -> List[str]:
+        """模板槽位渲染成非空字符串列表（按出现顺序）。"""
+        return [s for s in (self.record(x) for x in t.slots) if s]
 
     # ── 字符 ───────────────────────────────────────────────
 
@@ -208,7 +223,7 @@ class Renderer:
 
     def char(self, c) -> str:
         if c.typeface == 22:
-            # fnEXPAND：可拉伸的括号字形，属于外面那层围栏，由围栏输出
+            # fnEXPAND：可拉伸的括号/大运算符字形，由模板自己输出
             return ""
         text = self.symbol(c.mt_code, c.typeface - 128)
         if c.typeface - 128 == 1:  # fnTEXT
@@ -220,172 +235,276 @@ class Renderer:
     def apply_embellishment(self, base: str, e) -> str:
         name = type(e).__name__
         if name == "TmplRec" and getattr(e, "selector", "") in ("tmSUP", "tmSUB", "tmSUBSUP"):
-            return self.script(base, e)
+            return join([base, self.tmpl(e)])
         if name == "EmbellRec":
-            code = getattr(e, "code", -1)
-            if code in PRIMES:
-                return base + PRIMES[code]
-            if code in ACCENTS:
-                return "%s{%s}" % (ACCENTS[code], base)
+            return self.embell_accents(getattr(e, "code", -1), base)
+        return join([base, self.record(e)])
+
+    def embell_accents(self, code: int, base: str) -> str:
+        if code not in EMBELLS:
             return self.fail("未实现的附饰 code=%s" % code)
-        inner = self.record(e)
-        return base + inner if inner else base
+        fn = EMBELLS[code]
+        if code in EMBELL_INLINE:
+            return (base or "") + fn
+        return "%s{%s}" % (fn, base)
 
     # ── 模板 ───────────────────────────────────────────────
 
-    def tmpl(self, t) -> Tuple[str, list]:
+    def tmpl(self, t) -> str:
         sel = getattr(t, "selector", "")
-        variation = getattr(t, "variation", 0)
+        var = getattr(t, "variation", 0)
+        cls = getattr(t, "tmpl_class", "")
 
-        if sel in FENCE_SELECTORS:
-            return self.fence(t, sel, variation)
-        if sel in ("tmSUP", "tmSUB", "tmSUBSUP"):
-            return self.script("", t), []
-        if sel == "tmFRACT":
-            parts = self.items(t.slots)
-            if len(parts) >= 2:
-                return r"\frac{%s}{%s}" % (parts[0], parts[1]), []
-            return self.fail("分式槽位不足 2 项（拿到 %d）" % len(parts)), []
-        if sel == "tmROOT":
-            parts = self.items(t.slots)
-            if not parts:
-                return self.fail("根号槽位为空"), []
-            if variation == 1 and len(parts) >= 2:
-                return r"\sqrt[%s]{%s}" % (parts[0], parts[1]), []
-            return r"\sqrt{%s}" % parts[-1], []
-        if sel in ("tmUBAR", "tmOBAR"):
-            parts = self.items(t.slots)
-            if not parts:
-                return self.fail("%s 槽位为空" % sel), []
-            inner = join(parts)
-            fn = r"\underline{%s}" if sel == "tmUBAR" else r"\overline{%s}"
-            return fn % inner, []
-        if sel == "tmVEC":
-            parts = self.items(t.slots)
-            if not parts:
-                return self.fail("向量槽位为空"), []
-            arrow = r"\overleftarrow" if variation & 0x0001 else r"\overrightarrow"
-            return "%s{%s}" % (arrow, parts[0]), []
-        return self.fail("未实现的模板 %s（变体 %s）" % (sel or "?", variation)), []
+        if sel in FENCES:
+            return self.fence(t, sel, var)
+        if cls == "ScrBox":
+            return self.script(t, sel, var)
+        if cls == "BigOp":
+            return self.bigop(t, sel, var)
+        if sel == "tmLIM":
+            return self.limits(t, LIM_ROLES.get(var, ()))
+        if cls == "HBrBox":
+            return self.hbrace(t, sel, var)
+        if cls == "FracBox":
+            return self.frac(t, sel, pre=r"\frac")
+        if cls == "SlashBox":
+            return self.frac(t, sel, pre=r"\frac")   # 斜线分式在 LaTeX 里也写 \frac
+        if cls == "RootBox":
+            return self.root(t, var)
+        if cls == "BarBox":
+            return self.bar(t, sel, var)
+        if cls == "VectorBox":
+            return self.vector(t, sel, var)
+        if cls == "ArroBox":
+            return self.arrow_box(t, sel, var)
+        if cls == "DiracBox":
+            return self.dirac(t, var)
+        if cls == "ArcBox":
+            parts = self.slots(t)
+            return self.fail("未实现的模板 %s（变体 %s）" % (sel, var)) if not parts \
+                else r"\overset{\frown}{%s}" % parts[0]
+        return self.fail("未实现的模板 %s（类 %s，变体 %s）" % (sel or "?", cls or "?", var))
 
-    def fence(self, t, sel: str, variation: int) -> Tuple[str, list]:
-        """围栏。内容按「收尾字形」切开，尾巴还给父层（规则 A）。"""
-        left_glyph, right_glyph, _open_code, close_code = FENCE_GLYPHS[sel]
-
-        content, remainder = self.cut_at_glyph(t.slots, close_code)
-        # 尾巴退回父层：只丢掉字形字符本身，其余（如嵌套围栏）插回去继续渲染
-        hoisted = [r for r in remainder if not _is_glyph(r, close_code)]
-
-        if variation == 1:
+    # 围栏：主槽位、左围栏字符、右围栏字符
+    def fence(self, t, sel: str, var: int) -> str:
+        left_glyph, right_glyph = FENCES[sel]
+        if var == 1:
             left, right = left_glyph, "."
-        elif variation == 2:
+        elif var == 2:
             left, right = ".", right_glyph
         else:
             left, right = left_glyph, right_glyph
-
-        inner = self.records(content)
+        inner = self.slots(t)
         if not inner:
-            return "", hoisted
-        return r"\left%s %s \right%s" % (left, inner, right), hoisted
+            return ""
+        return r"\left%s %s \right%s" % (left, join(inner), right)
 
-    def cut_at_glyph(self, recs, close_code: int) -> Tuple[list, list]:
-        """按收尾字形切开。字形可能藏在子结构里（实测在矩阵单元列表末尾），
-        也可能在外层还包着一层 LINE 槽包装，所以判据是「谁的子树里有它」，
-        并且下钻 LINE 包装再切。找不到就不切，交给硬闸兜。
-
-        返回 (内容记录, 余下记录)，余下的会退回父层。
-        """
-        recs = list(recs)
-        for i, r in enumerate(recs):
-            if not _subtree_has_glyph(r, close_code):
-                continue
-            if type(r).__name__ == "LineRec":
-                inner_content, inner_rest = self.cut_at_glyph(r.objects, close_code)
-                head = _replace_objects(r, inner_content)
-                return recs[:i] + [head], inner_rest + recs[i + 1:]
-            return recs[:i + 1], recs[i + 1:]
-        return recs, []
-
-    def script(self, base: str, t) -> str:
-        """上下标。槽位里的非空项：1 项是脚本，2 项依次是下、上。"""
-        sel = getattr(t, "selector", "")
-        parts = self.items(t.slots)
+    # 上下标：下标槽位、上标槽位；底是前一个字符
+    def script(self, t, sel: str, var: int) -> str:
+        parts = self.slots(t)
         if not parts:
-            return base
-        if sel == "tmSUP":
-            return "%s^{%s}" % (base, join(parts))
-        if sel == "tmSUB":
-            return "%s_{%s}" % (base, join(parts))
-        if len(parts) >= 2:
-            return "%s_{%s}^{%s}" % (base, parts[0], parts[1])
-        return "%s_{%s}" % (base, parts[0])
+            return ""
+        role = {"tmSUP": ("u",), "tmSUB": ("l",), "tmSUBSUP": ("l", "u")}.get(sel)
+        if role is None:
+            role = ("l", "u") if var == 2 else (("u",) if var == 0 else ("l",))
+        low = up = None
+        for r, s in zip(role, parts):
+            if r == "l":
+                low = s
+            else:
+                up = s
+        body = "".join(["_{%s}" % low if low else "", "^{%s}" % up if up else ""])
+        if getattr(t, "selector_index", 0) == 44:
+            # 前置上下标：底在后面，用空组占位把脚本摆在前面
+            return "{%s}" % body if body else ""
+        return body
 
-    def prefix_accent(self, code: int) -> str:
-        if code in ACCENTS:
-            return ACCENTS[code]
-        return self.fail("未实现的附饰记录 code=%s" % code)
+    # 大运算符：主槽位、下槽位、上槽位、运算符字符
+    def bigop(self, t, sel: str, var: int) -> str:
+        cmd, roles_table, use_limits = BIGOPS[sel]
+        parts = self.slots(t)
+        if not parts:
+            return self.fail("%s 槽位为空" % sel)
+        main, rest = parts[0], parts[1:]
+        if cmd is None:
+            # 运算符字符在最后一个槽位（用户自选的符号）
+            if not rest:
+                return self.fail("%s 缺运算符字符" % sel)
+            op_char = rest[-1]
+            rest = rest[:-1]
+            cmd = r"\mathop{%s}" % op_char
+        roles = roles_table.get(var, ())
+        low = up = None
+        for r, s in zip(roles, rest):
+            if r == "l":
+                low = s
+            else:
+                up = s
+        # 围道积分换成围道符号
+        if CONTOUR.get(sel) == var:
+            cmd = CONTOUR_CMD[sel]
+        limits = r"\limits" if use_limits else r"\nolimits"
+        op = "%s%s%s%s" % (cmd, limits,
+                           "_{%s}" % low if low else "",
+                           "^{%s}" % up if up else "")
+        # 用 join 拼接：上限下限都空时 op 以 \limits 结尾，必须补空格
+        return join([op, main])
+
+    # 极限：主槽位、下槽位、上槽位
+    def limits(self, t, roles: Tuple[str, ...]) -> str:
+        parts = self.slots(t)
+        if not parts:
+            return self.fail("极限模板槽位为空")
+        main, rest = parts[0], parts[1:]
+        low = up = None
+        for r, s in zip(roles, rest):
+            if r == "l":
+                low = s
+            else:
+                up = s
+        if not low and not up:
+            return main
+        key = "".join(main.split()).lower()
+        if key in LIM_OPS:
+            return "%s%s%s" % (LIM_OPS[key],
+                               "_{%s}" % low if low else "",
+                               "^{%s}" % up if up else "")
+        out = main
+        if low:
+            out = r"\underset{%s}{%s}" % (low, out)
+        if up:
+            out = r"\overset{%s}{%s}" % (up, out)
+        return out
+
+    # 水平花括号：主槽位、小槽位、花括号字符
+    def hbrace(self, t, sel: str, var: int) -> str:
+        parts = self.slots(t)
+        if not parts:
+            return self.fail("%s 槽位为空" % sel)
+        main, rest = parts[0], parts[1:]
+        label = rest[0] if rest else ""
+        if sel == "tmUHBRACE":
+            return r"\overbrace{%s}%s" % (main, "^{%s}" % label if label else "")
+        return r"\underbrace{%s}%s" % (main, "_{%s}" % label if label else "")
+
+    def frac(self, t, sel: str, pre: str) -> str:
+        parts = self.slots(t)
+        if len(parts) >= 2:
+            return r"%s{%s}{%s}" % (pre, parts[0], parts[1])
+        if len(parts) == 1:
+            return r"%s{}{%s}" % (pre, parts[0])
+        return self.fail("%s 槽位为空" % sel)
+
+    def root(self, t, var: int) -> str:
+        parts = self.slots(t)
+        if not parts:
+            return self.fail("根号槽位为空")
+        if var == 1 and len(parts) >= 2:
+            return r"\sqrt[%s]{%s}" % (parts[0], parts[1])
+        return r"\sqrt{%s}" % parts[-1]
+
+    def bar(self, t, sel: str, var: int) -> str:
+        parts = self.slots(t)
+        if not parts:
+            return self.fail("%s 槽位为空" % sel)
+        inner = join(parts)
+        fn = r"\underline" if sel == "tmUBAR" else r"\overline"
+        if var == 1:  # 双线
+            return "%s{%s{%s}}" % (fn, fn, inner)
+        return "%s{%s}" % (fn, inner)
+
+    def vector(self, t, sel: str, var: int) -> str:
+        parts = self.slots(t)
+        if not parts:
+            return self.fail("%s 槽位为空" % sel)
+        under = sel == "tmUARROW"
+        if var == 2:
+            name = r"\underleftrightarrow" if under else r"\overleftrightarrow"
+        elif var == 1:
+            name = r"\underrightarrow" if under else r"\overrightarrow"
+        else:
+            name = r"\underleftarrow" if under else r"\overleftarrow"
+        return "%s{%s}" % (name, parts[0])
+
+    def arrow_box(self, t, sel: str, var: int) -> str:
+        parts = self.slots(t)
+        if not parts:
+            return self.fail("%s 槽位为空" % sel)
+        content = parts[0]
+        cmd = {"tmLARROW": r"\xleftarrow", "tmRARROW": r"\xrightarrow",
+               "tmBARROW": r"\xleftrightarrow"}[sel]
+        if var == 1:  # 框在箭头下方
+            return "%s[]{%s}" % (cmd, content)
+        return "%s{%s}" % (cmd, content)
+
+    def dirac(self, t, var: int) -> str:
+        parts = self.slots(t)
+        if len(parts) >= 2:
+            body = r"\left\langle %s \middle| %s \right\rangle" % (parts[0], parts[1])
+            return body
+        if len(parts) == 1:
+            return parts[0]
+        return self.fail("Dirac 模板槽位为空")
 
     # ── 堆叠与矩阵 ─────────────────────────────────────────
 
     def pile(self, p) -> str:
-        rows = []
-        for line in p.lines:
-            rows.extend(self.rows_of(line))
+        rows = [self.record(line) for line in p.lines]
+        rows = [r for r in rows if r]
         if not rows:
             return ""
         if len(rows) == 1:
             return rows[0]
         return r"\begin{gathered} %s \end{gathered}" % r" \\ ".join(rows)
 
-    def rows_of(self, rec) -> List[str]:
-        """把一个「行」摊成若干行。
-
-        实测：行与行之间是右嵌套的。下一行的 LINE 既可能直接出现在当前 LINE 的
-        对象里，也可能夹在当前行「围栏内容的尾巴」里（裁切后会归还到这一层）。
-        两种都算下一行，而不是当成内容。
-        """
-        if type(rec).__name__ != "LineRec":
-            s = self.record(rec)
-            return [s] if s else []
-        own, nested = [], []
-        for o in rec.objects:
-            (nested if type(o).__name__ == "LineRec" else own).append(o)
-
-        saved = self.extra_rows
-        self.extra_rows = []
-        own_s = self.records(own)
-        captured = self.extra_rows
-        self.extra_rows = saved
-
-        out = [own_s] if own_s else []
-        for n in nested + captured:
-            out.extend(self.rows_of(n))
-        return out
-
     def matrix(self, m) -> str:
         """矩阵内容。
 
         用 matrix 而不是 bmatrix：MTEF 里矩阵本身不带分隔符，那对括号来自外面
         的围栏（tmBRACK 之类）。用 bmatrix 会自带一对括号，和围栏叠成两对。
+
+        单元全为空时不输出任何东西（数据里会出现 1x1 的占位空矩阵）。
         """
-        cells = m.resolved_cells
-        if not cells:
-            return self.fail("矩阵没有单元")
+        cells = [self.record(x) for x in m.resolved_cells]
+        if not any(cells):
+            return ""
         if m.cell_count_anomaly:
-            # 摊平是启发式（见 mtef_v3.py 文件头），对不上就退让，别硬渲染
             return self.fail("矩阵单元数 %d != %dx%d" % (len(cells), m.rows, m.cols))
         cols = max(1, int(m.cols))
-        rendered = [self.record(c) for c in cells]
         rows = []
-        for i in range(0, len(rendered), cols):
-            rows.append(" & ".join(rendered[i:i + cols]))
+        for i in range(0, len(cells), cols):
+            rows.append(" & ".join(cells[i:i + cols]))
         return r"\begin{matrix} %s \end{matrix}" % r" \\ ".join(rows)
+
+
+def _braces_balanced(s: str) -> bool:
+    """花括号是否配对。转义（\\{ \\}）跳过不计。"""
+    depth = 0
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth < 0:
+                return False
+        i += 1
+    return depth == 0
 
 
 def render(eq) -> Tuple[Optional[str], List[str]]:
     """渲染一个 MTEF v3 公式。返回 (latex 或 None, 说明)。"""
     r = Renderer()
     body = r.records(eq.records)
+    # 收掉没关完的下标（数据里最后一个字号标记可能不是 FULL）
+    if r.size_depth:
+        body += "}" * r.size_depth
+        r.size_depth = 0
     if not r.ok:
         return None, list(r.notes)
     body = " ".join(body.split())
@@ -395,6 +514,9 @@ def render(eq) -> Tuple[Optional[str], List[str]]:
     if body.count(r"\left") != body.count(r"\right"):
         return None, ["\\left 与 \\right 不配对：%d vs %d"
                       % (body.count(r"\left"), body.count(r"\right"))]
+    # 硬闸：花括号必须配对。这条能挡住 x_{i) 那类错位输出
+    if not _braces_balanced(body):
+        return None, ["花括号不配对"]
     return body, []
 
 
@@ -427,8 +549,8 @@ def self_test() -> int:
     ok = got == want
     if not ok:
         print("失败：渲染结果与基准不一致")
-        print("  期望: %s" % want[:240])
-        print("  实际: %s" % (got[:240] or "(空)"))
+        print("  期望: %s" % want[:260])
+        print("  实际: %s" % (got[:260] or "(空)"))
         if notes:
             print("  说明: %s" % notes)
     else:
