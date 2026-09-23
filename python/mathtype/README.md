@@ -37,3 +37,4 @@ python mathtype/selftest_v3_render.py
   <https://rtf2latex2e.sourceforge.net/MTEF3.html>
 - 早期实现参考过 [mtef-go](https://github.com/zhexiao/mtef-go)；那一版及其移植
   （`mtef.py`、`record.py`）已删除，只在 git 历史里留痕。
+- `doc/MTEF-接手与迭代.md`：接手与迭代流程（验证入口、三道关、加新构造、样本来源）
