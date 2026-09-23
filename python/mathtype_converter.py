@@ -292,7 +292,12 @@ class MathTypeConverter:
         
         # 移除开头的 $ 符号（如果有的话）
         latex = latex.strip('$')
-        
+
+        # 数学字母数字符号（U+1D400–U+1D7FF）、数学减号这类"看着对、机器不认"的字符
+        # 换成基础字符。从 PDF / 网页粘进来的公式经常带这些码位，LaTeX 侧会缺字或报错。
+        from text_norm import normalize_math_text
+        latex = normalize_math_text(latex)
+
         return latex
     
     def detect_equation_type(self, xml_content: str) -> dict:

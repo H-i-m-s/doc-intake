@@ -151,11 +151,21 @@ class OmmlToLatexConverter:
         return "".join(result)
 
     def _get_math_text(self, run: ET.Element) -> str:
-        """Get text from math run."""
+        """Get text from math run.
+
+        两件事都按 Unicode 码位做，不看字形：
+        1. 数学字母数字符号（从 PDF/网页粘来的"假斜体"）换成基础字符；
+        2. 连续的中文段包成 \\text{...}——数学模式里裸着的中文会被当成未知符号。
+        具体规则见 python/text_norm.py。
+        """
+        from text_norm import normalize_math_text, wrap_text_runs
+
         text_parts: list[str] = []
         for t in run.iter():
             if _local_name(t.tag) == "t" and t.text:
-                text_parts.append(self._escape_latex(t.text))
+                text_parts.append(
+                    wrap_text_runs(normalize_math_text(t.text), self._escape_latex)
+                )
         return "".join(text_parts)
 
     def _escape_latex(self, text: str) -> str:
