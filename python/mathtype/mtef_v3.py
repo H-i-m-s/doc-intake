@@ -697,9 +697,12 @@ def char_sequence(eq: V3Equation) -> List[int]:
 
 # ── 演示与自测 ────────────────────────────────────────────────────────
 
-SAMPLE_PPTX = r"D:\Agent\各种类型文件\公式图表测试.pptx"
+import os as _os
+
+_SAMPLES = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "samples")
+SAMPLE_PPTX = _os.path.join(_SAMPLES, "公式图表测试.pptx")
 SAMPLE_EMBED = "ppt/embeddings/oleObject3.bin"
-CORPUS_PPTX = r"D:\Agent\各种类型文件\[2]第二章_信息与信息论.pptx"
+CORPUS_PPTX = _os.path.join(_SAMPLES, "第二章_信息与信息论.pptx")
 # 实测得到的字符序列，作为自测基准。
 EXPECTED_CODES = [
     0x0058, 0x0050, 0x0028, 0x0078, 0x0029, 0x005B, 0x005D, 0x003D,

@@ -893,7 +893,12 @@ def render_equation(eq) -> Optional[str]:
 
 # ── 自测 ──────────────────────────────────────────────────────────────
 
-CORPUS_DIR = r"D:\Agent\各种类型文件"
+import os as _os      # 只用来把样本路径算成相对模块位置，不放任何绝对路径
+
+SAMPLES_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "samples")
+# 语料走查默认看 samples/corpus/（仓库里不带，所以通常是跳过）；想跑真正的语料就把
+# 环境变量 MTEF_CORPUS 指过去，比如 D:\Agent\各种类型文件
+CORPUS_DIR = _os.environ.get("MTEF_CORPUS") or _os.path.join(SAMPLES_DIR, "corpus")
 CORPUS_FILES = [
     "公式图表测试.pptx",
     "这是一个公式测试文件.docx",
@@ -1002,7 +1007,7 @@ def _corpus_report(baseline=None) -> int:
     return 0 if ok else 1
 
 
-REAL_SAMPLE = r"D:\Agent\各种类型文件\公式测试.docx"
+REAL_SAMPLE = _os.path.join(SAMPLES_DIR, "公式测试.docx")
 # 值 = 期望的 LaTeX；None = 这个对象本身是空的（退回预览图）
 REAL_SAMPLE_EXPECTED = {
     1: None,
@@ -1025,9 +1030,8 @@ def _real_sample_report() -> int:
     这是唯一一份「人写式子 + MathType 亲笔」的数据，价值高于语料；改任何解析或渲染
     逻辑都应该过这一关。文件不在了就跳过并返回 2，不会假通过。
     """
-    import os
     import zipfile
-    if not os.path.exists(REAL_SAMPLE):
+    if not _os.path.exists(REAL_SAMPLE):
         print("真机样本不在，跳过：%s" % REAL_SAMPLE)
         return 2
     bad = 0

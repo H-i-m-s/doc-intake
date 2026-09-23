@@ -314,10 +314,14 @@ python mathtype/mtef_v3_latex.py --selftest  # v3 那一支：样本与基准逐
 
 `--example` 可以把规范范例的记录树 / 渲染结果打出来。
 
-另外 `mtef_v5_latex.py` 的自测里还挂着一项**真机样本**：`D:\Agent\各种类型文件\公式测试.docx`
-那 11 个 MathType 亲手写的对象（第九节那张表），逐个比对期望的 LaTeX——其中 2 个是
-空对象，期望 `None`。文件不在了会跳过并返回 2。这是唯一一份「人写式子 + MathType 亲笔 +
-对过预览图」的数据，改解析或渲染都应该过这一关。
+另外 `mtef_v5_latex.py` 的自测里还挂着一项**真机样本**：仓库里的
+`python/mathtype/samples/公式测试.docx`，那 11 个 MathType 亲手写的对象（第九节那张表），
+逐个比对期望的 LaTeX——其中 2 个是空对象，期望 `None`。样本文件不在就跳过并返回 2。
+这是唯一一份「人写式子 + MathType 亲笔 + 对过预览图」的数据，改解析或渲染都应该过这一关。
+
+样本与语料都走 `python/mathtype/samples/` 这个相对目录（对**模块文件**定位，不看
+当前工作目录），所以 `--selftest` 不依赖任何外部路径。语料（那 165 道）不在仓库里，
+默认跳过；想跑就把环境变量 `MTEF_CORPUS` 指到语料目录。
 
 第一条断言：292 字节范例逐字节走满（字符、字体、选择子、EQN_PREFS 字号表 8 项与
 规范标注逐项一致）；语料 165 个对象全部走满且无 error 提示。
@@ -382,7 +386,7 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
 
 ### 有真机样本验证（MathType 7 手写，7 个对象）
 
-`D:\Agent\各种类型文件\公式测试.docx`（MathType 7.0 写出，7 个 `Equation.DSMT4` 对象）
+`python/mathtype/samples/公式测试.docx`（MathType 7.0 写出，11 个 `Equation.DSMT4` 对象）
 是唯一一份「为验证而写」的真机样本，每个对象都与它自己的 WMF 预览并排对过：
 
 | 写的式子 | MathType 的真实编码 | 渲染结果 |
@@ -517,9 +521,10 @@ TMPL #14 tmARROW var=0x0024 类=ArroBox
   0 字节空壳、`公式图表测试.pptx` 4 道、`复杂—翻车机公式及表格图片处理.docx` 5 道、
   `这是一个公式测试文件.docx` 2 道、`翻转课堂计算报告带公式.docx` 1 道）。
   v3 那 30 道来自 `[2]第二章_信息与信息论.pptx`。
-- **为验证而写的真机样本**：`D:\Agent\各种类型文件\公式测试.docx`（MathType 7.0 写出，
+- **为验证而写的真机样本**：`python/mathtype/samples/公式测试.docx`（MathType 7.0 写出，
   11 个 `Equation.DSMT4` 对象 + 11 张 WMF 预览；覆盖附饰 11/12、`tmOBAR`、`tmHAT`、
   `tmHBRACE` 上/下、`tmVEC` 指右、`tmSTRIKE` 上斜、`tmARROW` 带标签；另有 2 个空对象）。
+  三份样本（连 v3 的两份 pptx）都收在 `python/mathtype/samples/` 下，自测用相对路径取。
 - **相关提交**：
 
   ```text
