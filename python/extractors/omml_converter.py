@@ -148,7 +148,10 @@ class OmmlToLatexConverter:
                 if nested:
                     result.append(nested)
 
-        return "".join(result)
+        # Word 自带公式把一个字的颗粒度存成很多小片段，同一句中文会变成一连串
+        # \text{...}；这里把紧挨着的合并成一个（中间隔着数学的不碰）。
+        from text_norm import merge_adjacent_text
+        return merge_adjacent_text("".join(result))
 
     def _get_math_text(self, run: ET.Element) -> str:
         """Get text from math run.

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 _MATH_ALNUM = (0x1D400, 0x1D7FF)
@@ -102,3 +103,24 @@ def wrap_text_runs(text: str, escape_math) -> str:
         else:
             parts.append(escape_math(chunk))
     return "".join(parts)
+
+
+_ADJACENT_TEXT = re.compile(r"\\text\{([^{}]*)\}\\text\{")
+
+
+def merge_adjacent_text(text: str) -> str:
+    """把紧挨着的两个 \\text{...} 合成一个。
+
+    Word 自带公式会把每个字存在各自的小片段里，于是同一句中文会变成一连串
+    \\text{...}；合成后只是看着干净，渲染结果不变。
+
+    中间隔着数学的绝不合并（例如 \\text{a}^{2}\\text{b}）：正则要求两个 \\text{}
+    之间除 `}` 和 `\\text{` 之外没有别的，而 `^{2}` 这样的内容走在匹配范围外。
+    """
+    if "\\text{" not in text:
+        return text
+    prev = None
+    while prev != text:
+        prev = text
+        text = _ADJACENT_TEXT.sub(r"\\text{\1", text)
+    return text
