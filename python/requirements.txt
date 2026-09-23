@@ -15,8 +15,7 @@ mineru-open-sdk>=0.2.0
 # HTML → Markdown 转换（不装则 HTML 解析返回错误提示）
 html-to-markdown>=0.5.0
 
-# MathType 公式提取（不装则 MathType 公式退化为图片，OMML 公式不受影响）
-mtef-py>=1.0.0
+# MathType 公式解析与渲染用的是仓库自带的 python/mathtype/，不需要第三方包
 
 # ===== Windows 专用（旧版 Office 格式需要）=====
 
