@@ -139,9 +139,9 @@ _ARROW_EMBELLS = {
     15: (None, r"\overset{\leftharpoonup}"),
 }
 
-# 帽子类模板（HatBox）的短/长写法：单原子用 \hat 这类，长内容用 \widehat 这类
+# 帽子类模板（HatBox）的短/长写法：单原子用 \hat 这类，长内容用 \widehat 这类。
+# tmVEC 不在这里：它自己带方向变体（规范 tvVE_*），写法见 Renderer.vec()。
 _HATS = {
-    "tmVEC": (r"\vec", r"\overrightarrow"),
     "tmTILDE": (r"\tilde", r"\widetilde"),
     "tmHAT": (r"\hat", r"\widehat"),
 }
@@ -491,23 +491,67 @@ class Renderer:
     # 箭头（ArroBox）：只做“内容在下、箭头上”的常规情形
     def arrow(self, t) -> str:
         var = t.variation
-        # 0x0001 双线 / 0x0002 半箭：LaTeX 没有压在内容上的标准写法；
-        # 0x0004 上标签槽 / 0x0008 下标签槽：多槽时槽位顺序无语料可依，一并闸门。
+        # 0x0004/0x0008 是上下标签槽：多槽时槽位顺序无语料可依，退回预览图。
+        # 0x0001/0x0002 双线与半箭也不做：这两个位与 tvAR_LOS/tvAR_SOL 复用
+        # （“大压小 / 小压大”），方向就不唯一了，LaTeX 也没有压在内容上的标准写法。
         if var & 0x000F:
             return self.fail("tmARROW 变体 0x%04X 未实现（双线/半箭/上下标签槽）" % var)
+        if var & ~0x0030:
+            return self.fail("tmARROW 变体 0x%04X 有未知位" % var)
         parts = self.slot_texts(t)
         if len(parts) != 1:
             return self.fail("tmARROW 槽位数应为 1，实际 %d" % len(parts))
         if not parts[0]:
             return self.fail("tmARROW 内容槽为空")
-        if var & 0x0010:            # tvAR_LEFT
+        left = bool(var & 0x0010)      # tvAR_LEFT
+        right = bool(var & 0x0020)     # tvAR_RIGHT
+        if left and right:
+            return r"\overleftrightarrow{%s}" % parts[0]
+        if left:
             return r"\overleftarrow{%s}" % parts[0]
-        if var & 0x0020:            # tvAR_RIGHT
+        if right:
             return r"\overrightarrow{%s}" % parts[0]
-        return r"\overleftrightarrow{%s}" % parts[0]
+        # 两个方向位都不标：规范说的是“单箭头时指左 / 指右”，没标就没方向，不猜
+        return self.fail("tmARROW 变体 0x%04X 没标方向" % var)
+
+    # 向量（tmVEC，属 HatBox 类但自带方向变体）
+    def vec(self, t) -> str:
+        """向量箭头。规范变体位：0x0001 指左、0x0002 指右、0x0004 箭头在槽下方、
+        0x0008 半箭。两向位都不标时默认向右（单原子用 \\vec，长内容用可拉伸写法）。
+
+        半箭没有可拉伸写法，用 \\overset / \\underset 叠一个；上下双向的半箭
+        （两位都标）含义不清，退回预览图。"""
+        var = t.variation
+        if var & ~0x000F:
+            return self.fail("tmVEC 变体 0x%04X 有未知位" % var)
+        parts = self.slot_texts(t)
+        if len(parts) != 1:
+            return self.fail("tmVEC 槽位数应为 1，实际 %d" % len(parts))
+        inner = parts[0]
+        if not inner:
+            return self.fail("tmVEC 内容槽为空")
+        left = bool(var & 0x0001)
+        right = bool(var & 0x0002)
+        under = bool(var & 0x0004)
+        if var & 0x0008:                        # tvVE_HARPOON
+            if left and right:
+                return self.fail("tmVEC 双向半箭（变体 0x%04X）未实现" % var)
+            sym = r"\leftharpoonup" if left else r"\rightharpoonup"
+            return r"\%s{%s}{%s}" % ("underset" if under else "overset", sym, inner)
+        if not (left or right or under) and _is_single_atom(inner):
+            return r"\vec{%s}" % inner
+        if left and right:
+            name = "underleftrightarrow" if under else "overleftrightarrow"
+        elif left:
+            name = "underleftarrow" if under else "overleftarrow"
+        else:
+            name = "underrightarrow" if under else "overrightarrow"
+        return "\\%s{%s}" % (name, inner)
 
     # 帽子类（HatBox）：tmVEC / tmTILDE / tmHAT / tmARC，都是单槽
     def hat(self, t, sel: str) -> str:
+        if sel == "tmVEC":          # 自带方向变体，写法见 vec()
+            return self.vec(t)
         parts = self.slot_texts(t)
         if len(parts) != 1:
             return self.fail("%s 槽位数应为 1，实际 %d" % (sel, len(parts)))
@@ -538,18 +582,46 @@ class Renderer:
             return parts[0]
         return self.fail("tmDIRAC 槽位数 %d 未实现" % len(parts))
 
-    # 删划线 / 方框
+    # 划掉线（StrikeBox）：横线用 \sout，斜线用 \cancel / \bcancel / \xcancel
     def strike(self, t) -> str:
+        """规范变体位：0x0001 横线（否则斜线）、0x0002 左下→右上斜线、
+        0x0004 左上→右下斜线。变体 0 当作默认的横线（与 tvST_HORIZ 同义）。"""
+        var = t.variation
+        if var & ~0x0007:
+            return self.fail("tmSTRIKE 变体 0x%04X 有未知位" % var)
         parts = self.slot_texts(t)
         if len(parts) != 1:
             return self.fail("tmSTRIKE 槽位数应为 1，实际 %d" % len(parts))
-        return r"\cancel{%s}" % parts[0] if parts[0] else self.fail("tmSTRIKE 内容槽为空")
+        if not parts[0]:
+            return self.fail("tmSTRIKE 内容槽为空")
+        if var in (0x0000, 0x0001):             # 横线
+            return r"\sout{%s}" % parts[0]
+        up = bool(var & 0x0002)
+        down = bool(var & 0x0004)
+        if up and down:
+            return r"\xcancel{%s}" % parts[0]
+        if down:
+            return r"\bcancel{%s}" % parts[0]
+        return r"\cancel{%s}" % parts[0]
 
+    # 方框（TBoxBox）：只有整框才用 \boxed
     def box(self, t) -> str:
+        """规范变体位：0x0001 圆角（否则方角）、0x0002/0x0004/0x0008/0x0010
+        分别表示左/右/上/下四条边存在。缺边的框与圆角框没有对应写法，退回预览图；
+        四边位全不标时也当整框（与“标全”同义，变体 0 是默认情形）。"""
+        var = t.variation
+        if var & ~0x001F:
+            return self.fail("tmBOX 变体 0x%04X 有未知位" % var)
         parts = self.slot_texts(t)
         if len(parts) != 1:
             return self.fail("tmBOX 槽位数应为 1，实际 %d" % len(parts))
-        return r"\boxed{%s}" % parts[0] if parts[0] else self.fail("tmBOX 内容槽为空")
+        if not parts[0]:
+            return self.fail("tmBOX 内容槽为空")
+        if var & 0x0001:
+            return self.fail("tmBOX 圆角方框（变体 0x%04X）未实现" % var)
+        if (var & 0x001E) not in (0x0000, 0x001E):
+            return self.fail("tmBOX 缺边方框（变体 0x%04X）未实现" % var)
+        return r"\boxed{%s}" % parts[0]
 
     # 围栏：只有主槽（内容），括号字符由模板给出
     def fence(self, t, sel: str) -> str:
@@ -951,11 +1023,15 @@ def _coverage_test() -> bool:
          r"\overline{\overline{x}}"),
         ("箭头向右", tm(T_ARROW, 0x0020, line(ch("v"))), r"\overrightarrow{v}"),
         ("箭头向左", tm(T_ARROW, 0x0010, line(ch("v"))), r"\overleftarrow{v}"),
-        ("箭头双向", tm(T_ARROW, 0x0000, line(ch("v"))),
+        ("箭头双向", tm(T_ARROW, 0x0030, line(ch("v"))),
          r"\overleftrightarrow{v}"),
         ("向量单字", tm(T_VEC, 0, line(ch("v"))), r"\vec{v}"),
         ("向量多字", tm(T_VEC, 0, line(ch("a"), ch("b"))),
          r"\overrightarrow{ab}"),
+        ("向量指左", tm(T_VEC, 0x0001, line(ch("v"))), r"\overleftarrow{v}"),
+        ("向量在下", tm(T_VEC, 0x0004, line(ch("v"))), r"\underrightarrow{v}"),
+        ("向量半箭", tm(T_VEC, 0x0008, line(ch("v"))),
+         r"\overset{\rightharpoonup}{v}"),
         ("波浪号", tm(T_TILDE, 0, line(ch("x"))), r"\tilde{x}"),
         ("宽波浪号", tm(T_TILDE, 0, line(ch("x"), ch("y"))), r"\widetilde{xy}"),
         ("帽子", tm(T_HAT, 0, line(ch("x"))), r"\hat{x}"),
@@ -963,7 +1039,9 @@ def _coverage_test() -> bool:
         ("弧线", tm(T_ARC, 0, line(ch("x"))), r"\overset{\frown}{x}"),
         ("水平花括上", tm(T_HBRACE, 0x0001, line(ch("a"))), r"\overbrace{a}"),
         ("水平花括下", tm(T_HBRACE, 0x0000, line(ch("a"))), r"\underbrace{a}"),
-        ("删划线", tm(T_STRIKE, 0, line(ch("x"))), r"\cancel{x}"),
+        ("划掉线横线", tm(T_STRIKE, 0, line(ch("x"))), r"\sout{x}"),
+        ("划掉线斜线", tm(T_STRIKE, 0x0002, line(ch("x"))), r"\cancel{x}"),
+        ("划掉线双斜", tm(T_STRIKE, 0x0006, line(ch("x"))), r"\xcancel{x}"),
         ("方框", tm(T_BOX, 0, line(ch("x"))), r"\boxed{x}"),
         ("狄拉克两槽", tm(T_DIRAC, 0, line(ch("a")), line(ch("b"))),
          r"\left\langle a \middle| b \right\rangle"),
@@ -987,6 +1065,10 @@ def _coverage_test() -> bool:
     gates = [
         ("箭头双线", tm(T_ARROW, 0x0001, line(ch("v")))),
         ("箭头上标签槽", tm(T_ARROW, 0x0024, line(ch("v")))),
+        ("箭头没标方向", tm(T_ARROW, 0x0000, line(ch("v")))),
+        ("向量双向半箭", tm(T_VEC, 0x000B, line(ch("v")))),
+        ("方框缺边", tm(T_BOX, 0x001A, line(ch("x")))),
+        ("方框圆角", tm(T_BOX, 0x001F, line(ch("x")))),
         ("接头状态", tm(T_JSTATUS, 0, line(ch("x")))),
         ("水平方括号", tm(T_HBRACK, 0x0001, line(ch("a")))),
         ("附饰斜杠穿过", emb(10, "x")),
