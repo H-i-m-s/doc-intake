@@ -128,6 +128,33 @@ EMBELLS = {
 }
 EMBELL_INLINE = {5, 6, 18}   # 撇号是后缀，不包裹
 
+# 过箭头的附饰（embRARROW 11 / embLARROW 12 / embBARROW 13 / 半箭 14、15）。
+# 单原子用短写法（\vec），长内容用拉伸写法：MathType 的箭头会跟着内容变宽，
+# \vec 不会。半箭 LaTeX 没有“压在内容上”的标准写法，用 \overset 叠一个。
+_ARROW_EMBELLS = {
+    11: (r"\vec", r"\overrightarrow"),
+    12: (None, r"\overleftarrow"),
+    13: (None, r"\overleftrightarrow"),
+    14: (None, r"\overset{\rightharpoonup}"),
+    15: (None, r"\overset{\leftharpoonup}"),
+}
+
+# 帽子类模板（HatBox）的短/长写法：单原子用 \hat 这类，长内容用 \widehat 这类
+_HATS = {
+    "tmVEC": (r"\vec", r"\overrightarrow"),
+    "tmTILDE": (r"\tilde", r"\widetilde"),
+    "tmHAT": (r"\hat", r"\widehat"),
+}
+
+
+def _is_single_atom(s: str) -> bool:
+    """s 是不是「一个原子」（单字符或单条命令）。用来决定箭头要不要拉伸。"""
+    if not s:
+        return False
+    if len(s) == 1:
+        return True
+    return bool(re.fullmatch(r"\\[a-zA-Z]+|\\.", s))
+
 # 记录类型里不产出内容的：定义记录、字号记录、颜色记录、future
 SILENT = {"EncodingDefRec", "FontDefRec", "FontStyleDefRec", "EqnPrefsRec",
           "ColorRec", "ColorDefRec", "FutureRec", "SizeRec"}
@@ -374,6 +401,10 @@ class Renderer:
         return join([base, self.record(e)])
 
     def embell_accents(self, code: int, base: str) -> str:
+        if code in _ARROW_EMBELLS:
+            short, wide = _ARROW_EMBELLS[code]
+            fn = short if (short and _is_single_atom(base)) else wide
+            return "%s{%s}" % (fn, base)
         if code not in EMBELLS:
             return self.fail("未实现的附饰 code=%s" % code)
         fn = EMBELLS[code]
@@ -393,7 +424,7 @@ class Renderer:
         if sel in FENCES:
             return self.fence(t, sel)
         if sel == "tmINTERVAL":
-            return self.fail("未实现的模板 tmINTERVAL（单边区间，变体位含义未实测）")
+            return self.interval(t)
         if cls == "ScrBox":
             return self.script(t, sel)
         if cls == "FracBox":
@@ -406,7 +437,119 @@ class Renderer:
             return self.bigop(t, sel)
         if sel == "tmLIM":
             return self.limits(t)
+        # 下面这些按规范的选择子表 + 变体位实现（语料里没出现过，属新增覆盖，见文件头）。
+        if sel in ("tmUBAR", "tmOBAR"):
+            return self.bar(t, sel)
+        if sel in ("tmVEC", "tmTILDE", "tmHAT", "tmARC"):
+            return self.hat(t, sel)
+        if sel == "tmARROW":
+            return self.arrow(t)
+        if sel == "tmHBRACE":
+            return self.hbrace(t, sel)
+        if sel == "tmHBRACK":
+            return self.fail("未实现的水平方括号 tmHBRACK（KaTeX 没有 \\overbracket）")
+        if sel == "tmJSTATUS":
+            return self.fail("未实现的接头状态构造 tmJSTATUS（含义不明）")
+        if sel == "tmDIRAC":
+            return self.dirac(t)
+        if sel == "tmSTRIKE":
+            return self.strike(t)
+        if sel == "tmBOX":
+            return self.box(t)
         return self.fail("未实现的模板 %s（类 %s，变体 0x%04X）" % (sel, cls, t.variation))
+
+    # 模板槽位内容：LINE 槽按行渲染，其他记录直接渲染，避免把裸字符槽丢掉
+    def slot_texts(self, t) -> List[str]:
+        out: List[str] = []
+        for x in t.slots:
+            out.append(self.line_text(x) if isinstance(x, m5.LineRec)
+                       else self.record(x))
+        return out
+
+    # 错配/单边区间：左右围栏各自编码在变体里，左右可以不一样（如 [a,b)）
+    def interval(self, t) -> str:
+        glyphs = ("(", ")", "[", "]")
+        left = glyphs[t.variation & 0x0003]            # tvINTV_LEFT_*：低 2 位
+        right = glyphs[(t.variation & 0x0030) >> 4]    # tvINTV_RIGHT_*：0x0030
+        parts = [x for x in self.slot_texts(t) if x]
+        if not parts:
+            return self.fail("tmINTERVAL 没有内容槽")
+        return r"\left%s %s \right%s" % (left, join(parts), right)
+
+    # 上/下横线（BarBox）：单槽，变体 0x0001 = 双线
+    def bar(self, t, sel: str) -> str:
+        parts = self.slot_texts(t)
+        if len(parts) != 1:
+            return self.fail("%s 槽位数应为 1，实际 %d" % (sel, len(parts)))
+        if not parts[0]:
+            return self.fail("%s 内容槽为空" % sel)
+        fn = r"\underline" if sel == "tmUBAR" else r"\overline"
+        if t.variation & 0x0001:
+            return "%s{%s{%s}}" % (fn, fn, parts[0])
+        return "%s{%s}" % (fn, parts[0])
+
+    # 箭头（ArroBox）：只做“内容在下、箭头上”的常规情形
+    def arrow(self, t) -> str:
+        var = t.variation
+        # 0x0001 双线 / 0x0002 半箭：LaTeX 没有压在内容上的标准写法；
+        # 0x0004 上标签槽 / 0x0008 下标签槽：多槽时槽位顺序无语料可依，一并闸门。
+        if var & 0x000F:
+            return self.fail("tmARROW 变体 0x%04X 未实现（双线/半箭/上下标签槽）" % var)
+        parts = self.slot_texts(t)
+        if len(parts) != 1:
+            return self.fail("tmARROW 槽位数应为 1，实际 %d" % len(parts))
+        if not parts[0]:
+            return self.fail("tmARROW 内容槽为空")
+        if var & 0x0010:            # tvAR_LEFT
+            return r"\overleftarrow{%s}" % parts[0]
+        if var & 0x0020:            # tvAR_RIGHT
+            return r"\overrightarrow{%s}" % parts[0]
+        return r"\overleftrightarrow{%s}" % parts[0]
+
+    # 帽子类（HatBox）：tmVEC / tmTILDE / tmHAT / tmARC，都是单槽
+    def hat(self, t, sel: str) -> str:
+        parts = self.slot_texts(t)
+        if len(parts) != 1:
+            return self.fail("%s 槽位数应为 1，实际 %d" % (sel, len(parts)))
+        inner = parts[0]
+        if not inner:
+            return self.fail("%s 内容槽为空" % sel)
+        if sel == "tmARC":
+            return r"\overset{\frown}{%s}" % inner
+        short, wide = _HATS[sel]
+        return "%s{%s}" % (short if _is_single_atom(inner) else wide, inner)
+
+    # 水平花括号（HFenceBox）：单槽，变体 0x0001 = 槽在上面
+    def hbrace(self, t, sel: str) -> str:
+        parts = self.slot_texts(t)
+        if len(parts) != 1:
+            return self.fail("%s 槽位数应为 1，实际 %d" % (sel, len(parts)))
+        if not parts[0]:
+            return self.fail("%s 内容槽为空" % sel)
+        fn = r"\overbrace" if t.variation & 0x0001 else r"\underbrace"
+        return "%s{%s}" % (fn, parts[0])
+
+    # 狄拉克符号：两槽 \langle a \middle| b \rangle
+    def dirac(self, t) -> str:
+        parts = self.slot_texts(t)
+        if len(parts) == 2:
+            return r"\left\langle %s \middle| %s \right\rangle" % (parts[0], parts[1])
+        if len(parts) == 1:
+            return parts[0]
+        return self.fail("tmDIRAC 槽位数 %d 未实现" % len(parts))
+
+    # 删划线 / 方框
+    def strike(self, t) -> str:
+        parts = self.slot_texts(t)
+        if len(parts) != 1:
+            return self.fail("tmSTRIKE 槽位数应为 1，实际 %d" % len(parts))
+        return r"\cancel{%s}" % parts[0] if parts[0] else self.fail("tmSTRIKE 内容槽为空")
+
+    def box(self, t) -> str:
+        parts = self.slot_texts(t)
+        if len(parts) != 1:
+            return self.fail("tmBOX 槽位数应为 1，实际 %d" % len(parts))
+        return r"\boxed{%s}" % parts[0] if parts[0] else self.fail("tmBOX 内容槽为空")
 
     # 围栏：只有主槽（内容），括号字符由模板给出
     def fence(self, t, sel: str) -> str:
@@ -474,6 +617,9 @@ class Renderer:
 
     # 大运算符：主槽、下限槽、上限槽（实测顺序）
     def bigop(self, t, sel: str) -> str:
+        # tmINTOP / tmSUMOP：运算符本身在槽里（用户自选），其余槽是限位
+        if sel in ("tmINTOP", "tmSUMOP"):
+            return self.bigop_generic(t, sel)
         lines = self.slot_lines(t)
         if not lines:
             return self.fail("%s 没有内容槽" % sel)
@@ -521,6 +667,36 @@ class Renderer:
                            "_{%s}" % low if low else "",
                            "^{%s}" % up if up else "")
         return join([op, main])
+
+    # 通用大运算符（tmINTOP / tmSUMOP）：运算符槽不是 LINE，限位槽是 LINE。
+    # 不靠猜槽位顺序——按记录类型分。摆放按变体位强制写出（\limits / \nolimits），
+    # 因为运算符的数学类（决定默认摆放）事先不知道。
+    def bigop_generic(self, t, sel: str) -> str:
+        ops = [x for x in t.slots if not isinstance(x, m5.LineRec)]
+        if len(ops) != 1:
+            return self.fail("%s 的运算符槽 %d 个（应为 1）" % (sel, len(ops)))
+        op = self.record(ops[0])
+        if not op:
+            return self.fail("%s 运算符槽为空" % sel)
+        var = t.variation
+        roles = []
+        if var & BO_LOWER:
+            roles.append("l")
+        if var & BO_UPPER:
+            roles.append("u")
+        rest = [x for x in (self.line_text(l) for l in self.slot_lines(t)) if x]
+        if len(rest) != len(roles):
+            return self.fail("%s 限位槽 %d 个，变体标出 %d 个" % (sel, len(rest), len(roles)))
+        low = up = ""
+        for role, text in zip(roles, rest):
+            if role == "l":
+                low = text
+            else:
+                up = text
+        placement = r"\limits" if (var & BO_SUM) else r"\nolimits"
+        return "%s%s%s%s" % (op, placement,
+                              "_{%s}" % low if low else "",
+                              "^{%s}" % up if up else "")
 
     # 极限：主槽、下限槽、上限槽；主槽是已知算符名就摆成 _{}^{}
     def limits(self, t) -> str:
@@ -742,6 +918,96 @@ def _corpus_report(baseline=None) -> int:
     return 0 if ok else 1
 
 
+def _coverage_test() -> bool:
+    """新增覆盖的模板类与附饰逐条自测。
+
+    这些构造在语料里一次都没出现，没有实测数据；断言的是「按规范写出来的形状能正确
+    渲染、未实现的变体确实被闸门挡住」。槽位顺序与变体位依据见各方法注释。
+    返回 True 表示全部符合预期。
+    """
+    def ch(s, tf=3):
+        return m5.CharRec(typeface=tf, mt_code=ord(s))
+
+    def line(*objs):
+        return m5.LineRec(objects=list(objs))
+
+    def tm(idx, var, *slots):
+        return Renderer().tmpl(m5.TmplRec(selector_index=idx, variation=var,
+                                          slots=list(slots)))
+
+    def emb(code, base):
+        return Renderer().embell_accents(code, base)
+
+    T_INTV, T_UBAR, T_OBAR, T_ARROW = 9, 12, 13, 14
+    T_INTOP, T_SUMOP, T_HBRACE, T_HBRACK = 21, 22, 24, 25
+    T_DIRAC, T_VEC, T_TILDE, T_HAT = 30, 31, 32, 33
+    T_ARC, T_JSTATUS, T_STRIKE, T_BOX = 34, 35, 36, 37
+    LO, UP, SUM = 0x0010, 0x0020, 0x0040
+
+    cases = [
+        ("下划线", tm(T_UBAR, 0, line(ch("a"))), r"\underline{a}"),
+        ("上划线", tm(T_OBAR, 0, line(ch("x"))), r"\overline{x}"),
+        ("上划线双线", tm(T_OBAR, 0x0001, line(ch("x"))),
+         r"\overline{\overline{x}}"),
+        ("箭头向右", tm(T_ARROW, 0x0020, line(ch("v"))), r"\overrightarrow{v}"),
+        ("箭头向左", tm(T_ARROW, 0x0010, line(ch("v"))), r"\overleftarrow{v}"),
+        ("箭头双向", tm(T_ARROW, 0x0000, line(ch("v"))),
+         r"\overleftrightarrow{v}"),
+        ("向量单字", tm(T_VEC, 0, line(ch("v"))), r"\vec{v}"),
+        ("向量多字", tm(T_VEC, 0, line(ch("a"), ch("b"))),
+         r"\overrightarrow{ab}"),
+        ("波浪号", tm(T_TILDE, 0, line(ch("x"))), r"\tilde{x}"),
+        ("宽波浪号", tm(T_TILDE, 0, line(ch("x"), ch("y"))), r"\widetilde{xy}"),
+        ("帽子", tm(T_HAT, 0, line(ch("x"))), r"\hat{x}"),
+        ("宽帽子", tm(T_HAT, 0, line(ch("x"), ch("y"))), r"\widehat{xy}"),
+        ("弧线", tm(T_ARC, 0, line(ch("x"))), r"\overset{\frown}{x}"),
+        ("水平花括上", tm(T_HBRACE, 0x0001, line(ch("a"))), r"\overbrace{a}"),
+        ("水平花括下", tm(T_HBRACE, 0x0000, line(ch("a"))), r"\underbrace{a}"),
+        ("删划线", tm(T_STRIKE, 0, line(ch("x"))), r"\cancel{x}"),
+        ("方框", tm(T_BOX, 0, line(ch("x"))), r"\boxed{x}"),
+        ("狄拉克两槽", tm(T_DIRAC, 0, line(ch("a")), line(ch("b"))),
+         r"\left\langle a \middle| b \right\rangle"),
+        ("狄拉克单槽", tm(T_DIRAC, 0, line(ch("a"))), "a"),
+        ("区间圆括", tm(T_INTV, 0x0010, line(ch("a"))), r"\left( a \right)"),
+        ("区间错配", tm(T_INTV, 0x0003 | 0x0010, line(ch("a"))),
+         r"\left] a \right)"),
+        ("通用大算子总和式",
+         tm(T_SUMOP, LO | UP | SUM, ch("S"), line(ch("i")), line(ch("n"))),
+         r"S\limits_{i}^{n}"),
+        ("通用大算子积分式",
+         tm(T_INTOP, LO | UP, ch("I"), line(ch("a")), line(ch("b"))),
+         r"I\nolimits_{a}^{b}"),
+        ("附饰过右箭头单字", emb(11, "v"), r"\vec{v}"),
+        ("附饰过右箭头多字", emb(11, "ab"), r"\overrightarrow{ab}"),
+        ("附饰过左箭头", emb(12, "x"), r"\overleftarrow{x}"),
+        ("附饰过双向箭头", emb(13, "x"), r"\overleftrightarrow{x}"),
+        ("附饰右半箭", emb(14, "x"), r"\overset{\rightharpoonup}{x}"),
+        ("附饰单点（原有）", emb(2, "x"), r"\dot{x}"),
+    ]
+    gates = [
+        ("箭头双线", tm(T_ARROW, 0x0001, line(ch("v")))),
+        ("箭头上标签槽", tm(T_ARROW, 0x0024, line(ch("v")))),
+        ("接头状态", tm(T_JSTATUS, 0, line(ch("x")))),
+        ("水平方括号", tm(T_HBRACK, 0x0001, line(ch("a")))),
+        ("附饰斜杠穿过", emb(10, "x")),
+        ("附饰反向撇号", emb(7, "x")),
+    ]
+
+    print("── 新增覆盖（模板类 / 附饰）──")
+    bad = 0
+    for label, got, want in cases:
+        if got != want:
+            print("失败：%s 得到 %r，期望 %r" % (label, got, want))
+            bad += 1
+    for label, got in gates:
+        if got != "":
+            print("失败：%s 本该退回预览图，却给出 %r" % (label, got))
+            bad += 1
+    total = len(cases) + len(gates)
+    print("共 %d 项，%d 项不符" % (total, bad))
+    return bad == 0
+
+
 def self_test() -> int:
     ok = True
 
@@ -766,6 +1032,10 @@ def self_test() -> int:
         print("失败：渲染有说明 %s" % notes)
         ok = False
     print("范例结论：%s" % ("通过" if ok else "不通过"))
+
+    print()
+    if not _coverage_test():
+        ok = False
 
     print()
     print("── 语料 ──")
