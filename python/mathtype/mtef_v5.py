@@ -1057,10 +1057,10 @@ def spec_example() -> bytes:
 
 import os as _os
 
-# 语料走查默认看 samples/corpus/（仓库里不带，通常是跳过）；想跑真语料就把环境变量
-# MTEF_CORPUS 指过去，比如 D:\Agent\各种类型文件
-CORPUS_DIR = _os.environ.get("MTEF_CORPUS") or _os.path.join(
-    _os.path.dirname(_os.path.abspath(__file__)), "samples", "corpus")
+# 语料走查看 samples/corpus/：仓库里不带，所以平时是跳过。想跑就把语料文件丢进那个
+# 目录，不用改代码，也没有任何环境变量。
+CORPUS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                           "samples", "corpus")
 # 语料里含 v5 公式的文档（相对 CORPUS_DIR）
 CORPUS_FILES = [
     "公式图表测试.pptx",

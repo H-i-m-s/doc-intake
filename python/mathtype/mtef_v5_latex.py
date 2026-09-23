@@ -896,9 +896,9 @@ def render_equation(eq) -> Optional[str]:
 import os as _os      # 只用来把样本路径算成相对模块位置，不放任何绝对路径
 
 SAMPLES_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "samples")
-# 语料走查默认看 samples/corpus/（仓库里不带，所以通常是跳过）；想跑真正的语料就把
-# 环境变量 MTEF_CORPUS 指过去，比如 D:\Agent\各种类型文件
-CORPUS_DIR = _os.environ.get("MTEF_CORPUS") or _os.path.join(SAMPLES_DIR, "corpus")
+# 语料走查看 samples/corpus/：仓库里不带，所以平时是跳过。想跑就把语料文件丢进那个
+# 目录，不用改代码，也没有任何环境变量。
+CORPUS_DIR = _os.path.join(SAMPLES_DIR, "corpus")
 CORPUS_FILES = [
     "公式图表测试.pptx",
     "这是一个公式测试文件.docx",
