@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.5.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-2.2.0-blue" alt="version">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
   <img src="https://img.shields.io/badge/python-3.11+-yellow" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
@@ -8,41 +8,12 @@
 <h1 align="center">Doc Intake</h1>
 
 <p align="center">
-  Hana v2 App（App 形态） · 文档与图片内容提取工具<br>
+  Hana 插件 · 文档与图片内容提取工具<br>
   PDF / Word / PPT / Excel / HTML / 图片 → 结构化 Markdown
 </p>
 
 ---
 在使用本插件前，推荐先仔细阅读本Readme，或将Readme交予Agent，让其生成说明。推荐在已大致了解本插件的情况下进行使用
----
-
-## v2（App 形态）与 v1 的差异
-
-> 只讲**用户需要知道**的部分。工具名、参数、返回结构与 v1 **完全一致**，下面这些用法说明照用。
-
-**怎么装（v2 与 v1 不同）**
-
-1. 把 `doc-intake` 整个目录放到 `<HANA_HOME>/apps/` 下（v1 在 `<HANA_HOME>/plugins/`）。
-2. **先停用 v1 插件 `doc-intake`**。两个版本注册的工具名相同，同时启用会冲突。
-3. 重启 Hana，在市集「已安装」→ App 类目的「待批准」区块批准一次。首次批准会确认两项能力：
-   `app/process.spawn`（调用外部 Python）和 `app/tools.expose-to-model`（工具进入模型循环）。
-   批准后可在设置窗「安全」→「应用能力」里单独开关。
-4. **设置要重填**。v2 的设置与 v1 分开存储（v1 在 `plugin-data/doc-intake/config.json`，
-   v2 在 `user/preferences.json` 的 `settings_contributions["v2-doc-intake"]`）。
-   至少填 `pythonPath`，Token、降级链、保存路径按需补。
-5. 设置位置不变：设置左侧「Doc Intake」。
-
-**两处配置项写法变了**
-
-| 配置项 | v1 | v2 |
-|---|---|---|
-| `pdfBackendChain` | 数组，如 `["mineru","local"]` | **字符串**，用 `>` 或 `;` 分隔，如 `mineru>paddleocr>local`；留空 = 自动 |
-| `savePath` | 默认写死 `D:\Agent` | 留空 = 系统文档目录下的 `doc-intake`（按各自机器算，不写死盘符） |
-
-**和 v1 一样的地方**：文件夹路径照旧自动展开、媒体提取、公式转 LaTeX、降级链、保存策略、
-`doc_intake` / `doc_intake_validate` 两个工具的名字与参数全部不变。
-（v2 的 App 进程跑在 Node 权限模型下，读文件的工作已下放到被 spawn 的 Python 子进程完成，功能不受影响。）
-
 ---
 
 ## 为什么不用 `office_read-document`？
@@ -112,16 +83,11 @@
 pip install -r python/requirements.txt
 ```
 
-核心依赖（以 `python/requirements.txt` 为准）：
-
+核心依赖：
+- `pypdf` / `pdfplumber` — PDF 本地解析
 - `Pillow` — 图片处理、EMF/WMF 转换
-- `PyMuPDF` — PDF 本地解析（文本 + 内嵌图）
-- `requests` — PaddleOCR HTTP API（可选）
 - `mineru-open-sdk` — MinerU 云端 API（可选）
-- `html-to-markdown` — HTML 提取
-- `pywin32` / `xlrd` — 旧版 Office（.doc / .xls / .ppt）转换与读取
-
-> v2 是 App 形态，Python 依赖同样装在你自己的环境里，不动系统 Python。
+- `requests` — PaddleOCR HTTP API（可选）
 
 3. **云端 Token**（可选）：
    - MinerU Token：https://mineru.net/apiManage/token
@@ -234,58 +200,65 @@ Hana平台对插件返回信息有字数限制，大于32k将被略去中间部�
 
 ```
 doc-intake/
-├── manifest.json                 # v2 清单：图标、能力、设置 schema、版本
-├── index.js                      # defineApp 入口：读设置 + 注册两个工具
+├── manifest.json                 # 插件清单（配置项 schema、版本、描述）
+├── package.json                  # Node.js 包信息
 ├── README.md
-├── assets/
-│   └── icon.png                  # 图标（512×512）
 │
 ├── tools/                        # Hana 工具入口（JS）
 │   ├── doc_intake.js             # 主工具：文档/图片提取
 │   └── doc_intake_validate.js    # 工具：Token 验证
 │
-├── lib/                          # JS 公共模块（调度、设置、输出格式、日志、并发）
-├── sdk/                          # 随包分发的 @hana/app-sdk 闭包
-├── skills/doc-intake/SKILL.md    # Agent 技能描述（触发条件、参数、使用场景）
-├── doc/                          # 开发文档（MTEF 支持说明、接手与迭代、图标设计）
-├── test/                         # 自测与体检脚本（自包含、零绝对路径）
+├── lib/                          # JS 公共模块
+│   ├── service.js                # 核心调度：Python spawn、结果解析
+│   ├── settings.js               # 配置读取（合并 manifest defaults + 用户设置）
+│   ├── file-checker.js           # 文件类型检测、PDF 页数查询
+│   ├── doc-intake-helpers.js     # 媒体引导词构建、Agent payload 格式化
+│   ├── tool-output.js            # 统一工具输出格式（toToolResult / toToolError）
+│   ├── errors.js                 # DocIntakeError 错误类 + 序列化
+│   ├── semaphore.js              # 并发信号量（双池并发控制）
+│   ├── logger.js                 # JS 端日志（stderr，不污染 stdout JSON）
+│   └── validate.js               # Token 验证逻辑（JS 端实现）
 │
 ├── python/                       # Python 后端
-│   ├── main.py                   # 入口：参数解析、后端选择、链式降级、结果格式化
-│   ├── mineru_client.py          # MinerU 云端 API 客户端（多 Token KeyPool）
-│   ├── paddle_client.py          # PaddleOCR HTTP API 客户端（多 Token KeyPool）
-│   ├── key_pool.py               # 多 credential 轮询 + 失败跳过
+│   ├── main.py                   # Python 入口：参数解析、后端选择、链式降级、结果格式化
+│   ├── mineru_client.py          # MinerU 云端 API 客户端（多 credential KeyPool）
+│   ├── paddle_client.py          # PaddleOCR HTTP API 客户端（多 token KeyPool）
+│   ├── key_pool.py               # 统一 KeyPool：多 credential 轮询 + 失败跳过
 │   ├── api_retry.py              # HTTP 重试：指数退避、429/5xx 自动重试
 │   ├── image_splitter.py         # 长图智能分割（空白行检测 + 色差容忍）
-│   ├── pdf_splitter.py           # 大 PDF 内存分块（不落 chunk 文件）
-│   ├── split_cli.py              # 旧版手动 PDF 切割 CLI（主流程不调用）
-│   ├── list_sources.py           # 路径展开（文件夹 → 文件列表、类型过滤）
+│   ├── pdf_splitter.py           # 大 PDF 内存分块（PyMuPDF bytes）
+│   ├── split_cli.py              # 旧版手动 PDF 切割兼容 CLI（主流程不调用）
 │   ├── utils.py                  # 图片归一化（URL/本地/对象 → {stem}_media/）
-│   ├── validate.py               # Token 验证（Python 端）
+│   ├── validate.py               # Token 验证脚本（Python 端实现）
 │   ├── logger.py                 # Python 端日志（stderr）
-│   ├── mathtype_converter.py     # MathType OLE → LaTeX
+│   ├── mathtype_converter.py     # MathType OLE → LaTeX（基于 MTEF 解析）
 │   ├── requirements.txt          # Python 依赖
 │   │
 │   ├── extractors/               # 本地提取器
-│   │   ├── base.py               # 基类 BaseExtractor + ExtractionResult
-│   │   ├── _utils.py             # 公共件：媒体分类/命名/渲染、XML、表格、公式文本规范化
-│   │   ├── docx_extractor.py     # DOCX（文本/表格/公式/图/视/音）
-│   │   ├── pptx_extractor.py     # PPTX（同上 + 旧版转换）
-│   │   ├── xlsx_extractor.py     # XLSX/XLSM/旧版 XLS（表格/图片锚定）
+│   │   ├── __init__.py           # 提取器注册表（get_extractor）
+│   │   ├── base.py               # 基类 BaseExtractor + ExtractionResult 数据结构
+│   │   ├── _utils.py             # 公共工具（媒体分类/命名/渲染、XML namespace、表格）
+│   │   ├── docx_extractor.py     # DOCX 提取（文本/表格/公式/图/视/音）
+│   │   ├── pptx_extractor.py     # PPTX 提取（文本/表格/公式/图/视/音、旧版转换）
+│   │   ├── xlsx_extractor.py     # XLSX/XLSM/旧版 XLS 提取（表格/图片锚定）
 │   │   ├── legacy_converter.py   # DOC/XLS/PPT → OOXML 临时转换层
-│   │   ├── html_extractor.py     # HTML（元数据/链接/代码块/远程媒体）
-│   │   ├── pdf_extractor.py      # PDF 本地兜底（PyMuPDF）
-│   │   ├── emf_converter.py      # EMF/WMF → PNG
-│   │   ├── omml_converter.py     # OMML（Office 公式）→ LaTeX
-│   │   └── mathtype_filter.py    # MathType 预览图过滤
+│   │   ├── html_extractor.py     # HTML 提取（元数据/链接/代码块/远程媒体下载）
+│   │   ├── pdf_extractor.py      # PDF 本地兜底（PyMuPDF 文本+内嵌图）
+│   │   ├── emf_converter.py      # EMF/WMF → PNG 转换 + 媒体通用抽取
+│   │   ├── omml_converter.py     # OMML（Office 数学标记）→ LaTeX
+│   │   └── mathtype_filter.py    # MathType 预览图过滤（避免重复提取）
 │   │
-│   └── mathtype/                 # MTEF 解析与渲染（v3 与 v5 两条独立路线）
+│   └── mathtype/                 # MathType MTEF 解析库
+│       ├── __init__.py
+│       ├── mtef.py               # MTEF 二进制格式解析
+│       ├── record.py             # MTEF 记录解析
 │       ├── chars.py              # 字符映射
-│       ├── mtef_v3.py / mtef_v3_latex.py
-│       ├── mtef_v5.py / mtef_v5_latex.py
 │       ├── ole_util/             # OLE 复合文件读取
-│       └── samples/              # 自测样本
-
+│       └── setup.py
+│
+└── skills/
+    └── doc-intake/
+        └── SKILL.md              # Agent 技能描述（触发条件、参数、使用场景）
 ```
 
 ---
@@ -344,7 +317,7 @@ doc-intake/
 | `includeMedia` | `boolean` | `true` | 默认是否提取媒体（图片/视频/音频）。 |
 | `saveJson` | `boolean` | `false` | 默认是否保存结构化 JSON。 |
 | `autoSave` | `boolean` | `false` | 默认是否自动保存到本地。 |
-| `savePath` | `string` | `""` | 默认保存路径。**留空 = 系统文档目录下的 `doc-intake`**（按各自机器算，不写死盘符）。 |
+| `savePath` | `string` | `"D:\\Agent"` | 默认保存路径。 |
 
 ### MinerU 配置
 
@@ -376,7 +349,7 @@ doc-intake/
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `pdfBackendChain` | `string` | `""` | PDF 后端降级链。**用 `>` 或 `;` 分隔**，如 `mineru>paddleocr>local`；留空 = 自动（mineru>paddleocr>local）。按顺序尝试，失败自动降级到下一档。（v1 这里是数组，v2 改成了字符串） |
+| `pdfBackendChain` | `string[]` | `["local"]` | PDF 后端降级链，默认只使用本地后端；用户显式配置云端后按顺序尝试，失败自动降级到下一档。 |
 | `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF（在插件 Python 进程内按 `splitChunkPages` 生成内存 PDF bytes，直接上传云端，不创建 `*_chunks` 文件夹）。 |
 | `splitChunkPages` | `number` | `180` | 内存分块时每块页数（小于 MinerU 200 页限制）。 |
 
