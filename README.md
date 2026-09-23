@@ -13,7 +13,7 @@ Hana v2 App（`manifestVersion: 2`），位于 `<HANA_HOME>/apps/doc-intake`。
 doc-intake/
 ├── manifest.json          # v2 清单：能力、设置 schema
 ├── index.js               # defineApp 入口：读设置 + 注册两个工具
-├── assets/icon.svg        # 身份图标（占位，待替换）
+├── assets/icon.png        # 身份图标
 ├── lib/                   # JS 公共模块（调度、设置、输出格式）
 ├── tools/                 # 两个工具的实现
 ├── python/                # 提取器后端（原样迁移）

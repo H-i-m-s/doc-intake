@@ -4,7 +4,7 @@
   "name": "Doc Intake",
   "version": "2.5.0",
   "entry": "index.js",
-  "icon": "assets/icon.svg",
+  "icon": "assets/icon.png",
   "minAppVersion": "0.978.0",
   "description": "文档/图片内容提取。PDF（MinerU/PaddleOCR/本地）、图片 OCR、Office（DOC/DOCX/PPT/PPTX/XLS/XLSX/XLSM/HTML）转结构化 Markdown，含公式转 LaTeX、EMF 转 PNG、媒体提取。",
   "capabilities": [
