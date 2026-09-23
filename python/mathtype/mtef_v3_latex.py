@@ -208,6 +208,46 @@ def join(parts: List[str]) -> str:
     return "".join(out)
 
 
+# ── 公式里的中文（和全角标点）─────────────────────────────────────────
+# MathType 把中文当普通字符写进 CHAR 记录，mt_code 就是码位。裸着出也能显示，
+# 但字体会走数学字体栈，字距不对；包一层 \text{} 才对。按码位判，不看字体风格
+# 编号（实测语料里中文是 tf=12，但编号认法不通用）。
+
+_TEXT_ESCAPES = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%",
+                 "#": r"\#", "_": r"\_", "$": r"\$",
+                 "{": r"\{", "}": r"\}"}
+
+
+def _is_text_code(rec) -> bool:
+    """mt_code 落在中日韩 / 全角区间：按正文出，不按数学符号。"""
+    code = getattr(rec, "mt_code", -1)
+    return (0x2E80 <= code <= 0x9FFF or 0x3000 <= code <= 0x303F
+            or 0xF900 <= code <= 0xFAFF or 0xFE30 <= code <= 0xFE4F
+            or 0xFF00 <= code <= 0xFFEF)
+
+
+def _take_text_run(recs, i: int) -> Tuple[str, int]:
+    """从 i 起吃掉连续的正文类字符（中日韩 + 空格），返回 (文字, 下一个下标)。"""
+    buf: List[str] = []
+    while i < len(recs):
+        r = recs[i]
+        if type(r).__name__ != "CharRec":
+            break
+        code = getattr(r, "mt_code", -1)
+        if _is_text_code(r):
+            buf.append(chr(code))
+        elif code == 0x20:
+            buf.append(" ")
+        else:
+            break
+        i += 1
+    return "".join(buf), i
+
+
+def _escape_text(s: str) -> str:
+    return "".join(_TEXT_ESCAPES.get(ch, ch) for ch in s)
+
+
 class Renderer:
     def __init__(self):
         self.ok = True
@@ -249,6 +289,10 @@ class Renderer:
             if type(r).__name__ == "CharRec" and self.is_func_letter(r):
                 word, i = self.take_func_word(recs, i)
                 out.append(self.func_word(word))
+                continue
+            if type(r).__name__ == "CharRec" and _is_text_code(r):
+                run, i = _take_text_run(recs, i)
+                out.append(r"\text{%s}" % _escape_text(run))
                 continue
             out.append(self.record(r))
             i += 1

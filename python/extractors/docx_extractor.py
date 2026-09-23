@@ -48,6 +48,64 @@ def _docx_target_candidates(target: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
+# 公式容器标签：OLEObject 往上找最近的这些容器，取容器里第一张预览图，就能把每个公式
+# 对象配到它自己那张预览，而不是同段落里随便一张图。
+_OLE_CONTAINERS = {"object", "AlternateContent", "pict", "drawing", "inline",
+                   "anchor", "graphicData", "graphic", "choice", "fallback"}
+_PREVIEW_TAGS = ("blip", "imagedata")
+
+
+def pair_ole_previews(element, resolve):
+    """给 element 下的每个公式对象配它自己的预览图。
+
+    resolve(rId) 返回该关系对应的东西（预览路径或 ExtractedMedia），拿不到返回 None。
+    做法：从 OLEObject 往上找最近的公式容器，取容器里第一张预览图；容器里没有就按对象
+    在 element 里出现的次序到候选列表里对齐。返回 {ole_rId: 预览}。
+
+    背景：以前是按段落把所有公式都指向段落里第一张预览，同段落两道都失败时会串图——
+    第二道显示成第一道的图。论文里实测到过（image_036.png 被两道共用）。
+    """
+    pairs: dict[str, object] = {}
+    parent_map = {child: parent for parent in element.iter() for child in parent}
+    ole_nodes = [n for n in element.iter() if _local_name(n.tag) == "OLEObject"]
+
+    candidates: list[object] = []
+    for node in element.iter():
+        if _local_name(node.tag) not in _PREVIEW_TAGS:
+            continue
+        ref = _attr_by_local_name(node, "embed") or _attr_by_local_name(node, "id")
+        value = resolve(ref) if ref else None
+        if value is not None:
+            candidates.append(value)
+
+    for index, node in enumerate(ole_nodes):
+        r_id = _attr_by_local_name(node, "id")
+        if not r_id:
+            continue
+        found = None
+        ancestor = node
+        while True:
+            ancestor = parent_map.get(ancestor)
+            if ancestor is None:
+                break
+            if _local_name(ancestor.tag) not in _OLE_CONTAINERS:
+                continue
+            for n in ancestor.iter():
+                if _local_name(n.tag) not in _PREVIEW_TAGS:
+                    continue
+                ref = _attr_by_local_name(n, "embed") or _attr_by_local_name(n, "id")
+                found = resolve(ref) if ref else None
+                if found is not None:
+                    break
+            if found is not None:
+                break
+        if found is None and candidates:
+            found = candidates[index] if index < len(candidates) else candidates[-1]
+        if found is not None:
+            pairs[r_id] = found
+    return pairs
+
+
 class DocxExtractor(BaseExtractor):
     """DOCX 提取器，支持文本、图片/视频/音频、公式（OMML + MathType）和复杂表格"""
 
@@ -270,12 +328,12 @@ class DocxExtractor(BaseExtractor):
                 # 公式所在段落仍可能混有普通图片；普通图片必须保留。
                 selected.update(ordinary_blip_paths)
                 if has_failed_ole:
-                    # Fallback blip 是可渲染的现代预览；没有 Fallback 时才保留 VML 预览。
-                    selected.add(
-                        formula_blip_paths[0]
-                        if formula_blip_paths
-                        else (paragraph_vml_paths[0] if paragraph_vml_paths else "")
-                    )
+                    # 只导出「真的没转出来」的那些公式的预览图：每个失败公式留它自己那张。
+                    # 同段落两道都失败时两张都要留，否则第二道会指向第一道的图。
+                    for r_id, media_path in pair_ole_previews(
+                            paragraph, lambda r: rid_to_path.get(r)).items():
+                        if r_id in (ole_rids - ole_rids_with_latex) and media_path:
+                            selected.add(media_path)
             # 成功转为 LaTeX 的公式不导出其预览图片。
             selected.discard("")
 
@@ -376,39 +434,12 @@ class DocxExtractor(BaseExtractor):
                 for paragraph in root.iter():
                     if _local_name(paragraph.tag) != "p":
                         continue
-                    ole_ids = [
-                        _attr_by_local_name(node, "id")
-                        for node in paragraph.iter()
-                        if _local_name(node.tag) == "OLEObject"
-                    ]
-                    if not ole_ids:
+                    if not any(_local_name(n.tag) == "OLEObject"
+                               for n in paragraph.iter()):
                         continue
-                    preview_ids = [
-                        _attr_by_local_name(node, "embed") or _attr_by_local_name(node, "id")
-                        for node in paragraph.iter()
-                        if _local_name(node.tag) == "blip"
-                    ]
-                    fallback_ids = [
-                        _attr_by_local_name(node, "id")
-                        for node in paragraph.iter()
-                        if _local_name(node.tag) == "imagedata"
-                    ]
-                    preview_media = [
-                        rid_to_media[r_id]
-                        for r_id in preview_ids
-                        if r_id in rid_to_media
-                    ]
-                    fallback_media = [
-                        rid_to_media[r_id]
-                        for r_id in fallback_ids
-                        if r_id in rid_to_media
-                    ]
-                    for ole_id in ole_ids:
-                        # 优先选择 Fallback/Drawing 中的 blip；VML imagedata 是旧版预览，
-                        # 但在目标论文中同样可作为无 Fallback 时的回退。
-                        preview = (preview_media or fallback_media or [None])[0]
-                        if preview is not None:
-                            ole_preview_map[ole_id] = preview
+                    # 每个公式对象配它自己那张预览图；同段落里有别的图也不会串。
+                    ole_preview_map.update(
+                        pair_ole_previews(paragraph, rid_to_media.get))
         except Exception:
             logger.exception("构建 DOCX 公式关系映射失败")
 
@@ -745,6 +776,7 @@ class DocxExtractor(BaseExtractor):
         if ole_preview_map is None:
             ole_preview_map = {}
 
+        rendered: list[str] = []
         for child in run.iter():
             if _local_name(child.tag) != "OLEObject":
                 continue
@@ -753,11 +785,16 @@ class DocxExtractor(BaseExtractor):
             if "Equation" not in prog_id or not r_id:
                 continue
             if r_id in mathtype_map:
-                return f"${mathtype_map[r_id]}$"
+                rendered.append(f"${mathtype_map[r_id]}$")
+                continue
             preview = ole_preview_map.get(r_id)
             if preview is not None:
-                return self._render_media(preview, stem, alt="formula")
-        return None
+                rendered.append(self._render_media(preview, stem, alt="formula"))
+            else:
+                # 转不出 LaTeX、连预览图也找不到：留一个显眼记号，不让公式悄悄消失。
+                logger.warning("公式既没转出 LaTeX 也没找到预览图", r_id=r_id)
+                rendered.append("（公式未能转换）")
+        return "".join(rendered) if rendered else None
 
     def _get_media_from_elem(self, elem, rid_to_media):
         """从元素中获取所有媒体(图/视/音)，兼容 Strict/Transitional 属性。"""
