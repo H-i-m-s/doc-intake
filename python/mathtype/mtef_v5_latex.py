@@ -1002,6 +1002,55 @@ def _corpus_report(baseline=None) -> int:
     return 0 if ok else 1
 
 
+REAL_SAMPLE = r"D:\Agent\各种类型文件\公式测试.docx"
+# 值 = 期望的 LaTeX；None = 这个对象本身是空的（退回预览图）
+REAL_SAMPLE_EXPECTED = {
+    1: None,
+    2: r"\begin{gathered} \vec{v} \\ \overline{ABC} \end{gathered}",
+    3: None,
+    4: r"\widehat{ABC}",
+    5: r"\overbrace{a+b+c}/\underbrace{a+b+c}",
+    6: r"\overrightarrow{AB}",
+    7: r"\overleftarrow{v}",
+    8: r"\cancel{x+y}",
+    9: r"\cancel{x+y}",
+    10: r"\xrightarrow{f}",
+    11: r"\xleftarrow{f}",
+}
+
+
+def _real_sample_report() -> int:
+    """跑真机样本：用户用 MathType 7 手写、并逐张对过预览图的那 11 道。
+
+    这是唯一一份「人写式子 + MathType 亲笔」的数据，价值高于语料；改任何解析或渲染
+    逻辑都应该过这一关。文件不在了就跳过并返回 2，不会假通过。
+    """
+    import os
+    import zipfile
+    if not os.path.exists(REAL_SAMPLE):
+        print("真机样本不在，跳过：%s" % REAL_SAMPLE)
+        return 2
+    bad = 0
+    with zipfile.ZipFile(REAL_SAMPLE) as z:
+        names = sorted((n for n in z.namelist()
+                        if "/embeddings/" in n and n.lower().endswith(".bin")),
+                       key=lambda s: int("".join(c for c in os.path.basename(s)
+                                                if c.isdigit()) or 0))
+        for name in names:
+            num = int("".join(c for c in os.path.basename(name) if c.isdigit()))
+            want = REAL_SAMPLE_EXPECTED.get(num, "?")
+            try:
+                got = render(m5.parse_equation_native(
+                    m5.extract_native_stream(z.read(name))))[0]
+            except Exception as exc:
+                got = "异常 %r" % exc
+            if got != want:
+                print("失败：oleObject%d 得到 %r，期望 %r" % (num, got, want))
+                bad += 1
+    print("真机样本：%d 个对象，%d 个不符" % (len(REAL_SAMPLE_EXPECTED), bad))
+    return 1 if bad else 0
+
+
 def _coverage_test() -> bool:
     """新增覆盖的模板类与附饰逐条自测。
 
@@ -1134,6 +1183,11 @@ def self_test() -> int:
 
     print()
     if not _coverage_test():
+        ok = False
+
+    print()
+    print("── 真机样本（人写式子 + MathType 亲笔）──")
+    if _real_sample_report() == 1:
         ok = False
 
     print()
