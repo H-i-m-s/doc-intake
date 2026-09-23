@@ -14,7 +14,8 @@ M_NS = f"{{{M_NAMESPACE}}}"
 
 
 try:
-    from ._utils import local_name as _local_name
+    from ._utils import (local_name as _local_name, normalize_math_text,
+                         wrap_text_runs, merge_adjacent_text)
 except ImportError:
     # 允许独立脚本调用（不在 package 上下文）
     import sys as _sys
@@ -22,7 +23,8 @@ except ImportError:
     _p = str(_Path(__file__).parent)
     if _p not in _sys.path:
         _sys.path.insert(0, _p)
-    from _utils import local_name as _local_name
+    from _utils import (local_name as _local_name, normalize_math_text,
+                        wrap_text_runs, merge_adjacent_text)
 
 
 # Unicode to LaTeX symbol mapping
@@ -150,7 +152,6 @@ class OmmlToLatexConverter:
 
         # Word 自带公式把一个字的颗粒度存成很多小片段，同一句中文会变成一连串
         # \text{...}；这里把紧挨着的合并成一个（中间隔着数学的不碰）。
-        from text_norm import merge_adjacent_text
         return merge_adjacent_text("".join(result))
 
     def _get_math_text(self, run: ET.Element) -> str:
@@ -161,7 +162,6 @@ class OmmlToLatexConverter:
         2. 连续的中文段包成 \\text{...}——数学模式里裸着的中文会被当成未知符号。
         具体规则见 python/text_norm.py。
         """
-        from text_norm import normalize_math_text, wrap_text_runs
 
         text_parts: list[str] = []
         for t in run.iter():
