@@ -489,31 +489,39 @@ class Renderer:
             return "%s{%s{%s}}" % (fn, fn, parts[0])
         return "%s{%s}" % (fn, parts[0])
 
-    # 箭头（ArroBox）：只做“内容在下、箭头上”的常规情形
+    # 箭头（ArroBox）：子对象是 [上标签槽, 下标签槽, 箭头字形]
     def arrow(self, t) -> str:
+        r"""真机依据（MathType 7 写的 `\xrightarrow{f}`）：变体 0x0024 = 0x0004（上标签
+        槽存在）+ 0x0020（指右）；子对象依次是 SUB、COLOR、LINE(f)、LINE(空)、FULL、
+        CHAR(fnEXPAND，箭头字形 0x2192)。也就是上标签槽在前、下标签槽在后。
+
+        只做验过的情形：上标签槽存在。双线/半箭（0x0001/0x0002，与 tvAR_LOS/tvAR_SOL
+        复用，方向不唯一）、只有下标签槽、两个标签槽都没有时，槽位顺序没实测，退回预览图。"""
         var = t.variation
-        # 0x0004/0x0008 是上下标签槽：多槽时槽位顺序无语料可依，退回预览图。
-        # 0x0001/0x0002 双线与半箭也不做：这两个位与 tvAR_LOS/tvAR_SOL 复用
-        # （“大压小 / 小压大”），方向就不唯一了，LaTeX 也没有压在内容上的标准写法。
-        if var & 0x000F:
-            return self.fail("tmARROW 变体 0x%04X 未实现（双线/半箭/上下标签槽）" % var)
-        if var & ~0x0030:
+        if var & 0x0003:
+            return self.fail("tmARROW 双线/半箭（变体 0x%04X）未实现" % var)
+        if var & ~0x003C:
             return self.fail("tmARROW 变体 0x%04X 有未知位" % var)
-        parts = self.slot_texts(t)
-        if len(parts) != 1:
-            return self.fail("tmARROW 槽位数应为 1，实际 %d" % len(parts))
-        if not parts[0]:
-            return self.fail("tmARROW 内容槽为空")
+        if not (var & 0x0004):
+            return self.fail("tmARROW 没有上标签槽（变体 0x%04X）未实现" % var)
+        parts = self.slot_texts(t)          # 只数 LINE：上标签槽、下标签槽
+        if not parts:
+            return self.fail("tmARROW 找不到标签槽")
+        top = parts[0]
+        bottom = parts[1] if len(parts) > 1 else ""
+        if not top and not bottom:
+            return self.fail("tmARROW 两个标签槽都空")
         left = bool(var & 0x0010)      # tvAR_LEFT
         right = bool(var & 0x0020)     # tvAR_RIGHT
         if left and right:
-            return r"\overleftrightarrow{%s}" % parts[0]
-        if left:
-            return r"\overleftarrow{%s}" % parts[0]
-        if right:
-            return r"\overrightarrow{%s}" % parts[0]
-        # 两个方向位都不标：规范说的是“单箭头时指左 / 指右”，没标就没方向，不猜
-        return self.fail("tmARROW 变体 0x%04X 没标方向" % var)
+            cmd = r"\xleftrightarrow"
+        elif left:
+            cmd = r"\xleftarrow"
+        else:
+            cmd = r"\xrightarrow"
+        if bottom:
+            return "%s[%s]{%s}" % (cmd, bottom, top)
+        return "%s{%s}" % (cmd, top)
 
     # 向量（tmVEC，属 HatBox 类但自带方向变体）
     def vec(self, t) -> str:
@@ -1025,10 +1033,14 @@ def _coverage_test() -> bool:
         ("上划线", tm(T_OBAR, 0, line(ch("x"))), r"\overline{x}"),
         ("上划线双线", tm(T_OBAR, 0x0001, line(ch("x"))),
          r"\overline{\overline{x}}"),
-        ("箭头向右", tm(T_ARROW, 0x0020, line(ch("v"))), r"\overrightarrow{v}"),
-        ("箭头向左", tm(T_ARROW, 0x0010, line(ch("v"))), r"\overleftarrow{v}"),
-        ("箭头双向", tm(T_ARROW, 0x0030, line(ch("v"))),
-         r"\overleftrightarrow{v}"),
+        ("箭头右上标签", tm(T_ARROW, 0x0024, line(ch("f")), line()),
+         r"\xrightarrow{f}"),
+        ("箭头左上标签", tm(T_ARROW, 0x0014, line(ch("f")), line()),
+         r"\xleftarrow{f}"),
+        ("箭头双向带标签", tm(T_ARROW, 0x0034, line(ch("f")), line()),
+         r"\xleftrightarrow{f}"),
+        ("箭头右下标签", tm(T_ARROW, 0x002C, line(ch("f")), line(ch("x"))),
+         r"\xrightarrow[x]{f}"),
         ("向量单字", tm(T_VEC, 0, line(ch("v"))), r"\vec{v}"),
         ("向量单字指右", tm(T_VEC, 0x0002, line(ch("v"))), r"\vec{v}"),
         ("向量多字", tm(T_VEC, 0, line(ch("a"), ch("b"))),
@@ -1069,7 +1081,7 @@ def _coverage_test() -> bool:
     ]
     gates = [
         ("箭头双线", tm(T_ARROW, 0x0001, line(ch("v")))),
-        ("箭头上标签槽", tm(T_ARROW, 0x0024, line(ch("v")))),
+        ("箭头只有下标签槽", tm(T_ARROW, 0x0028, line(ch("v")), line())),
         ("箭头没标方向", tm(T_ARROW, 0x0000, line(ch("v")))),
         ("向量双向半箭", tm(T_VEC, 0x000B, line(ch("v")))),
         ("方框缺边", tm(T_BOX, 0x001A, line(ch("x")))),

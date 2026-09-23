@@ -389,8 +389,25 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
 | `\underbrace{a+b+c}` | `tmHBRACE` 变体 **`0x0000`** | `\underbrace{a+b+c}` ✓ |
 | `\overrightarrow{AB}` | `tmVEC` 变体 **`0x0002`**（指右） | `\overrightarrow{AB}` ✓ |
 | `\overleftarrow{v}` | 附饰 **12**（embLARROW） | `\overleftarrow{v}` ✓ |
+| `\cancel{x+y}`（两遍） | `tmSTRIKE` 变体 **`0x0002`**（左下→右上斜杠） | `\cancel{x+y}` ✓ |
+| `\xrightarrow{f}` | `tmARROW` 变体 **`0x0024`**（上标签槽 + 指右） | `\xrightarrow{f}` ✓ |
+| `\xleftarrow{f}` | `tmARROW` 变体 **`0x0014`**（上标签槽 + 指左） | `\xleftarrow{f}` ✓ |
 
 另有 2 个空对象（无内容、无模板、预览图也是空白），退回预览图——不是转换失败。
+一共 11 个对象，**9 个正确、2 个空**。
+
+`tmARROW` 的子对象顺序也从真机读出来了（`\xrightarrow{f}`）：
+
+```text
+TMPL #14 tmARROW var=0x0024 类=ArroBox
+  SUB / COLOR 颜色#0
+  LINE  f                     ← 上标签槽
+  LINE opts=0x01 空           ← 下标签槽
+  FULL / CHAR fnEXPAND mt=0x2192   ← 箭头字形本身
+```
+
+**上标签槽在前、下标签槽在后**，箭头字形在最后。双线/半箭（`0x0001`/`0x0002`）、只有下标签槽、
+两个标签槽都没有的情形仍退回预览图（没实测，不猜）。
 
 顺带验实两件事：
 
@@ -409,7 +426,7 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
 | 选择子 | 名称 | 写法 |
 |---|---|---|
 | 12、13 | tmUBAR、tmOBAR | `\underline` / `\overline`，变体 `0x0001` 双线套两层 |
-| 14 | tmARROW | 仅单槽无标签槽时：`0x10` 指左 / `0x20` 指右 / 都无则双向 |
+| 14 | tmARROW | 上标签槽存在时：`\xrightarrow[下]{上}` / `\xleftarrow` / `\xleftrightarrow`（变体 `0x0004` = 上标签槽，`0x0010`/`0x0020` = 指左/指右）；其余变体退回预览图 |
 | 31 | tmVEC | 方向变体：`0x1` 指左 / `0x2` 指右 / `0x4` 箭头在下方 / `0x8` 半箭；两向位不标默认向右。单原子 `\vec`，长内容可拉伸写法，半箭用 `\overset` / `\underset` |
 | 32–34 | tmTILDE、tmHAT、tmARC | `\tilde`｜`\widetilde`、`\hat`｜`\widehat`、`\overset{\frown}{}` |
 | 24 | tmHBRACE | `\overbrace` / `\underbrace`（变体 `0x0001` = 槽在上） |
@@ -463,10 +480,13 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
    `\dot{z}_{1}{}^{2}`），输出合法、渲染一致，只是写法上多了一个空组。
 8. **v5 的 MATRIX 分隔线**（行列分隔线）已按规范解析，但语料里没出现过画分隔线的
    矩阵，只保证了字节数读取正确，渲染未实测。
-9. **还有几个模板的「变体 0 语义」没有真机样本**：真机样本（见第九节）已经验掉
-   `tmOBAR`（0 = 单线）、`tmHBRACE`（`0x0001` 槽在上、0 = 槽在下）、`tmHAT`（0 = 单一
-   变体）、`tmVEC`（`0x0002` = 指右）；**`tmSTRIKE`（变体 0 是否等于横线）、`tmBOX`
-   （四边位全不标是否等于整框）、`tmARROW`、`tmINTERVAL`、`tmINTOP`/`tmSUMOP` 仍未验**。
+9. **还有几样没有真机样本**：真机样本（见第九节）已经验掉 `tmOBAR`（0 = 单线）、
+   `tmHBRACE`（`0x0001` 槽在上、0 = 槽在下）、`tmHAT`（0 = 单一变体）、`tmVEC`
+   （`0x0002` = 指右）、`tmSTRIKE`（`0x0002` = 左下→右上斜杠）、`tmARROW`（`0x0024`/
+   `0x0014` 带标签箭头）。**仍未验**：`tmSTRIKE` 的横线（变体 0 / `0x0001`）与
+   左上→右下斜杠（`0x0004`）、`tmBOX`（尤其四边位全不标是否等于整框）、`tmARROW`
+   的双线/半箭/只有下标签槽、`tmINTERVAL`、`tmINTOP`/`tmSUMOP`、`tmTILDE`、
+   `tmVEC` 的半箭（`0x0008`）。这批的变体位都是照规范位表实现的，没有真机佐证。
 
 ---
 
@@ -493,8 +513,8 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
   `这是一个公式测试文件.docx` 2 道、`翻转课堂计算报告带公式.docx` 1 道）。
   v3 那 30 道来自 `[2]第二章_信息与信息论.pptx`。
 - **为验证而写的真机样本**：`D:\Agent\各种类型文件\公式测试.docx`（MathType 7.0 写出，
-  7 个 `Equation.DSMT4` 对象 + 7 张 WMF 预览；覆盖附饰 11/12、`tmOBAR`、`tmHAT`、
-  `tmHBRACE` 上/下、`tmVEC` 指右，另有 2 个空对象）。
+  11 个 `Equation.DSMT4` 对象 + 11 张 WMF 预览；覆盖附饰 11/12、`tmOBAR`、`tmHAT`、
+  `tmHBRACE` 上/下、`tmVEC` 指右、`tmSTRIKE` 上斜、`tmARROW` 带标签；另有 2 个空对象）。
 - **相关提交**：
 
   ```text
