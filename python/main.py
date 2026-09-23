@@ -96,13 +96,23 @@ def load_settings(args) -> dict:
     return {}
 
 
+def default_save_path() -> str:
+    """savePath 留空时的默认位置：系统文档目录下的 doc-intake（没有 Documents 就退到家目录）。
+
+    不写死任何盘符：这个 app 要装到别人电脑上，位置得按各自的机器算。
+    """
+    home = os.path.expanduser("~")
+    docs = os.path.join(home, "Documents")
+    return os.path.join(docs if os.path.isdir(docs) else home, "doc-intake")
+
+
 def determine_output_dir(args, settings) -> Optional[str]:
     """确定输出目录"""
     if args.output_dir:
         return args.output_dir
     
     if settings.get("autoSave", False):
-        return settings.get("savePath")
+        return settings.get("savePath") or default_save_path()
     
     return None
 
@@ -560,7 +570,7 @@ def _run(args) -> dict:
         from PIL import Image
 
         if not output_dir:
-            output_dir = settings.get("savePath")
+            output_dir = settings.get("savePath") or default_save_path()
 
         img = Image.open(args.source)
         # 用 with 包裹 — PIL 持有源图 file handle,Windows 不 close 会锁到 GC。

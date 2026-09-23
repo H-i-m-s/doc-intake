@@ -1,0 +1,17 @@
+oleObject1.bin / oleObject2.bin 的来源与用途
+==========================================
+
+来源
+----
+取自 zhexiao/mtef-go 仓库的测试数据（test/oleObject1.bin、test/oleObject2.bin），
+许可为 Apache License 2.0。
+
+内容
+----
+两个 OLE 复合文件，各含一段 MathType 的 Equation Native 流：
+  oleObject1.bin  二次方程求根公式，渲染结果为 \frac{-b\pm \sqrt{b^{2}-4ac}}{2a}
+  oleObject2.bin  三重积分，槽位里是占位数字（222 与 11）
+
+用途
+----
+给 test/audit.py、test/peek.py 当一份「不依赖任何本机文档」的输入样本。

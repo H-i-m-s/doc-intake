@@ -347,7 +347,7 @@ double subscript，修好后一致。
 一道不多一道不少（输出里 `$` 计数 306）。那 11 个对象是 `Equation.DSMT4` 但 `.bin`
 为 0 字节的空壳（负载被剥掉），只能退预览图——**退路在这类文档里不是兜底，是主路**。
 
-临时探针脚本放在 `D:\Agent\MTEF-v3-探索\`（未入库）：
+临时探针脚本放在一个开发目录里（未入库）：
 
 - `audit_all.py` — 全量体检：解析失败、渲染提示、内容量比、结构检查；
 - `verify_v5_preview.py` — 抽公式、配预览图、拼「预览 ｜ 渲染」对照图；
@@ -358,7 +358,7 @@ double subscript，修好后一致。
 ### 8.3 端到端回归
 
 ```bash
-conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
+python <开发目录>/regress_converter.py
 ```
 
 走应用入口 `MathTypeConverter`，覆盖 6 份文档全部公式，**合计 195 道**（v5 + v3），
@@ -504,21 +504,21 @@ TMPL #14 tmARROW var=0x0024 类=ArroBox
 
 - **格式规范**：MathType 官方 MTEF v5 文档，rtf2latex2e 项目存档：
   <https://rtf2latex2e.sourceforge.net/MTEF5.html>
-  （原文已存 `D:\Agent\MTEF-v3-探索\MTEF5.html`，剥好的纯文本 `MTEF5.txt`）
+  （原文另存了一份本地快照，剥好的纯文本为 `MTEF5.txt`）
 - **旁证实现**：
   - 被删掉的旧实现 `python/mathtype/mtef.py` 是 zhexiao/mtef-go 的 Python 移植，
     读法（平铺流）与渲染（按选择子手抄）都不作依据，只在第七节 7.1 留作反面例证；
   - `mathtype/mtef_v3_latex.py` 里上下划线、箭头、Dirac、弧线这几类的既有口径，
     是 v5 新增覆盖的旁证之一（同一个模板概念、另一套格式的实现）；
   - zhexiao/mtef-go 的 `test/` 下两个真机样本（已下到
-    `D:\Agent\MTEF-v3-探索\mtef-go样本\`）：`oleObject1.bin` 我的解析走满 317/317、
+    `test/samples/`）：`oleObject1.bin` 我的解析走满 317/317、
     渲染成同一道二次方程（与规范范例、与该仓库自己打印的结果三方一致）；
     `oleObject2.bin` 走满 286/286，是一道带圈三重积分（槽位里是填充数字 `11`、下限
     `222`，输出 `\oiiint_{222}11` 与文件内容相符）。这两个样本里都没有向量、上划线、
     帽子、花括号，补不上第九节第二栏的缺口。
   **两者都不构成正确性证据**，只作旁证。
-- **语料**：`D:\Agent\各种类型文件\` 下 6 份文档，合计 165 道 v5 公式
-  （`01 毕业论文：波浪适应救助船结构设计与平顺性分析_李杨.docx` 153 道 + 11 个
+- **语料**：开发时用过的 6 份文档（不入库），合计 165 道 v5 公式
+  （其中最大的一份 153 道 + 11 个
   0 字节空壳、`公式图表测试.pptx` 4 道、`复杂—翻车机公式及表格图片处理.docx` 5 道、
   `这是一个公式测试文件.docx` 2 道、`翻转课堂计算报告带公式.docx` 1 道）。
   v3 那 30 道来自 `[2]第二章_信息与信息论.pptx`。
@@ -538,5 +538,5 @@ TMPL #14 tmARROW var=0x0024 类=ArroBox
   48d4398  新增 MTEF v5 记录解析器，按官方规范实现
   ```
 
-  其中 `db9a520` 之前的历史（旧 `mtef.py` 那一版、以及从 `D:\Agent\MTEF_py\` 移植
+  其中 `db9a520` 之前的历史（旧 `mtef.py` 那一版、以及从一份本地开发副本移植
   过来的 `record.py`）已不在当前实现里，保留在 git 历史中只为留痕。

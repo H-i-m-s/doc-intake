@@ -175,7 +175,7 @@ def _ends_with_script(s: str) -> bool:
 
     用来挡 double subscript：同一个基上挂两层同向上下标（\sigma_{Fd}^{2}_{i}）真 LaTeX
     会报 Double subscript，KaTeX 也直接不渲染。拿预览图逐张比对时确实碰到了这种输出
-    （毕业论文 #130：预览是 σ^{2}_{Fdi}）。join 遇到「上一段以脚本组结尾、这一段又以
+    （开发语料里的一个实例：预览是 σ^{2}_{Fdi}）。join 遇到「上一段以脚本组结尾、这一段又以
     _ 或 ^ 开头」就补一个空组 {}，变成合法的 {}_{...}，视觉完全一致。"""
     if not s.endswith("}"):
         return False
@@ -899,15 +899,22 @@ SAMPLES_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "sampl
 # 语料走查看 samples/corpus/：仓库里不带，所以平时是跳过。想跑就把语料文件丢进那个
 # 目录，不用改代码，也没有任何环境变量。
 CORPUS_DIR = _os.path.join(SAMPLES_DIR, "corpus")
-CORPUS_FILES = [
-    "公式图表测试.pptx",
-    "这是一个公式测试文件.docx",
-    "复杂—翻车机公式及表格图片处理.docx",
-    "翻转课堂计算报告带公式.docx",
-    "01 毕业论文：波浪适应救助船结构设计与平顺性分析_李杨.docx",
-]
-# 第一次跑通后填：(v5 对象数, 渲染成功数)
-CORPUS_EXPECTED = (165, 165)
+
+
+def _corpus_files():
+    """不问名字，把 CORPUS_DIR 下的 docx/pptx 全扫一遍。"""
+    import glob as _glob
+    if not _os.path.isdir(CORPUS_DIR):
+        return []
+    out = []
+    for ext in ("*.docx", "*.pptx"):
+        out.extend(_os.path.basename(p)
+                   for p in sorted(_glob.glob(_os.path.join(CORPUS_DIR, ext))))
+    return out
+CORPUS_FILES = _corpus_files()
+# 基准（v5 对象数, 渲染成功数）。语料是私人的、不进仓库，所以默认不设基准：
+# 只报告数字，不判定通过与否。
+CORPUS_EXPECTED = None
 # 规范范例应渲染出的式子（二次方程）
 EXAMPLE_EXPECT = r"\frac{-b\pm \sqrt{b^{2}-4ac}}{2a}"
 # 范例渲染结果里必须出现、且必须不出现的片段

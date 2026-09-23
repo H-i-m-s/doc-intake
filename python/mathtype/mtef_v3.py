@@ -31,10 +31,9 @@ Ruby records3/*.rb）。两者都用「子对象列表读到 END 就收」的贪
 
 实测
 ----
-两份语料合计 30 个对象，全部逐字节走满：
-1. D:\\Agent\\各种类型文件\\公式图表测试.pptx 的 oleObject3.bin；
-2. D:\\Agent\\各种类型文件\\[2]第二章_信息与信息论.pptx 的 30 个 Equation.3
-   对象（product=1 Equation Editor，产品版本 3.1）。
+两份样本（文件不入库）合计 30 个对象，全部逐字节走满：
+1. 一份 pptx 里的 oleObject3.bin；
+2. 另一份 pptx 里的 30 个 Equation.3 对象（product=1 Equation Editor，产品版本 3.1）。
 自测：python mtef_v3.py --selftest
 
 矩阵

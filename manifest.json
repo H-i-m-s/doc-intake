@@ -20,7 +20,7 @@
             "type": "string",
             "title": "Python 可执行文件路径",
             "default": "",
-            "description": "conda 环境的 python.exe 路径，例如 E:\\Conda\\envs_dirs\\Agent\\python.exe"
+            "description": "conda 环境的 python.exe 路径，例如 <conda 目录>/envs/<环境名>/python.exe"
           },
           "defaultBackend": {
             "type": "string",
@@ -289,7 +289,8 @@
           "savePath": {
             "type": "string",
             "title": "默认保存路径",
-            "default": "D:\\Agent"
+            "default": "",
+            "description": "留空就用系统文档目录下的 doc-intake（不写死盘符，按各自的机器算）"
           }
         }
       }

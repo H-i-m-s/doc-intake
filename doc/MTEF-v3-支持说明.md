@@ -25,7 +25,7 @@ MTEF v3 是四者里最老的一支（Equation Editor 3.0，随 Office 2003 及�
 它的数据躺在 OLE 复合文件的 `Equation Native` 流里。
 
 **这类老公式在课程旧课件里存量很大**，且数据是完整的——能解出 LaTeX，不必退回图片。
-本文记录的语料（29 道）来自 `D:\Agent\各种类型文件\[2]第二章_信息与信息论.pptx`。
+本文记录的语料（29 道）来自一份课件 pptx（不入库）。
 
 ---
 
@@ -304,7 +304,7 @@ obj13（两个 ∑，且空矩阵处无多余空隙）、obj18 / obj28（积分�
 obj21（$\sum_i P_i$）、obj24（$\int\limits_R$）、obj25（分段函数的花括号矩阵），
 **全部与输出一致**。
 
-临时探针脚本当时放在 `D:\Agent\MTEF-v3-探索\`（`spec_walk.py` 逐字节按规范打印
+临时探针脚本当时放在一个开发目录里（未入库，`spec_walk.py` 逐字节按规范打印
 结构、`report_v3.py` 批量体检、`pair_preview.py` 配预览图），未入库。
 
 ---
@@ -366,9 +366,9 @@ obj21（$\sum_i P_i$）、obj24（$\int\limits_R$）、obj25（分段函数的�
 - **旁证实现**：mathtypejx（MIT）`records3.py` / `stream.py`，上游是 jure/mathtype 的
   Ruby `records3/*.rb`。两者都用「列表读到 END 就收」的贪心读法，**互相吻合不构成
   正确性证据**，只作旁证。
-- **语料**：`D:\Agent\各种类型文件\[2]第二章_信息与信息论.pptx`（30 个 `Equation.3`
+- **语料**：一份课件 pptx（不入库）（30 个 `Equation.3`
   对象，29 个有真实数据，带 30 张兜底预览图：28 张 WMF + 2 张 EMF）。
-- **样本**：`D:\Agent\各种类型文件\公式图表测试.pptx` 的
+- **样本**：`python/mathtype/samples/公式图表测试.pptx`（仓库自带）的
   `ppt/embeddings/oleObject3.bin`。
 - **相关提交**：
 

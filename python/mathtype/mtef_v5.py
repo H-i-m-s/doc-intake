@@ -46,7 +46,8 @@ MathType 官方 MTEF v5 规范（MathType 4.0，1999-08-09）：
 --------
 1. 规范范例：292 字节逐字节走满，字符/字体风格/选择子序列与 EQN_PREFS 的字号表
    （规范自己标注了 12pt、58%、42%、150%、100%、75%、150%、1pt）逐项对上。
-2. 语料：D:\\Agent\\各种类型文件\\ 下 5 个文档里的 v5 公式全部逐字节走满、无 error。
+2. 语料：开发时用过的一批文档（不入库，丢进 samples/corpus/ 就能复跑），
+   v5 公式全部逐字节走满、无 error。
 3. 合成字节：小值/大值/负值 nudge、SIZE 三种情形、两字节变体号、FUTURE 跳过长度
    ——这几条范例与语料都没覆盖到。
 自测：python mtef_v5.py --selftest
@@ -858,7 +859,7 @@ def matrix_cells(matrix: "MatrixRec") -> List[object]:
     规范：MATRIX 的子对象列表就是「每格一个 LINE，自左到右、自上而下」。列表里夹杂的
     FULL / SUB / SYM 这类字号标记和 COLOR 这类状态记录都不产出内容，不算单元。
 
-    实测依据（毕业论文里两个矩阵）：
+    实测依据（开发语料里的两个矩阵）：
     - oleObject69 的 4x1 矩阵列表有 7 项：4 个 LINE + 3 个 COLOR，去掉 COLOR 正好 4 格；
     - oleObject128 的 2x4 矩阵列表有 15 项：8 个 LINE + 5 个 FULL + 2 个 COLOR。
     所以只把 LINE 当单元。空单元格是带 mtefOPT_LINE_NULL 的 LINE，仍算一格。
@@ -1061,16 +1062,22 @@ import os as _os
 # 目录，不用改代码，也没有任何环境变量。
 CORPUS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                            "samples", "corpus")
-# 语料里含 v5 公式的文档（相对 CORPUS_DIR）
-CORPUS_FILES = [
-    "公式图表测试.pptx",
-    "这是一个公式测试文件.docx",
-    "复杂—翻车机公式及表格图片处理.docx",
-    "翻转课堂计算报告带公式.docx",
-    "01 毕业论文：波浪适应救助船结构设计与平顺性分析_李杨.docx",
-]
-# 第一次跑通后填的基准：(文档数, v5 对象数, 走满且无 error 的对象数)
-CORPUS_EXPECTED = (5, 165, 165)
+# 语料里含 v5 公式的文档：不问名字，把 CORPUS_DIR 下的 docx/pptx 全扫一遍。
+def _corpus_files():
+    import glob as _glob
+    if not _os.path.isdir(CORPUS_DIR):
+        return []
+    out = []
+    for ext in ("*.docx", "*.pptx"):
+        out.extend(_os.path.basename(p)
+                   for p in sorted(_glob.glob(_os.path.join(CORPUS_DIR, ext))))
+    return out
+
+
+CORPUS_FILES = _corpus_files()
+# 基准（文档数, v5 对象数, 走满且无 error 的对象数）。语料是私人的、不进仓库，
+# 所以默认不设基准：只报告数字，不判定通过与否。
+CORPUS_EXPECTED = None
 
 
 def _print_tree(records: List[object], depth: int = 0, limit: int = 400) -> int:
