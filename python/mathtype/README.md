@@ -18,10 +18,10 @@
 ## 自测
 
 ```bash
-python mathtype/mtef_v5.py --selftest        # 规范范例逐字节 + 语料走满率
-python mathtype/mtef_v5_latex.py --selftest  # 范例 + 新增覆盖 35 项 + 语料渲染
-python mathtype/mtef_v3.py --selftest
-python mathtype/mtef_v3_latex.py --selftest
+python mathtype/selftest_v5_parse.py        # 规范范例逐字节 + 语料走满率
+python mathtype/selftest_v5_render.py  # 范例 + 新增覆盖 35 项 + 语料渲染
+python mathtype/selftest_v3_parse.py
+python mathtype/selftest_v3_render.py
 ```
 
 语料路径不存在时自测会跳过并返回 2，不会假通过。

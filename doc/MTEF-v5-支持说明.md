@@ -307,9 +307,9 @@ v3/v5 通用，也不用猜哪个 typeface 是中文。
 ### 8.1 三条自测（可随时跑）
 
 ```bash
-python mathtype/mtef_v5.py --selftest        # 解析：规范范例逐字节 + 语料走满率
-python mathtype/mtef_v5_latex.py --selftest  # 渲染：范例 + 新增覆盖 35 项 + 语料
-python mathtype/mtef_v3_latex.py --selftest  # v3 那一支：样本与基准逐字比对
+python mathtype/selftest_v5_parse.py        # 解析：规范范例逐字节 + 语料走满率
+python mathtype/selftest_v5_render.py  # 渲染：范例 + 新增覆盖 35 项 + 语料
+python mathtype/selftest_v3_render.py  # v3 那一支：样本与基准逐字比对
 ```
 
 `--example` 可以把规范范例的记录树 / 渲染结果打出来。

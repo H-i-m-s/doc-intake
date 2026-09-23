@@ -70,7 +70,7 @@ try:  # 包内导入（python/mathtype 作为包被引用时）
 except ImportError:  # 扁平导入（mathtype_converter 把 python/mathtype 加进了 sys.path）
     from chars import Chars, SpecialChar
 
-__all__ = ["render", "render_equation", "self_test"]
+__all__ = ["render", "render_equation"]
 
 # 自测基准：样本公式（Equation.3）渲染结果应与它的兜底预览图逐项一致
 EXPECTED_LATEX = (
@@ -675,46 +675,3 @@ def render(eq) -> Tuple[Optional[str], List[str]]:
 def render_equation(eq) -> Optional[str]:
     latex, _ = render(eq)
     return latex
-
-
-def self_test() -> int:
-    """用真实样本验收：渲染结果应与该公式的兜底预览图一致。"""
-    import zipfile
-
-    try:
-        from . import mtef_v3 as m3
-    except ImportError:
-        import mtef_v3 as m3
-
-    print("样本：%s" % m3.SAMPLE_PPTX)
-    try:
-        with zipfile.ZipFile(m3.SAMPLE_PPTX) as z:
-            stream = m3.extract_native_stream(z.read(m3.SAMPLE_EMBED))
-    except FileNotFoundError:
-        print("样本不存在，跳过")
-        return 2
-
-    eq = m3.parse_equation_native(stream)
-    latex, notes = render(eq)
-    want = " ".join(EXPECTED_LATEX.split())
-    got = " ".join((latex or "").split())
-    ok = got == want
-    if not ok:
-        print("失败：渲染结果与基准不一致")
-        print("  期望: %s" % want[:260])
-        print("  实际: %s" % (got[:260] or "(空)"))
-        if notes:
-            print("  说明: %s" % notes)
-    else:
-        print("渲染 %d 字符，与预览图逐项一致" % len(want))
-    print("结论：%s" % ("通过" if ok else "不通过"))
-    return 0 if ok else 1
-
-
-if __name__ == "__main__":
-    import sys
-
-    if "--selftest" in sys.argv:
-        sys.exit(self_test())
-    print(__doc__)
-    print("用法：python mtef_v3_latex.py --selftest")

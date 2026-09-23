@@ -24,20 +24,20 @@
 python audit.py samples/oleObject1.bin   # 不是 OOXML 的输入，会当成一个裸 OLE 对象来看
 ```
 
-## 库自带的自测
+## 解析器/渲染器自带的自测
 
-跟这个目录是两回事：那是解析器/渲染器内部的基准（规范范例逐字节、真机样本比对等），
-跑法是直接给模块加 `--selftest`：
+这四个脚本原来长在库文件里（库文件末尾挂一大段测试），现在整段搬到这个目录，
+库文件只留纯逻辑。内容是规范范例逐字节、新增覆盖项、真机样本比对、语料走查：
 
 ```bash
-python ../python/mathtype/mtef_v5.py --selftest
-python ../python/mathtype/mtef_v5_latex.py --selftest
-python ../python/mathtype/mtef_v3.py --selftest
-python ../python/mathtype/mtef_v3_latex.py --selftest
+python test/selftest_v5_parse.py
+python test/selftest_v5_render.py
+python test/selftest_v3_parse.py
+python test/selftest_v3_render.py
 ```
 
-其中「语料走查」需要 `../python/mathtype/samples/corpus/` 下有 docx/pptx 才会跑，
-目录不存在就跳过（语料是私人的，不进仓库）。
+裸跑就是自测。其中「语料走查」需要 `python/mathtype/samples/corpus/` 下有 docx/pptx
+才会跑，目录不存在就跳过（语料是私人的，不进仓库）；跳过时退出码为 0，不算失败。
 
 ## 一个教训
 

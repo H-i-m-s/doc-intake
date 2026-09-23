@@ -63,11 +63,12 @@ def print_tree(body: bytes, version: int) -> None:
         print("    （记录树打印只支持 v5）")
         return
     import mtef_v5
+    from selftest_v5_parse import _print_tree
 
     eq = mtef_v5.parse(body)
     print(f"    MTEF v5 记录树：consumed={eq.consumed} total={eq.total} "
           f"complete={eq.complete} errors={eq.errors[:3]}")
-    mtef_v5._print_tree(getattr(eq, "records", []), depth=2, limit=400)
+    _print_tree(getattr(eq, "records", []), depth=2, limit=400)
 
 
 def main(argv) -> int:

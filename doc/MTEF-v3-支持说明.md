@@ -271,8 +271,8 @@ MTEF 里矩阵本身不带分隔符，括号只来自围栏，所以用 `\begin{
 ### 8.1 两条自测（可随时跑）
 
 ```bash
-python mathtype/mtef_v3.py --selftest        # 解析：样本 + 语料的解析质量
-python mathtype/mtef_v3_latex.py --selftest  # 渲染：样本与基准逐字比对
+python mathtype/selftest_v3_parse.py        # 解析：样本 + 语料的解析质量
+python mathtype/selftest_v3_render.py  # 渲染：样本与基准逐字比对
 ```
 
 第一条断言：
