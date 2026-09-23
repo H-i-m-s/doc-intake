@@ -21,6 +21,17 @@ Office 里的公式有四种来源，doc-intake 分四条路处理：
 | Equation Editor 3.x | progId `Equation.3`，MTEF v3 | `mathtype/mtef_v3.py` + `mtef_v3_latex.py` |
 | 无法解析 | 任意 | 用公式的兜底预览图（WMF/EMF 转 PNG） |
 
+**「公式对象」不等于「MTEF」**。Office 里的公式对象在结构上都长一样（一个 OLE 对象
+配一张预览图），但肚子里可以完全不同。实测过一份用 LaTeXSnipper（LaTeX 公式编辑器）
+做的 docx：8 个对象、8 张 EMF 预览齐全，可 ProgID 是 `LaTeXSnipper.Formula.1`，
+OLE 里的流是 `Payload` / `PresentationEmf` / `EPRINT` / `ObjInfo`，**没有
+`Equation Native`**——它和 MTEF 不是一回事，本文这套代码对它没有入口。
+
+判断一份文档里的公式能不能走本文这条路，只看 `word/document.xml` 里的 `ProgID`：
+`Equation.DSMT4` / `DSMT6` / `DSMT7` 是 MathType（v5，本文范围）；`Equation.3` 是老
+Equation Editor（v3，见 v3 那份说明）；别的 ProgID 都不在本范围。没有 `embeddings`
+目录则说明用的是 Word 自带公式（OMML），那是另一条路。
+
 MTEF v5 是现在最常见的公式格式：MathType 4 之后一直用它，学位论文、期刊模板、
 课件里主力都是这一支。它的数据躺在 OLE 复合文件的 `Equation Native` 流里，
 body 首字节就是 MTEF 版本号（5）。
