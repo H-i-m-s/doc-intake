@@ -458,13 +458,14 @@ class Renderer:
             return self.box(t)
         return self.fail("未实现的模板 %s（类 %s，变体 0x%04X）" % (sel, cls, t.variation))
 
-    # 模板槽位内容：LINE 槽按行渲染，其他记录直接渲染，避免把裸字符槽丢掉
+    # 模板内容槽：只有 LINE 才算槽位
     def slot_texts(self, t) -> List[str]:
-        out: List[str] = []
-        for x in t.slots:
-            out.append(self.line_text(x) if isinstance(x, m5.LineRec)
-                       else self.record(x))
-        return out
+        r"""内容槽的文本。模板的子对象列表里除了槽位，还夹着它自己的装饰字形
+        （fnEXPAND 的 CHAR）与 COLOR 记录——实测 \widehat{ABC} 的子对象是
+        [COLOR, LINE(A B C), CHAR(fnEXPAND)]，真正的内容只有那个 LINE。
+        按 LINE 计数才跟规范里「一个槽位」的说法对得上。"""
+        return [self.line_text(x) for x in t.slots
+                if isinstance(x, m5.LineRec)]
 
     # 错配/单边区间：左右围栏各自编码在变体里，左右可以不一样（如 [a,b)）
     def interval(self, t) -> str:
@@ -516,11 +517,13 @@ class Renderer:
 
     # 向量（tmVEC，属 HatBox 类但自带方向变体）
     def vec(self, t) -> str:
-        """向量箭头。规范变体位：0x0001 指左、0x0002 指右、0x0004 箭头在槽下方、
-        0x0008 半箭。两向位都不标时默认向右（单原子用 \\vec，长内容用可拉伸写法）。
+        r"""向量箭头。规范变体位：0x0001 指左、0x0002 指右、0x0004 箭头在槽下方、
+        0x0008 半箭。两个方向位都不标时默认向右。
 
-        半箭没有可拉伸写法，用 \\overset / \\underset 叠一个；上下双向的半箭
-        （两位都标）含义不清，退回预览图。"""
+        真机依据（MathType 7 写的 \vec{v}）：变体就是 0x0002（指右）。单个字母的
+        向量用 \vec（MathType 的箭头也跟着内容伸缩，单字母就是短箭头）；长内容用
+        可拉伸写法。半箭没有可拉伸写法，用 \overset / \underset 叠一个；上下双向
+        的半箭（两位都标）含义不清，退回预览图。"""
         var = t.variation
         if var & ~0x000F:
             return self.fail("tmVEC 变体 0x%04X 有未知位" % var)
@@ -538,7 +541,7 @@ class Renderer:
                 return self.fail("tmVEC 双向半箭（变体 0x%04X）未实现" % var)
             sym = r"\leftharpoonup" if left else r"\rightharpoonup"
             return r"\%s{%s}{%s}" % ("underset" if under else "overset", sym, inner)
-        if not (left or right or under) and _is_single_atom(inner):
+        if _is_single_atom(inner) and not left and not under and not (var & 0x0008):
             return r"\vec{%s}" % inner
         if left and right:
             name = "underleftrightarrow" if under else "overleftrightarrow"
@@ -563,11 +566,11 @@ class Renderer:
         short, wide = _HATS[sel]
         return "%s{%s}" % (short if _is_single_atom(inner) else wide, inner)
 
-    # 水平花括号（HFenceBox）：单槽，变体 0x0001 = 槽在上面
+    # 水平花括号（HFenceBox）：子对象是 [主槽, 小槽, 花括号字形]
     def hbrace(self, t, sel: str) -> str:
         parts = self.slot_texts(t)
-        if len(parts) != 1:
-            return self.fail("%s 槽位数应为 1，实际 %d" % (sel, len(parts)))
+        if not parts or len(parts) > 2:
+            return self.fail("%s 内容槽 1~2 个，实际 %d" % (sel, len(parts)))
         if not parts[0]:
             return self.fail("%s 内容槽为空" % sel)
         fn = r"\overbrace" if t.variation & 0x0001 else r"\underbrace"
@@ -744,7 +747,8 @@ class Renderer:
     # 不靠猜槽位顺序——按记录类型分。摆放按变体位强制写出（\limits / \nolimits），
     # 因为运算符的数学类（决定默认摆放）事先不知道。
     def bigop_generic(self, t, sel: str) -> str:
-        ops = [x for x in t.slots if not isinstance(x, m5.LineRec)]
+        ops = [x for x in t.slots
+               if not isinstance(x, (m5.LineRec, m5.ColorRec))]
         if len(ops) != 1:
             return self.fail("%s 的运算符槽 %d 个（应为 1）" % (sel, len(ops)))
         op = self.record(ops[0])
@@ -1026,6 +1030,7 @@ def _coverage_test() -> bool:
         ("箭头双向", tm(T_ARROW, 0x0030, line(ch("v"))),
          r"\overleftrightarrow{v}"),
         ("向量单字", tm(T_VEC, 0, line(ch("v"))), r"\vec{v}"),
+        ("向量单字指右", tm(T_VEC, 0x0002, line(ch("v"))), r"\vec{v}"),
         ("向量多字", tm(T_VEC, 0, line(ch("a"), ch("b"))),
          r"\overrightarrow{ab}"),
         ("向量指左", tm(T_VEC, 0x0001, line(ch("v"))), r"\overleftarrow{v}"),

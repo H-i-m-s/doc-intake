@@ -148,6 +148,28 @@ FULL / SUB / SUB2 这三个标记在不同位置含义不同：
 大运算符那条的依据：`tmSUM` 变体 `0x70` 的槽位是「Σa_i² / i=1 / ∞」，变体 `0x40`
 只有主槽。规范正文那套位值与数据对不上，按数据实现。
 
+### 模板的子对象列表里不只有槽位
+
+模板的子对象列表里除内容槽，还夹着两样东西：**装饰字形**（`fnEXPAND` 的 CHAR，比如
+宽帽子那道帽尖、花括号本身）和 **COLOR 记录**。实测 MathType 7 写出的 `\widehat{ABC}`：
+
+```text
+TMPL #33 tmHAT var=0x0000 类=HatBox tattr=0x00
+  COLOR 颜色#0
+  LINE  CHAR A  CHAR B  CHAR C
+  CHAR fnEXPAND mt=0x0302
+```
+
+真正的内容只有那个 LINE。所以「某个类有几个槽位」要**按 LINE 数**，不能按记录数——
+按记录数会把装饰字形和颜色也算成槽位（新增覆盖第一版把 `tmHAT` 读成 3 个槽、
+`tmHBRACE` 读成 8 个槽，就是这么来的）。
+
+规范里 **Template subobject order** 那一节列了所有多槽位类的子对象顺序：ArroBox 2
+（主槽 + 箭头字符）、BigOp 4（主槽 + 上 + 下 + 大运算符字符）、Dirac 5、Frac 2、
+HFence 3（主槽 + 小槽 + 花括号字符）、LDiv 2、Lim 3、ParBox 3（主槽 + 左右围栏字符）、
+Root 2、Scr 2、Slash 2。**BarBox / HatBox / StrikeBox / TBoxBox 不在表里**，即它们只有
+一个内容槽。
+
 ### 上下标、限位与函数名
 
 - `tmSUB` 下标槽在前；`tmSUP` 下标槽在前、上标槽在后；`tmSUBSUP` 先下标后上标。
@@ -353,6 +375,31 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
 | — | MATRIX / PILE | 1×1、2×1、2×2、2×4、4×1 / 多行 |
 | 附饰 | 2 emb1DOT、3 emb2DOT | 23 / 12 |
 
+### 有真机样本验证（MathType 7 手写，7 个对象）
+
+`D:\Agent\各种类型文件\公式测试.docx`（MathType 7.0 写出，7 个 `Equation.DSMT4` 对象）
+是唯一一份「为验证而写」的真机样本，每个对象都与它自己的 WMF 预览并排对过：
+
+| 写的式子 | MathType 的真实编码 | 渲染结果 |
+|---|---|---|
+| `\vec{v}` | 附饰 **11**（embRARROW） | `\vec{v}` ✓ |
+| `\overline{ABC}` | `tmOBAR` 变体 `0x0000` | `\overline{ABC}` ✓ |
+| `\widehat{ABC}` | `tmHAT` 变体 `0x0000` | `\widehat{ABC}` ✓ |
+| `\overbrace{a+b+c}` | `tmHBRACE` 变体 **`0x0001`** | `\overbrace{a+b+c}` ✓ |
+| `\underbrace{a+b+c}` | `tmHBRACE` 变体 **`0x0000`** | `\underbrace{a+b+c}` ✓ |
+| `\overrightarrow{AB}` | `tmVEC` 变体 **`0x0002`**（指右） | `\overrightarrow{AB}` ✓ |
+| `\overleftarrow{v}` | 附饰 **12**（embLARROW） | `\overleftarrow{v}` ✓ |
+
+另有 2 个空对象（无内容、无模板、预览图也是空白），退回预览图——不是转换失败。
+
+顺带验实两件事：
+
+- **同一个视觉构造走哪条路是有分工的**：单个字母上的向量箭头，MathType 用的是
+  **附饰 11**；两个字母上要拉伸的长箭头，才用 `tmVEC` 模板（变体 `0x0002`）。
+  两条都得支持，只做模板会漏掉单字母向量。
+- **宽窄是内容长度决定的，不是变体**：`\widehat{ABC}` 与 `\hat{x}` 都是 `tmHAT` 变体 0，
+  箭头跟着内容伸缩，所以渲染时才按内容长度选 `\hat` / `\widehat`。
+
 ### 新增覆盖：按规范实现，**没有样本验证**
 
 这批构造语料里一次都没出现过。选择子号、变体位、附饰值全部照规范 MTEF5 的表
@@ -416,9 +463,10 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
    `\dot{z}_{1}{}^{2}`），输出合法、渲染一致，只是写法上多了一个空组。
 8. **v5 的 MATRIX 分隔线**（行列分隔线）已按规范解析，但语料里没出现过画分隔线的
    矩阵，只保证了字节数读取正确，渲染未实测。
-9. **三个带变体的新模板用了「变体 0 = 默认写法」的解读**：`tmBOX`（四边位全不标当
-   整框）、`tmSTRIKE`（变体 0 当横线）、`tmVEC`（两向位都不标当向右）。规范的表把每个
-   位都写成「存在 / 否则」，没说 0 的语义，这里是按惯例取同义，没有真机样本可证。
+9. **还有几个模板的「变体 0 语义」没有真机样本**：真机样本（见第九节）已经验掉
+   `tmOBAR`（0 = 单线）、`tmHBRACE`（`0x0001` 槽在上、0 = 槽在下）、`tmHAT`（0 = 单一
+   变体）、`tmVEC`（`0x0002` = 指右）；**`tmSTRIKE`（变体 0 是否等于横线）、`tmBOX`
+   （四边位全不标是否等于整框）、`tmARROW`、`tmINTERVAL`、`tmINTOP`/`tmSUMOP` 仍未验**。
 
 ---
 
@@ -444,6 +492,9 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
   0 字节空壳、`公式图表测试.pptx` 4 道、`复杂—翻车机公式及表格图片处理.docx` 5 道、
   `这是一个公式测试文件.docx` 2 道、`翻转课堂计算报告带公式.docx` 1 道）。
   v3 那 30 道来自 `[2]第二章_信息与信息论.pptx`。
+- **为验证而写的真机样本**：`D:\Agent\各种类型文件\公式测试.docx`（MathType 7.0 写出，
+  7 个 `Equation.DSMT4` 对象 + 7 张 WMF 预览；覆盖附饰 11/12、`tmOBAR`、`tmHAT`、
+  `tmHBRACE` 上/下、`tmVEC` 指右，另有 2 个空对象）。
 - **相关提交**：
 
   ```text
