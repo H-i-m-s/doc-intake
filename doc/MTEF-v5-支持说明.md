@@ -285,7 +285,7 @@ python mathtype/mtef_v3_latex.py --selftest  # v3 那一支：样本与基准逐
 规范标注逐项一致）；语料 165 个对象全部走满且无 error 提示。
 
 第二条断言：范例渲染成 $\frac{-b\pm \sqrt{b^{2}-4ac}}{2a}$；`_coverage_test()`
-35 项（29 项期望输出 + 6 项期望闸门）全部符合；语料 165/165 渲染成功、
+44 项（34 项期望输出 + 10 项期望闸门）全部符合；语料 165/165 渲染成功、
 `\left/\right` 不配对 0 个、用 `array` 0 个。
 
 两个自测都带基准常量（`CORPUS_EXPECTED`），语料路径不存在时**跳过并返回 2**，
@@ -352,10 +352,12 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
 |---|---|---|
 | 12、13 | tmUBAR、tmOBAR | `\underline` / `\overline`，变体 `0x0001` 双线套两层 |
 | 14 | tmARROW | 仅单槽无标签槽时：`0x10` 指左 / `0x20` 指右 / 都无则双向 |
-| 31–34 | tmVEC、tmTILDE、tmHAT、tmARC | `\vec`｜`\overrightarrow`、`\tilde`｜`\widetilde`、`\hat`｜`\widehat`、`\overset{\frown}{}` |
+| 31 | tmVEC | 方向变体：`0x1` 指左 / `0x2` 指右 / `0x4` 箭头在下方 / `0x8` 半箭；两向位不标默认向右。单原子 `\vec`，长内容可拉伸写法，半箭用 `\overset` / `\underset` |
+| 32–34 | tmTILDE、tmHAT、tmARC | `\tilde`｜`\widetilde`、`\hat`｜`\widehat`、`\overset{\frown}{}` |
 | 24 | tmHBRACE | `\overbrace` / `\underbrace`（变体 `0x0001` = 槽在上） |
 | 30 | tmDIRAC | `\left\langle a \middle| b \right\rangle` |
-| 36、37 | tmSTRIKE、tmBOX | `\cancel` / `\boxed` |
+| 36 | tmSTRIKE | `0x1` 横线（变体 0 同义）→ `\sout`；斜线按 `0x2` / `0x4` 组合 → `\cancel` / `\bcancel` / `\xcancel` |
+| 37 | tmBOX | 整框（四边位全有，或全不标）→ `\boxed`；圆角与缺边退回预览图 |
 | 9 | tmINTERVAL | 左围栏取变体低 2 位、右围栏取 `0x0030` 两位（能出 $\left] a \right)$ 这种错配） |
 | 21、22 | tmINTOP、tmSUMOP | 运算符在槽里：按记录类型分（限位槽一定是 LINE），摆放显式写 `\limits` / `\nolimits` |
 | 附饰 11、12、13 | embRARROW、embLARROW、embBARROW | `\vec`｜`\overrightarrow`、`\overleftarrow`、`\overleftrightarrow` |
@@ -373,7 +375,8 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
 
 - `tmHBRACK`（水平方括号）：KaTeX 没有 `\overbracket`；
 - `tmJSTATUS`（接头状态构造）：含义不明；
-- `tmARROW` 的双线 / 半箭 / 带上下标签槽：单槽以外槽位顺序无语料可依；
+- `tmARROW` 的双线 / 半箭 / 带上下标签槽：`0x0001` / `0x0002` 与 `tvAR_LOS` /
+  `tvAR_SOL`（大小压小）复用，方向不唯一；两向位都不标时也不猜方向；
 - 斜线分式（`tmFRACT` 变体 `0x0002`）：LaTeX 写法与 `\frac` 外观差异大，宁可不给；
 - 围栏类里语料没出现过的组合；
 - 附饰 7（反向撇号）、10（斜杠穿过）、21（双斜杠）、22、23（斜杠类）：没有合适的
@@ -402,6 +405,9 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
    `\dot{z}_{1}{}^{2}`），输出合法、渲染一致，只是写法上多了一个空组。
 8. **v5 的 MATRIX 分隔线**（行列分隔线）已按规范解析，但语料里没出现过画分隔线的
    矩阵，只保证了字节数读取正确，渲染未实测。
+9. **三个带变体的新模板用了「变体 0 = 默认写法」的解读**：`tmBOX`（四边位全不标当
+   整框）、`tmSTRIKE`（变体 0 当横线）、`tmVEC`（两向位都不标当向右）。规范的表把每个
+   位都写成「存在 / 否则」，没说 0 的语义，这里是按惯例取同义，没有真机样本可证。
 
 ---
 
@@ -414,7 +420,13 @@ conda run -n Agent python D:\Agent\MTEF-v3-探索\regress_converter.py
   - 被删掉的旧实现 `python/mathtype/mtef.py` 是 zhexiao/mtef-go 的 Python 移植，
     读法（平铺流）与渲染（按选择子手抄）都不作依据，只在第七节 7.1 留作反面例证；
   - `mathtype/mtef_v3_latex.py` 里上下划线、箭头、Dirac、弧线这几类的既有口径，
-    是 v5 新增覆盖的旁证之一（同一个模板概念、另一套格式的实现）。
+    是 v5 新增覆盖的旁证之一（同一个模板概念、另一套格式的实现）；
+  - zhexiao/mtef-go 的 `test/` 下两个真机样本（已下到
+    `D:\Agent\MTEF-v3-探索\mtef-go样本\`）：`oleObject1.bin` 我的解析走满 317/317、
+    渲染成同一道二次方程（与规范范例、与该仓库自己打印的结果三方一致）；
+    `oleObject2.bin` 走满 286/286，是一道带圈三重积分（槽位里是填充数字 `11`、下限
+    `222`，输出 `\oiiint_{222}11` 与文件内容相符）。这两个样本里都没有向量、上划线、
+    帽子、花括号，补不上第九节第二栏的缺口。
   **两者都不构成正确性证据**，只作旁证。
 - **语料**：`D:\Agent\各种类型文件\` 下 6 份文档，合计 165 道 v5 公式
   （`01 毕业论文：波浪适应救助船结构设计与平顺性分析_李杨.docx` 153 道 + 11 个
