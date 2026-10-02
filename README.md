@@ -105,21 +105,27 @@
 ## 安装 & 配置
 ### 前置条件
 
-1. **Python 环境**：在插件设置面板的 `pythonPath` 填写 conda 环境的 `python.exe` 路径
+1. **Python 环境**：在插件设置页的「基础项」填写 `Python 可执行文件路径`（conda 环境填 `<conda 目录>/envs/<环境名>/python.exe`）
 2. **Python 依赖**：
 
 ```bash
 pip install -r python/requirements.txt
 ```
 
-核心依赖（以 `python/requirements.txt` 为准）：
+依赖清单（以 `python/requirements.txt` 为准，与设置页「环境依赖管理」卡片一致）：
 
-- `Pillow` — 图片处理、EMF/WMF 转换
-- `PyMuPDF` — PDF 本地解析（文本 + 内嵌图）
-- `requests` — PaddleOCR HTTP API（可选）
-- `mineru-open-sdk` — MinerU 云端 API（可选）
-- `html-to-markdown` — HTML 提取
-- `pywin32` / `xlrd` — 旧版 Office（.doc / .xls / .ppt）转换与读取
+必装：
+
+- `Pillow` — 图片处理：长图分割、EMF→PNG 转换、图片读写
+- `PyMuPDF` — PDF 本地兜底提取，以及大 PDF 按页分块
+- `requests` — 云端 API 调用、远程图片下载、HTML 抓取
+
+可选：
+
+- `mineru-open-sdk` — MinerU 云端 PDF 提取；缺失则降级链跳过 MinerU 这一档
+- `html-to-markdown` — HTML → Markdown 转换；缺失则 HTML 解析不可用
+- `pywin32` — 旧版 .doc/.xls/.ppt 经 Office COM 转换（仅 Windows）
+- `xlrd` — 旧版 .xls（BIFF）数值读取
 
 > v2 是 App 形态，Python 依赖同样装在你自己的环境里，不动系统 Python。
 
@@ -137,6 +143,16 @@ pip install -r python/requirements.txt
 - 'DOMAIN,mineru.org.cn,DIRECT'
 - 'DOMAIN,sso.openxlab.org.cn,DIRECT'
 
+
+### 设置页
+
+设置页分三段，改动即时生效、无需重启：
+
+- **基础项**（默认展开）：`pythonPath`、默认解析后端、PDF 降级链、MinerU / PaddleOCR 两个 Token、默认语言、是否提取媒体、自动保存与保存路径。必填项和常用项都在这一层。
+- **高级设置**（默认收起，点标题展开）：MinerU / PaddleOCR 细节、PDF 切割、图片分割、并发与重试、旧版 Office 转换、HTML 提取、Excel 行列上限、Agent 返回容量、日志。默认值都调过，不确定就别改。
+- **环境依赖管理**：用你填的 `pythonPath` 逐项探测依赖装没装，列出「库名 / 功能 / 必装或可选 / 当前状态」。缺依赖时可以直接复制 `pip install` 命令，也可以点「一键安装缺失的必装依赖」就地安装（安装会改动你那个 Python 环境，页面内会先确认）。
+
+> 检测是只读的：探测脚本只做导入判断与版本查询，不安装任何东西；只有你点了安装按钮，插件才会调用 `pip install`，且只允许安装依赖清单里登记过的包。
 
 ### 后续推荐操作
 
@@ -234,11 +250,14 @@ Hana平台对插件返回信息有字数限制，大于32k将被略去中间部�
 
 ```
 doc-intake/
-├── manifest.json                 # v2 清单：图标、能力、设置 schema、版本
+├── manifest.json                 # v2 清单：图标、能力、设置 schema 与自定义设置页、版本
 ├── index.js                      # defineApp 入口：读设置 + 注册两个工具
 ├── README.md
 ├── assets/
 │   └── icon.png                  # 图标（512×512）
+│
+├── routes/settings.js            # 设置页后端路由：配置读写 + 依赖检测 + 一键安装
+├── ui/                           # 自定义设置页（settings.html + assets：样式、脚本、内置 SDK）
 │
 ├── tools/                        # Hana 工具入口（JS）
 │   ├── doc_intake.js             # 主工具：文档/图片提取
@@ -262,6 +281,7 @@ doc-intake/
 │   ├── list_sources.py           # 路径展开（文件夹 → 文件列表、类型过滤）
 │   ├── utils.py                  # 图片归一化（URL/本地/对象 → {stem}_media/）
 │   ├── validate.py               # Token 验证（Python 端）
+│   ├── probe_deps.py             # 依赖探测（设置页「环境依赖管理」用）
 │   ├── logger.py                 # Python 端日志（stderr）
 │   ├── mathtype_converter.py     # MathType OLE → LaTeX
 │   ├── requirements.txt          # Python 依赖
@@ -332,7 +352,7 @@ doc-intake/
 
 ## 插件配置项完整参考
 
-以下所有配置项均在 Hana 插件设置面板中修改，不需要手动编辑配置文件。
+以下所有配置项均在插件设置页中修改，不需要手动编辑配置文件。页面上，「基础项」放最常用的那批，其余按功能分组收在「高级设置」里；下面的分类是功能视角，与页面的展开状态无关。
 
 ### 基础配置
 

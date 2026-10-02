@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doc Intake 设置</title>
+  <script>
+    /* 宿主把当前主题经 iframe URL 下发：hana-css（当前主题完整 CSS）与
+       auto 模式的 hana-palette-{light,dark}-css。挂上它，页面才随宿主主题一起变。
+       没有参数时（离线预览）退回 settings.css 的默认值。 */
+    (function () {
+      try {
+        var p = new URLSearchParams(location.search);
+        var href = p.get("hana-css");
+        var appearance = p.get("hana-theme-appearance");
+        /* 原生控件的明暗也得跟主题走：否则深色主题下会冒出白底经典滚动条 */
+        if (appearance === "dark" || appearance === "light") {
+          document.documentElement.style.colorScheme = appearance;
+        }
+        if (appearance) {
+          var themed = p.get("hana-palette-" + appearance + "-css");
+          if (themed) href = themed;
+        }
+        if (!href) return;
+        var link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        link.setAttribute("data-host-theme", "1");
+        document.head.insertBefore(link, document.head.firstChild);
+      } catch (e) {
+        /* 主题不可用不影响设置功能 */
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="./assets/settings.css">
+</head>
+<body>
+  <main class="gs" id="gs" aria-busy="true">
+    <header class="gs-head">
+      <div class="gs-head__row">
+        <h1>Doc Intake 设置</h1>
+        <button class="gs-btn gs-btn--ghost gs-btn--sm" id="btn-refresh" type="button">重新载入</button>
+      </div>
+      <p class="gs-sub">基础项与高级设置改的是插件行为；环境依赖管理检测你填的 Python 环境里库装得怎么样。</p>
+    </header>
+
+    <p class="gs-banner" id="python-banner" hidden></p>
+
+    <!-- 1 · 基础项 -->
+    <section class="gs-card" id="sec-basic">
+      <h2 class="gs-card__title">基础项</h2>
+      <p class="gs-card__desc">必填项与常用项，大多数时候只需要动这里。</p>
+      <div id="basic-fields"></div>
+    </section>
+
+    <!-- 2 · 高级设置（默认收起） -->
+    <section class="gs-card" id="sec-adv">
+      <button class="gs-collapse" id="adv-toggle" type="button" aria-expanded="false" aria-controls="adv-fields">
+        <span class="gs-collapse__caret" aria-hidden="true"></span>
+        <span class="gs-collapse__label">
+          <span class="gs-collapse__title">高级设置</span>
+          <span class="gs-collapse__hint">MinerU / PaddleOCR 细节、并发与重试、旧版 Office 转换、HTML 与 Excel 上限、返回容量、日志……默认全部使用合理值，不确定就别改。</span>
+        </span>
+      </button>
+      <div id="adv-fields" hidden></div>
+    </section>
+
+    <!-- 3 · 环境依赖管理（可收起） -->
+    <section class="gs-card" id="sec-deps">
+      <div class="gs-card__head">
+        <button class="gs-collapse gs-collapse--head" id="deps-toggle" type="button" aria-expanded="false" aria-controls="deps-body">
+          <span class="gs-collapse__caret" aria-hidden="true"></span>
+          <span class="gs-collapse__label">
+            <span class="gs-collapse__title">环境依赖管理</span>
+            <span class="gs-collapse__hint" id="deps-summary">检测中…</span>
+          </span>
+        </button>
+        <button class="gs-btn gs-btn--ghost gs-btn--sm" id="deps-refresh" type="button">重新检测</button>
+      </div>
+      <div id="deps-body" hidden>
+        <div class="gs-deps" id="deps-list"></div>
+        <div class="gs-deps__actions" id="deps-actions"></div>
+        <p class="gs-note" id="deps-note" hidden></p>
+        <div class="gs-confirm" id="install-confirm" hidden role="alertdialog" aria-live="assertive">
+          <span class="gs-confirm__text" id="install-confirm-text"></span>
+          <div class="gs-confirm__actions">
+            <button class="gs-btn gs-btn--ghost gs-btn--sm" id="install-cancel" type="button">取消</button>
+            <button class="gs-btn gs-btn--sm" id="install-ok" type="button">确认安装</button>
+          </div>
+        </div>
+        <pre class="gs-log" id="deps-log" hidden></pre>
+      </div>
+    </section>
+
+    <footer class="gs-foot">
+      <div class="gs-foot__actions">
+        <button class="gs-btn" id="btn-save" type="button" disabled>保存</button>
+        <button class="gs-btn gs-btn--ghost" id="btn-reload" type="button">放弃改动</button>
+        <span class="gs-muted" id="save-state"></span>
+      </div>
+      <p class="gs-note" id="gs-note" hidden></p>
+    </footer>
+  </main>
+  <script type="module" src="./assets/settings.js"></script>
+</body>
+</html>
