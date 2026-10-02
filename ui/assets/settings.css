@@ -72,7 +72,7 @@ body { padding: 0 20px; }
      宿主容器会跟着本页首选宽度缩，光收卡片等于连容器一起收。 */
   max-width: calc(800px + 12px);
   margin: 0 auto;
-  padding: 6px 6px 0;
+  padding: 6px 6px 30px;
   display: flex;
   flex-direction: column;
   gap: var(--gs-gap);
@@ -310,19 +310,16 @@ body { padding: 0 20px; }
 .gs-btn--sm { padding: 5px 11px; font-size: 12.5px; }
 
 /* ---------- 底部操作条 ---------- */
-/* 钉在容器底部的整宽横条，不是又一张圆角卡。
-   做成卡片形状时，它浮在卡片上，自己的圆角底边会跟被盖住的卡片圆角底边打架，
-   底下就看出两条边。现在直角、铺满、上缘一条细线，并微微透出滚过去的内容。 */
+/* 就是一张普通卡片，逐项照抄上面的 .gs-card，另加 position: sticky 钉在底部。
+   不在这里做任何遮罩、裁剪或补偿，圆角就由 border-radius 如实绘制。 */
 .gs-foot {
   position: sticky;
   bottom: 0;
-  /* 抵消 .gs 的 6px 与 body 的 20px，铺满容器整宽 */
-  margin: 0 -26px;
-  padding: 12px 26px 14px;
-  background: color-mix(in srgb, var(--gs-bg) 86%, transparent);
-  backdrop-filter: blur(10px);
-  border-top: 1px solid var(--gs-line);
-  border-radius: 0;
+  background: var(--gs-surface);
+  border: 1px solid var(--gs-line);
+  border-radius: var(--gs-radius);
+  padding: 14px 16px 8px;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--gs-ink) 5%, transparent);
   display: flex;
   flex-direction: column;
   gap: 6px;
