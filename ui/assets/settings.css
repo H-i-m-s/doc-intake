@@ -58,11 +58,21 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 宿主给设置页开的呈现容器，宽度跟着本页的「首选宽度」走。
+   页面没有横向留白时，容器就恰好贴着卡片，滚动条于是落在卡片边上——
+   只调卡片宽度是没用的（容器会跟着一起缩），得先把页面撑开。
+   这 20px 让容器比卡片宽出 40px，滚动条就被推到卡片外侧 20px 以外。 */
+body { padding: 0 20px; }
+
 .gs {
   box-sizing: border-box;
-  max-width: 780px;
+  /* 卡片实际宽 = 800px；这个字段只决定卡片多宽。
+     窗口不够宽时会被 body 的横向内边距吃到，实际宽 = min(800, 窗口 - 40 - 12)。 */
+     卡片到右侧滚动条的间距不靠它，靠上面 body 的横向内边距——
+     宿主容器会跟着本页首选宽度缩，光收卡片等于连容器一起收。 */
+  max-width: calc(800px + 12px);
   margin: 0 auto;
-  padding: 6px 6px 24px;
+  padding: 6px 6px 0;
   display: flex;
   flex-direction: column;
   gap: var(--gs-gap);
@@ -300,15 +310,19 @@ html, body {
 .gs-btn--sm { padding: 5px 11px; font-size: 12.5px; }
 
 /* ---------- 底部操作条 ---------- */
+/* 钉在容器底部的整宽横条，不是又一张圆角卡。
+   做成卡片形状时，它浮在卡片上，自己的圆角底边会跟被盖住的卡片圆角底边打架，
+   底下就看出两条边。现在直角、铺满、上缘一条细线，并微微透出滚过去的内容。 */
 .gs-foot {
   position: sticky;
   bottom: 0;
-  margin-top: 2px;
-  padding: 12px 14px;
-  background: var(--gs-surface);
-  border: 1px solid var(--gs-line);
-  border-radius: var(--gs-radius);
-  box-shadow: 0 -1px 6px color-mix(in srgb, var(--gs-ink) 6%, transparent);
+  /* 抵消 .gs 的 6px 与 body 的 20px，铺满容器整宽 */
+  margin: 0 -26px;
+  padding: 12px 26px 14px;
+  background: color-mix(in srgb, var(--gs-bg) 86%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--gs-line);
+  border-radius: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;

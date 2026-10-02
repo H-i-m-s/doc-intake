@@ -235,8 +235,8 @@ let depsLogText = "";
 let advCollapsible = null;
 let depsCollapsible = null;
 
-// 主题明暗只拿来干一件正事：让原生控件（下拉弹层、滚动条）跟着明暗走。
-// 配色本身由宿主注入的主题 CSS 负责，这里不再自己写一套深色覆盖（t-dark 已删）。
+// 主题明暗只拿来干一件正事：让原生控件（下拉弹层等）跟着明暗走。
+// 配色本身由宿主注入的主题 CSS 负责，这里不再自己写一套深色覆盖。
 function themeAppearance() {
   try {
     const snap = hana.theme?.getSnapshot?.();
@@ -260,7 +260,9 @@ function themeAppearance() {
 
 function syncTheme() {
   const appearance = themeAppearance();
-  if (appearance) document.documentElement.style.colorScheme = appearance;
+  // 只挂在内层容器上，绝不动 :root。设置页是透明画布 iframe，根元素一旦声
+  // color-scheme: dark，Chromium 会把画布基底刷成纯黑，盖掉宿主透出来的主题底色。
+  if (appearance && ui.root) ui.root.style.colorScheme = appearance;
 }
 
 function withTimeout(promise, ms, label) {

@@ -13,10 +13,6 @@
         var p = new URLSearchParams(location.search);
         var href = p.get("hana-css");
         var appearance = p.get("hana-theme-appearance");
-        /* 原生控件的明暗也得跟主题走：否则深色主题下会冒出白底经典滚动条 */
-        if (appearance === "dark" || appearance === "light") {
-          document.documentElement.style.colorScheme = appearance;
-        }
         if (appearance) {
           var themed = p.get("hana-palette-" + appearance + "-css");
           if (themed) href = themed;
