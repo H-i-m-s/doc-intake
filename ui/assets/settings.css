@@ -310,11 +310,25 @@ body { padding: 0 20px; }
 .gs-btn--sm { padding: 5px 11px; font-size: 12.5px; }
 
 /* ---------- 底部操作条 ---------- */
-/* 就是一张普通卡片，逐项照抄上面的 .gs-card，另加 position: sticky 钉在底部。
-   不在这里做任何遮罩、裁剪或补偿，圆角就由 border-radius 如实绘制。 */
-.gs-foot {
+/* 外面这层只干一件事：在底栏正下方垫一块页面底色。
+   宿主主题的卡片底色是半透明的，底栏浮在卡片上时，被它盖住的那张卡片内容会透过来；
+   垫上页面底色后，透出来的就是背景色。父元素背景天然画在子元素之下，
+   所以这层不会盖到卡片自己身上，圆角也照常由底栏自己的 border-radius 绘制。 */
+.gs-foot-wrap {
   position: sticky;
   bottom: 0;
+  /* 只从底栏中线往下铺页面底色：上半截保持透明，
+     否则整块矩形会把底栏的两个上圆角填成直角。 */
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 50%,
+    var(--gs-bg) 50%,
+    var(--gs-bg) 100%
+  );
+}
+/* 内层就是一张普通卡片，逐项照抄上面的 .gs-card，不做任何遮罩或裁剪。 */
+.gs-foot {
   background: var(--gs-surface);
   border: 1px solid var(--gs-line);
   border-radius: var(--gs-radius);
