@@ -180,6 +180,28 @@ const FIELDS = {
   // ---- 日志 ----
   logLevel: { title: "日志级别", type: "string", labels: { DEBUG: "DEBUG", INFO: "INFO", WARNING: "WARNING", ERROR: "ERROR" } },
   logFile: { title: "日志文件路径", hint: "留空则只输出到控制台。", type: "string", wide: true, placeholder: "留空 = 只输出到控制台" },
+
+  // ---- 依赖安装源（挂「环境依赖管理」卡片，不进基础项/高级项分组）----
+  pipIndexMode: {
+    title: "pip 安装源",
+    hint: "点「一键安装」时装依赖用的源。「跟随 pip 配置」= 不传源，让 pip 读自己的 pip.ini 与环境变量。",
+    type: "string",
+    labels: {
+      inherit: "跟随 pip 配置",
+      official: "PyPI 官方",
+      tuna: "清华 TUNA",
+      aliyun: "阿里云",
+      custom: "自定义…",
+    },
+  },
+  pipIndexUrl: {
+    title: "自定义安装源地址",
+    hint: "只在安装源选「自定义」时生效。填完整的 index-url，例如 https://mirror.example.com/simple。",
+    type: "string",
+    wide: true,
+    placeholder: "https://mirror.example.com/simple",
+    when: (values) => values.pipIndexMode === "custom",
+  },
 };
 
 const BASIC_KEYS = [
@@ -208,6 +230,9 @@ const ADVANCED_GROUPS = [
   { title: "日志", keys: ["logLevel", "logFile"] },
 ];
 
+// 挂在「环境依赖管理」卡片里的字段（不进基础项/高级项分组）。
+const DEPS_KEYS = ["pipIndexMode", "pipIndexUrl"];
+
 // ---------------------------------------------------------------- 基础件
 
 const el = (id) => document.getElementById(id);
@@ -230,6 +255,8 @@ const ui = {
   depsNote: el("deps-note"),
   depsRefresh: el("deps-refresh"),
   depsLog: el("deps-log"),
+  depsSourceLine: el("deps-source"),
+  depsSourceFields: el("deps-source-fields"),
   installConfirm: el("install-confirm"),
   installConfirmText: el("install-confirm-text"),
   installOk: el("install-ok"),
@@ -238,6 +265,7 @@ const ui = {
 
 let loaded = {};            // 服务端读回的配置（对比用）
 const controls = new Map(); // key -> { read, write, type }
+const conditionalRows = []; // 带 meta.when 的字段：行 + key，用来按草稿值显隐
 let depsState = { loading: true, data: null, error: "" };
 let pendingInstall = null;  // { packages, label }
 let installing = false;
@@ -759,6 +787,7 @@ function buildField(key) {
 
   row.append(label, control);
   controls.set(key, built);
+  if (typeof meta.when === "function") conditionalRows.push({ row, key });
   return row;
 }
 
@@ -777,6 +806,21 @@ function buildAllFields() {
     }
     ui.adv.appendChild(box);
   }
+  if (ui.depsSourceFields) ui.depsSourceFields.appendChild(buildFieldSet("安装源", DEPS_KEYS));
+}
+
+// 复用高级项那套「分组标题 + 字段」的外观，给别的卡片用。
+function buildFieldSet(title, keys) {
+  const box = document.createElement("div");
+  box.className = "gs-group";
+  const head = document.createElement("div");
+  head.className = "gs-group__title";
+  head.textContent = title;
+  box.appendChild(head);
+  for (const key of keys) {
+    if (FIELDS[key]) box.appendChild(buildField(key));
+  }
+  return box;
 }
 
 function readAll() {
@@ -800,6 +844,23 @@ function readAll() {
 
 function writeAll(values) {
   for (const [key, control] of controls) control.write(values[key]);
+  syncFieldVisibility();
+}
+
+// 有 meta.when 的字段按当前草稿值显隐（例如「自定义源地址」只在选了自定义时才有意义）
+function syncFieldVisibility() {
+  if (conditionalRows.length === 0) return;
+  const values = currentValues();
+  for (const { row, key } of conditionalRows) {
+    const meta = FIELDS[key];
+    let show = true;
+    try {
+      show = meta.when(values) !== false;
+    } catch {
+      show = true;
+    }
+    row.hidden = !show;
+  }
 }
 
 function currentValues() {
@@ -828,6 +889,8 @@ function onDraftChange() {
   ui.save.disabled = !dirty;
   if (!dirty) ui.saveState.textContent = "";
   else ui.saveState.textContent = "有未保存的改动";
+  syncFieldVisibility();
+  renderDepSource();
   updateBanner();
 }
 
@@ -980,6 +1043,7 @@ function renderDeps() {
   }
 
   renderDepsActions();
+  renderDepSource();
   ui.depsLog.hidden = !depsLogText;
   ui.depsLog.textContent = depsLogText;
 }
@@ -1017,10 +1081,46 @@ function missingLibs() {
   return ((depsState.data && depsState.data.libs) || []).filter((l) => l.installed === false);
 }
 
+// 当前草稿里选定的安装源。预设表由后端随依赖状态下发（pipIndexPresets），
+// 前端不另存一份，免得多改一处就漏一处。
+function draftPipIndex() {
+  const mode = String(controls.get("pipIndexMode")?.read() || "inherit");
+  const presets = (depsState.data && depsState.data.pipIndexPresets) || {};
+  if (mode === "custom") {
+    const url = String(controls.get("pipIndexUrl")?.read() || "").trim();
+    if (!/^https?:\/\//i.test(url)) return { mode, url: "", invalid: true };
+    return { mode, url, invalid: false };
+  }
+  return { mode, url: presets[mode] || "", invalid: false };
+}
+
 function pipCommand(libs) {
   const py = String(controls.get("pythonPath")?.read() || "").trim() || "python";
   const specs = libs.map((l) => `"${l.pip}"`).join(" ");
-  return `"${py}" -m pip install ${specs}`;
+  const index = draftPipIndex();
+  const src = index.url ? ` -i "${index.url}"` : "";
+  return `"${py}" -m pip install${src} ${specs}`;
+}
+
+// 「环境依赖管理」卡片里那行当前安装源：跟草稿走，改了立刻看得见。
+function renderDepSource() {
+  if (!ui.depsSourceLine) return;
+  const index = draftPipIndex();
+  // 自定义却没填合法地址：这一行必须如实说「装不了」，不能显示成跟随 pip 配置
+  if (index.invalid) {
+    ui.depsSourceLine.textContent = "安装源：选了「自定义」但地址不是 http(s):// 开头，补全后才能安装。";
+    ui.depsSourceLine.dataset.state = "bad";
+    ui.depsSourceLine.title = "";
+    ui.depsSourceLine.hidden = false;
+    return;
+  }
+  const line = index.url
+    ? `安装源：${index.url}`
+    : "安装源：跟随 pip 配置（pip.ini / 环境变量）";
+  ui.depsSourceLine.textContent = isDirty() ? `${line} · 未保存` : line;
+  ui.depsSourceLine.title = index.url || "";
+  ui.depsSourceLine.dataset.state = "";
+  ui.depsSourceLine.hidden = false;
 }
 
 function renderDepsActions() {
@@ -1085,7 +1185,10 @@ function askInstall(libs, label) {
   }
   pendingInstall = { packages: libs.map((l) => l.pip), label };
   const py = String(controls.get("pythonPath")?.read() || "").trim();
-  ui.installConfirmText.textContent = `将向 ${py} 安装${label}：${libs.map((l) => l.name).join("、")}。这会改动你那个 Python 环境，确认继续？`;
+  const src = draftPipIndex();
+  ui.installConfirmText.textContent = `将向 ${py} 安装${label}：${libs.map((l) => l.name).join("、")}${
+    src.url ? `，用源 ${src.url}` : "，用 pip 自己的配置源（pip.ini / 环境变量）"
+  }。这会改动你那个 Python 环境，确认继续？`;
   depsCollapsible?.set(true);
   ui.installConfirm.hidden = false;
   setDepsNote("");

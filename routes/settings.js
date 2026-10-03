@@ -22,6 +22,8 @@ const PROBE_SCRIPT = path.join(CURRENT_DIR, "..", "python", "probe_deps.py");
 // 这里多存一份是为了在路由侧做写入校验和缺省补齐，不依赖宿主下发 schema。
 const SPEC = {
   pythonPath: { type: "string", default: "" },
+  pipIndexMode: { type: "string", enum: ["inherit", "official", "tuna", "aliyun", "custom"], default: "inherit" },
+  pipIndexUrl: { type: "string", default: "" },
   defaultBackend: { type: "string", enum: ["auto", "mineru", "paddleocr", "local"], default: "auto" },
   pdfBackendChain: { type: "string", default: "" },
   mineruCredentials: { type: "string", default: "" },
@@ -145,6 +147,54 @@ const DEP_CATALOG = [
 ];
 
 const DEP_BY_PIP = new Map(DEP_CATALOG.map((dep) => [dep.pip, dep]));
+
+// pip 安装源。这里只放「有名字的公共镜像」，自定义那个由 pipIndexUrl 单独给。
+// inherit 的含义是「什么都不传」：pip 会自己去读 pip.ini 与环境变量，插件不替它做决定。
+const PIP_INDEX_PRESETS = {
+  official: { url: "https://pypi.org/simple", label: "PyPI 官方" },
+  tuna: { url: "https://pypi.tuna.tsinghua.edu.cn/simple", label: "清华 TUNA" },
+  aliyun: { url: "https://mirrors.aliyun.com/pypi/simple/", label: "阿里云" },
+};
+
+// 把配置解析成「这次安装实际传什么源」。
+// unsupported=true 表示选了自定义却没填合法地址——不静默兜底，让调用方去报错。
+function resolvePipIndex(config) {
+  const mode = String((config && config.pipIndexMode) || "inherit");
+  if (mode === "inherit") {
+    return { mode, url: "", label: "跟随 pip 配置", explicit: false, unsupported: false };
+  }
+  if (mode === "custom") {
+    const url = String((config && config.pipIndexUrl) || "").trim();
+    if (!/^https?:\/\//i.test(url)) {
+      return { mode, url: "", label: "自定义源未填合法地址", explicit: false, unsupported: true };
+    }
+    return { mode, url, label: `自定义（${url}）`, explicit: true, unsupported: false };
+  }
+  const preset = PIP_INDEX_PRESETS[mode];
+  if (!preset) {
+    return { mode: "inherit", url: "", label: "跟随 pip 配置", explicit: false, unsupported: false };
+  }
+  return { mode, url: preset.url, label: preset.label, explicit: true, unsupported: false };
+}
+
+// 传给 pip 的源参数。http 源要显式信任主机，https 不需要。
+function pipIndexArgs(index) {
+  if (!index || !index.explicit || !index.url) return [];
+  const args = ["-i", index.url];
+  if (/^http:\/\//i.test(index.url)) {
+    try {
+      args.push("--trusted-host", new URL(index.url).host);
+    } catch {
+      /* 地址过不了 URL 解析就不加信任项，pip 自己会报错 */
+    }
+  }
+  return args;
+}
+
+// 前端也要照同一套预设拼命令，所以把它随依赖状态一起下发，避免两处各写一份。
+const PIP_INDEX_PRESET_URLS = Object.fromEntries(
+  Object.entries(PIP_INDEX_PRESETS).map(([key, value]) => [key, value.url]),
+);
 
 function emptyConfig() {
   const out = {};
@@ -271,9 +321,18 @@ function emptyDepState(reason) {
 
 async function detectDeps(ctx) {
   const config = await readConfig(ctx);
+  const pipIndex = resolvePipIndex(config);
   const pythonExe = String(config.pythonPath || "").trim();
   if (!pythonExe) {
-    return { ok: true, configured: false, pythonPath: "", python: null, libs: emptyDepState(null) };
+    return {
+      ok: true,
+      configured: false,
+      pythonPath: "",
+      python: null,
+      libs: emptyDepState(null),
+      pipIndex,
+      pipIndexPresets: PIP_INDEX_PRESET_URLS,
+    };
   }
 
   const payload = JSON.stringify(
@@ -294,6 +353,8 @@ async function detectDeps(ctx) {
       python: null,
       error: run.error || `探测进程退出码 ${run.code}：${(run.stderr || "").slice(0, 400)}`,
       libs: emptyDepState("探测失败"),
+      pipIndex,
+      pipIndexPresets: PIP_INDEX_PRESET_URLS,
     };
   }
 
@@ -308,6 +369,8 @@ async function detectDeps(ctx) {
       python: null,
       error: `探测输出无法解析：${(run.stdout || run.stderr || "").slice(0, 300)}`,
       libs: emptyDepState("探测失败"),
+      pipIndex,
+      pipIndexPresets: PIP_INDEX_PRESET_URLS,
     };
   }
 
@@ -333,6 +396,8 @@ async function detectDeps(ctx) {
     pythonPath: pythonExe,
     python: parsed.python || null,
     libs,
+    pipIndex,
+    pipIndexPresets: PIP_INDEX_PRESET_URLS,
   };
 }
 
@@ -341,6 +406,10 @@ async function installDeps(ctx, packages) {
   const pythonExe = String(config.pythonPath || "").trim();
   if (!pythonExe) {
     return { ok: false, error: "尚未配置 pythonPath，无法安装依赖。" };
+  }
+  const index = resolvePipIndex(config);
+  if (index.unsupported) {
+    return { ok: false, error: "安装源选了「自定义」，但地址不是 http(s):// 开头。先到设置页把地址补全再装。" };
   }
   const requested = Array.isArray(packages) ? packages : [];
   // 只允许安装清单里登记过的包规格，杜绝经由这个端点装任意东西。
@@ -355,7 +424,7 @@ async function installDeps(ctx, packages) {
 
   const run = await runPython(
     pythonExe,
-    ["-m", "pip", "install", "--disable-pip-version-check", ...specs],
+    ["-m", "pip", "install", "--disable-pip-version-check", ...pipIndexArgs(index), ...specs],
     "",
     600000,
   );
@@ -364,6 +433,7 @@ async function installDeps(ctx, packages) {
     ok: run.ok === true,
     code: run.code ?? null,
     packages: specs,
+    index: { mode: index.mode, url: index.url, label: index.label },
     stdout: (run.stdout || "").slice(-6000),
     stderr: (run.stderr || "").slice(-6000),
     error: run.ok ? null : (run.error || `pip 退出码 ${run.code}`),

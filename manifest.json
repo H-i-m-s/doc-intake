@@ -25,6 +25,19 @@
             "default": "",
             "description": "conda 环境的 python.exe 路径，例如 <conda 目录>/envs/<环境名>/python.exe"
           },
+          "pipIndexMode": {
+            "type": "string",
+            "enum": ["inherit", "official", "tuna", "aliyun", "custom"],
+            "title": "pip 安装源",
+            "default": "inherit",
+            "description": "点「一键安装」时装依赖用的源。inherit 表示不传源，让 pip 读自己的 pip.ini 与环境变量"
+          },
+          "pipIndexUrl": {
+            "type": "string",
+            "title": "自定义安装源地址",
+            "default": "",
+            "description": "只在安装源选「自定义」时生效，填完整的 index-url，例如 https://pypi.tuna.tsinghua.edu.cn/simple"
+          },
           "defaultBackend": {
             "type": "string",
             "title": "默认解析后端",

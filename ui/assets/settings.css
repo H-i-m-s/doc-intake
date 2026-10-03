@@ -373,6 +373,11 @@ body { padding: 0 12px; }
 
 /* ---------- 依赖表 ---------- */
 .gs-deps { display: flex; flex-direction: column; margin-top: 4px; }
+/* 卡里的「当前安装源」一行，以及装源选择字段的容器 */
+.gs-deps__source { margin: 10px 0 0; color: var(--gs-muted); font-size: 12px; line-height: 1.5; word-break: break-all; }
+/* 自定义源填了非法地址：这行要能被看见，不能混在中性灰里 */
+.gs-deps__source[data-state="bad"] { color: var(--gs-danger); }
+#deps-source-fields { margin-top: 2px; }
 .gs-dep {
   display: grid;
   grid-template-columns: minmax(110px, 0.85fr) minmax(150px, 1.7fr) auto auto;
