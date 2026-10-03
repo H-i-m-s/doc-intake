@@ -87,6 +87,11 @@ const FIELDS = {
     wide: true,
     placeholder: "留空 = 文档目录/doc-intake",
   },
+  saveJson: {
+    title: "默认保存结构化 JSON",
+    hint: "除了 Markdown 之外，同时落一份结构化 .json。",
+    type: "boolean",
+  },
 
   // ---- MinerU ----
   mineruModelVersion: {
@@ -166,7 +171,6 @@ const FIELDS = {
   inlineBlockBytes: { title: "每个返回文本块最大字节", hint: "代码内限制 4096–30720。", type: "number", int: true },
   inlineBlockCount: { title: "返回文本块数量上限", hint: "代码内限制 1–8。", type: "number", int: true },
   mediaPathReturnLimit: { title: "Agent 返回媒体路径数量上限", hint: "超过上限时只返回媒体总数。", type: "number", int: true },
-  saveJson: { title: "默认保存结构化 JSON", type: "boolean" },
 
   // ---- 日志 ----
   logLevel: { title: "日志级别", type: "string", labels: { DEBUG: "DEBUG", INFO: "INFO", WARNING: "WARNING", ERROR: "ERROR" } },
@@ -183,6 +187,7 @@ const BASIC_KEYS = [
   "includeMedia",
   "autoSave",
   "savePath",
+  "saveJson",
 ];
 
 const ADVANCED_GROUPS = [
@@ -194,7 +199,7 @@ const ADVANCED_GROUPS = [
   { title: "旧版 Office 转换", keys: ["legacyConversionProvider", "libreOfficePath", "legacyConversionConcurrency", "legacyConversionTimeoutMs"] },
   { title: "HTML 提取", keys: ["htmlExtractMetadata", "htmlExtractLinks", "htmlExtractImages", "htmlExtractCodeBlocks", "htmlHeadingStyle", "maxRemoteImagesPerHtml"] },
   { title: "Excel 上限", keys: ["xlsxMaxRows", "xlsxMaxCols"] },
-  { title: "Agent 返回容量", keys: ["inlineBlockBytes", "inlineBlockCount", "mediaPathReturnLimit", "saveJson"] },
+  { title: "Agent 返回容量", keys: ["inlineBlockBytes", "inlineBlockCount", "mediaPathReturnLimit"] },
   { title: "日志", keys: ["logLevel", "logFile"] },
 ];
 
@@ -394,6 +399,183 @@ function createCollapsible(toggle, body, openInitially) {
   return { set, isOpen: () => open };
 }
 
+// ---------------------------------------------------------------- 自绘下拉
+
+// 原生 <select> 仍是状态源（read / write 都走它），只是隐藏起来；
+// 看得见的是一个按钮 + 挂在 body 上的浮层。做法照 git-save-load 的 HanaSelect：
+// 系统给原生弹层上的是系统配色，深色主题里会闪出一整块亮色。
+const SELECT_GAP = 4;
+const SELECT_EDGE = 8;
+const SELECT_MAX_HEIGHT = 240;
+const pickers = new Set();
+
+function closeAllPickers(keep) {
+  for (const picker of pickers) if (picker !== keep) picker.close();
+}
+
+function decorateSelect(select) {
+  const options = Array.from(select.options).map((o) => ({ value: o.value, label: o.text }));
+
+  const wrap = document.createElement("span");
+  wrap.className = "gs-selectwrap";
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "gs-selectbtn";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+
+  const label = document.createElement("span");
+  label.className = "gs-selectbtn__label";
+  const caret = document.createElement("span");
+  caret.className = "gs-selectbtn__caret";
+  caret.setAttribute("aria-hidden", "true");
+  trigger.append(label, caret);
+
+  const menu = document.createElement("div");
+  menu.className = "gs-selectmenu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+
+  let open = false;
+  let cursor = 0;
+
+  function labelOf(value) {
+    const hit = options.find((o) => o.value === value);
+    return hit ? hit.label : "";
+  }
+
+  function paint() {
+    label.textContent = labelOf(select.value);
+    trigger.disabled = !!select.disabled;
+    Array.from(menu.children).forEach((item, i) => {
+      const selected = item.dataset.value === select.value;
+      item.classList.toggle("is-selected", selected);
+      item.classList.toggle("is-cursor", i === cursor);
+      item.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+  }
+
+  // 浮层挂在 body 上、position: fixed，所以位置要自己算：
+  // 默认贴按钮下方，下方放不下先翻到上方，上方也放不下就缩短并滚动。
+  function place() {
+    const rect = trigger.getBoundingClientRect();
+    const viewW = window.innerWidth || 320;
+    const viewH = window.innerHeight || 480;
+    menu.hidden = false;
+    menu.style.maxHeight = SELECT_MAX_HEIGHT + "px";
+    menu.style.minWidth = Math.max(140, Math.round(rect.width)) + "px";
+    menu.style.left = Math.round(rect.left) + "px";
+    menu.style.top = Math.round(rect.bottom + SELECT_GAP) + "px";
+
+    const box = menu.getBoundingClientRect();
+    if (rect.bottom + SELECT_GAP + box.height > viewH - SELECT_EDGE) {
+      if (rect.top - SELECT_GAP - box.height >= SELECT_EDGE) {
+        menu.style.top = Math.round(rect.top - SELECT_GAP - box.height) + "px";
+      } else {
+        const room = viewH - rect.bottom - SELECT_GAP - SELECT_EDGE;
+        menu.style.maxHeight = Math.max(80, Math.min(SELECT_MAX_HEIGHT, room)) + "px";
+      }
+    }
+    const width = menu.getBoundingClientRect().width;
+    if (rect.left + width > viewW - SELECT_EDGE) {
+      menu.style.left = Math.round(Math.max(SELECT_EDGE, viewW - width - SELECT_EDGE)) + "px";
+    }
+  }
+
+  function openMenu() {
+    closeAllPickers(picker);
+    cursor = Math.max(0, options.findIndex((o) => o.value === select.value));
+    paint();
+    place();
+    open = true;
+    // 下一帧再加 open，让过渡真的跑起来
+    requestAnimationFrame(() => { if (open) menu.classList.add("open"); });
+    trigger.setAttribute("aria-expanded", "true");
+  }
+
+  function close() {
+    if (!open) return;
+    open = false;
+    menu.classList.remove("open");
+    trigger.setAttribute("aria-expanded", "false");
+    setTimeout(() => { if (!open) menu.hidden = true; }, 140);
+  }
+
+  function commit(value) {
+    if (select.value !== value) {
+      select.value = value;
+      // 原生 select 的 change 事件照发，外层那份 onDraftChange 不用改
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    paint();
+    close();
+    trigger.focus();
+  }
+
+  options.forEach((opt, index) => {
+    const item = document.createElement("div");
+    item.className = "gs-selectmenu__opt";
+    item.setAttribute("role", "option");
+    item.dataset.value = opt.value;
+    item.textContent = opt.label;
+    item.addEventListener("mousedown", (e) => e.preventDefault());
+    item.addEventListener("click", () => commit(opt.value));
+    item.addEventListener("mouseenter", () => { cursor = index; paint(); });
+    menu.appendChild(item);
+  });
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (open) close(); else openMenu();
+  });
+
+  trigger.addEventListener("keydown", (e) => {
+    const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (step) {
+      e.preventDefault();
+      if (!open) { openMenu(); return; }
+      cursor = Math.min(options.length - 1, Math.max(0, cursor + step));
+      paint();
+      const item = menu.children[cursor];
+      if (item) item.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (!open) openMenu();
+      else if (options[cursor]) commit(options[cursor].value);
+      return;
+    }
+    if (e.key === "Escape" && open) { e.preventDefault(); close(); }
+  });
+
+  // 这里只把 select 搬进 wrap，不动 DOM 结构：buildControl 造控件时
+  // 整个 wrap 还没入文档（select.parentNode 是 null），插入由上层 buildField 做。
+  wrap.append(select, trigger);
+  document.body.appendChild(menu);
+
+  const picker = { wrap, refresh: paint, close };
+  pickers.add(picker);
+  paint();
+  return picker;
+}
+
+// 点空白、Esc、滚动、改窗口大小都关掉浮层。滚动要排掉浮层内部的滚动，
+// 否则键盘上下键的 scrollIntoView 会把自己关掉。
+document.addEventListener("mousedown", (e) => {
+  const el = e.target;
+  if (el instanceof Element && (el.closest(".gs-selectwrap") || el.closest(".gs-selectmenu"))) return;
+  closeAllPickers();
+}, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAllPickers(); });
+window.addEventListener("scroll", (e) => {
+  const el = e.target;
+  if (el instanceof Element && el.closest(".gs-selectmenu")) return;
+  closeAllPickers();
+}, true);
+window.addEventListener("resize", () => closeAllPickers());
+
 // ---------------------------------------------------------------- 表单构建
 
 function buildControl(key) {
@@ -424,12 +606,15 @@ function buildControl(key) {
       select.appendChild(option);
     }
     select.addEventListener("change", onDraftChange);
+    // 原生 select 藏起来只当状态源，露在外面的是自绘按钮
+    const picker = decorateSelect(select);
     return {
-      node: select,
+      node: picker.wrap,
       read: () => select.value,
       write: (v) => {
         const wanted = String(v ?? "");
         if (Object.prototype.hasOwnProperty.call(meta.labels, wanted)) select.value = wanted;
+        picker.refresh();
       },
       type: "string",
     };

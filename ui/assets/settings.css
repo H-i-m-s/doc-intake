@@ -149,7 +149,113 @@ body { padding: 0 20px; }
 
 .gs-field .gs-input { width: 220px; }
 .gs-input--num { text-align: right; font-variant-numeric: tabular-nums; }
-.gs-select { width: 200px; cursor: pointer; }
+/* ---------- 下拉（自绘） ---------- */
+/* 原生 <select> 不当可见控件：系统和宿主给它的弹层上的是系统配色，
+   深色主题里会闪出一整块亮色，跟卡片风格接不上。
+   做法照 git-save-load：原生 select 留着当状态源（read/write 都走它），
+   只是隐藏；看得见的是下面这个按钮 + 挂在 body 上的浮层。 */
+.gs-select { display: none; }
+
+.gs-selectwrap { position: relative; display: inline-flex; width: 200px; }
+
+.gs-selectbtn {
+  box-sizing: border-box;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--gs-ink);
+  background: color-mix(in srgb, var(--gs-ink) 4%, transparent);
+  border: 1px solid var(--gs-line);
+  border-radius: var(--gs-radius-sm);
+  cursor: pointer;
+  text-align: left;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.gs-selectbtn:hover { border-color: color-mix(in srgb, var(--gs-ink) 20%, transparent); }
+.gs-selectbtn:focus-visible,
+.gs-selectbtn[aria-expanded="true"] {
+  border-color: var(--gs-accent);
+  box-shadow: 0 0 0 3px var(--gs-accent-ring);
+}
+.gs-selectbtn:disabled { opacity: 0.55; cursor: default; }
+.gs-selectbtn__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-selectbtn__caret {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin-top: -3px;
+  border-right: 1.5px solid var(--gs-sub);
+  border-bottom: 1.5px solid var(--gs-sub);
+  transform: rotate(45deg);
+  transition: transform 0.18s ease;
+}
+.gs-selectbtn[aria-expanded="true"] .gs-selectbtn__caret {
+  margin-top: 3px;
+  transform: rotate(-135deg);
+}
+
+/* 浮层：挂在 body 上、position: fixed，所以不参与卡片布局，也不被裁切 */
+.gs-selectmenu {
+  position: fixed;
+  z-index: 2600;
+  box-sizing: border-box;
+  left: 0;
+  top: 0;
+  padding: 4px;
+  min-width: 140px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--gs-surface);
+  border: 1px solid var(--gs-line);
+  border-radius: var(--gs-radius-sm);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--gs-ink) 16%, transparent),
+              0 2px 8px color-mix(in srgb, var(--gs-ink) 10%, transparent);
+  /* 卡片底色半透明时，靠这层模糊把背后的字段文字挡开，保证选项读得清 */
+  backdrop-filter: blur(14px);
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transform-origin: top left;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+}
+.gs-selectmenu.open { opacity: 1; transform: none; pointer-events: auto; }
+.gs-selectmenu[hidden] { display: none; }
+
+.gs-selectmenu__opt {
+  position: relative;
+  padding: 7px 10px 7px 26px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--gs-ink);
+  border-radius: calc(var(--gs-radius-sm) - 2px);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s ease;
+}
+.gs-selectmenu__opt:hover,
+.gs-selectmenu__opt.is-cursor { background: var(--gs-soft); }
+.gs-selectmenu__opt.is-selected { color: var(--gs-accent); font-weight: 550; }
+.gs-selectmenu__opt.is-selected::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 4px;
+  height: 8px;
+  margin-top: -5px;
+  border-right: 1.6px solid var(--gs-accent);
+  border-bottom: 1.6px solid var(--gs-accent);
+  transform: rotate(45deg);
+}
 .gs-textarea { min-height: 62px; resize: vertical; font-family: var(--gs-mono); font-size: 12px; }
 .gs-field--wide .gs-input { width: 100%; }
 
@@ -402,7 +508,7 @@ body { padding: 0 20px; }
 @media (max-width: 520px) {
   .gs-field { flex-direction: column; align-items: stretch; gap: 8px; }
   .gs-field__control { justify-content: flex-start; }
-  .gs-field .gs-input, .gs-select { width: 100%; }
+  .gs-field .gs-input, .gs-selectwrap { width: 100%; }
   .gs-input--num { width: 140px; }
   .gs-dep { grid-template-columns: 1fr auto; }
   .gs-dep__purpose { grid-column: 1 / -1; }
