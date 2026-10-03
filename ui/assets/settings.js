@@ -184,7 +184,7 @@ const FIELDS = {
   // ---- 依赖安装源（挂「环境依赖管理」卡片，不进基础项/高级项分组）----
   pipIndexMode: {
     title: "pip 安装源",
-    hint: "点「一键安装」时装依赖用的源。「跟随 pip 配置」= 不传源，让 pip 读自己的 pip.ini 与环境变量。",
+    hint: "只作用于「一键安装」与「复制安装命令」。",
     type: "string",
     labels: {
       inherit: "跟随 pip 配置",
@@ -196,7 +196,7 @@ const FIELDS = {
   },
   pipIndexUrl: {
     title: "自定义安装源地址",
-    hint: "只在安装源选「自定义」时生效。填完整的 index-url，例如 https://mirror.example.com/simple。",
+    hint: "填完整的 index-url，例如 https://mirror.example.com/simple。",
     type: "string",
     wide: true,
     placeholder: "https://mirror.example.com/simple",
@@ -392,6 +392,13 @@ function createCollapsible(toggle, body, openInitially) {
   let anim = null;
 
   const paint = (next) => {
+    // 关键：连已播完的动画一起收掉。fill:"forwards" 的动画即使播完也会继续覆盖高度，
+    // 等于把 #deps-body 锁死在“展开那一刻”的高度上；之后卡片里的内容一旦长高
+    // （比如条件字段冒出来），就会溢出到卡片外面去，被吸底条盖掉一半。
+    if (anim) {
+      try { anim.cancel(); } catch { /* 已经没了就算了 */ }
+      anim = null;
+    }
     toggle.setAttribute("aria-expanded", next ? "true" : "false");
     body.hidden = !next;
     body.style.height = "";
@@ -426,7 +433,7 @@ function createCollapsible(toggle, body, openInitially) {
       [{ height: `${from}px` }, { height: `${to}px` }],
       { duration: collapseDuration(Math.abs(to - from)), easing: COLLAPSE_EASE, fill: "forwards" },
     );
-    anim.onfinish = () => { anim = null; paint(next); };
+    anim.onfinish = () => { paint(next); };
   };
 
   paint(open);
@@ -806,17 +813,19 @@ function buildAllFields() {
     }
     ui.adv.appendChild(box);
   }
-  if (ui.depsSourceFields) ui.depsSourceFields.appendChild(buildFieldSet("安装源", DEPS_KEYS));
+  if (ui.depsSourceFields) ui.depsSourceFields.appendChild(buildFieldSet("", DEPS_KEYS));
 }
 
-// 复用高级项那套「分组标题 + 字段」的外观，给别的卡片用。
+// 复用高级项那套「分组标题 + 字段」的外观。title 传空就只要字段，不要标题（也就没有那条延长线）。
 function buildFieldSet(title, keys) {
   const box = document.createElement("div");
   box.className = "gs-group";
-  const head = document.createElement("div");
-  head.className = "gs-group__title";
-  head.textContent = title;
-  box.appendChild(head);
+  if (title) {
+    const head = document.createElement("div");
+    head.className = "gs-group__title";
+    head.textContent = title;
+    box.appendChild(head);
+  }
   for (const key of keys) {
     if (FIELDS[key]) box.appendChild(buildField(key));
   }
@@ -1102,24 +1111,18 @@ function pipCommand(libs) {
   return `"${py}" -m pip install${src} ${specs}`;
 }
 
-// 「环境依赖管理」卡片里那行当前安装源：跟草稿走，改了立刻看得见。
+// 卡里那行只在“填错了”的时候出现——正常情况下不需要把上面已经选好的值再复述一遍。
 function renderDepSource() {
   if (!ui.depsSourceLine) return;
   const index = draftPipIndex();
-  // 自定义却没填合法地址：这一行必须如实说「装不了」，不能显示成跟随 pip 配置
-  if (index.invalid) {
-    ui.depsSourceLine.textContent = "安装源：选了「自定义」但地址不是 http(s):// 开头，补全后才能安装。";
-    ui.depsSourceLine.dataset.state = "bad";
-    ui.depsSourceLine.title = "";
-    ui.depsSourceLine.hidden = false;
+  if (!index.invalid) {
+    ui.depsSourceLine.hidden = true;
+    ui.depsSourceLine.textContent = "";
+    ui.depsSourceLine.dataset.state = "";
     return;
   }
-  const line = index.url
-    ? `安装源：${index.url}`
-    : "安装源：跟随 pip 配置（pip.ini / 环境变量）";
-  ui.depsSourceLine.textContent = isDirty() ? `${line} · 未保存` : line;
-  ui.depsSourceLine.title = index.url || "";
-  ui.depsSourceLine.dataset.state = "";
+  ui.depsSourceLine.textContent = "安装源选了「自定义」但地址不是 http(s):// 开头，补全后才能安装。";
+  ui.depsSourceLine.dataset.state = "bad";
   ui.depsSourceLine.hidden = false;
 }
 
@@ -1158,6 +1161,11 @@ function renderDepsActions() {
   ui.depsActions.appendChild(makeButton("复制安装命令", {
     variant: "ghost",
     onClick: async () => {
+      // 自定义源没填合法地址时，装不了，也别给出一条“看着能用”的命令
+      if (draftPipIndex().invalid) {
+        setDepsNote("安装源选了「自定义」但地址不合法，先补全再复制命令。", "warn");
+        return;
+      }
       const ok = await copyText(pipCommand(missing));
       setDepsNote(ok ? "安装命令已复制，可在终端里自行执行。" : "复制被拦截，请手动选中命令复制。", ok ? "ok" : "warn");
     },
