@@ -873,6 +873,13 @@ async function saveConfig() {
 
 // ---------------------------------------------------------------- 环境依赖
 
+function textSpan(text, className) {
+  const span = document.createElement("span");
+  if (className) span.className = className;
+  span.textContent = text;
+  return span;
+}
+
 function levelBadge(level) {
   const span = document.createElement("span");
   // 「必装 / 可选」不动色相，只靠字重与描边区分（跟 git-save-load 的徽章纪律一致）
@@ -921,26 +928,47 @@ function renderDeps() {
     for (const lib of libs) ui.depsList.appendChild(depRow(lib));
   }
 
-  // 摘要（折叠时它就是卡片头那一行结论）
-  ui.depsSummary.dataset.state = "";
+  // 摘要（折叠时它就是卡片头那一行结论：主句 + 状态徽章 + 中性计数）
+  const summary = ui.depsSummary;
+  // 整句话就是结论：整行一个色（只有真出错才上色）
+  const plain = (text, state) => {
+    summary.textContent = text;
+    summary.dataset.state = state || "";
+    summary.title = "";
+  };
   if (s.loading) {
-    ui.depsSummary.textContent = "检测中…";
+    plain("检测中…");
   } else if (s.error) {
-    ui.depsSummary.textContent = "检测失败";
+    plain("检测失败，点右侧「重新检测」再试一次。", "bad");
   } else if (s.data && s.data.configured === false) {
-    ui.depsSummary.textContent = "未配置 pythonPath，先到「基础项」填写并保存。";
+    plain("未配置 pythonPath，先到「基础项」填写并保存。");
   } else if (s.data) {
     const total = libs.length;
     const installed = libs.filter((l) => l.installed === true).length;
     const missingRequired = libs.filter((l) => l.level === "required" && l.installed === false).length;
+    const missingOptional = libs.filter((l) => l.level !== "required" && l.installed === false).length;
     const py = s.data.python ? `Python ${s.data.python}` : "已配置的 Python";
     const env = s.data.pythonPath ? `（${s.data.pythonPath}）` : "";
-    ui.depsSummary.textContent = `${py}${env} · 共 ${total} 个依赖，已装 ${installed} 个`
-      + (missingRequired ? `，必装缺 ${missingRequired} 个` : "，必装齐全");
-    ui.depsSummary.title = s.data.pythonPath || "";
-    ui.depsSummary.dataset.state = missingRequired ? "bad" : "";
+
+    summary.textContent = "";
+    summary.dataset.state = "";
+    summary.title = s.data.pythonPath || "";
+    summary.appendChild(textSpan(`${py}${env} · 共 ${total} 个依赖，已装 ${installed} 个`));
+    // 必装缺失：交给描边红徽章表达，句子本身不上色，避免整行变红
+    if (missingRequired) {
+      const badge = textSpan(`缺 ${missingRequired} 项必装`, "gs-badge");
+      badge.dataset.state = "bad";
+      badge.title = "必装依赖缺失，当前配置下跑不通。展开卡片能看到是哪几个。";
+      summary.appendChild(badge);
+    } else {
+      summary.appendChild(textSpan("必装齐全", "gs-dep-sum__note"));
+    }
+    // 可选项缺失是正常状态：只给中性计数，不上警告色
+    if (missingOptional) {
+      summary.appendChild(textSpan(`可选未装 ${missingOptional} 项`, "gs-dep-sum__note"));
+    }
   } else {
-    ui.depsSummary.textContent = "尚未检测。";
+    plain("尚未检测。");
   }
 
   renderDepsActions();

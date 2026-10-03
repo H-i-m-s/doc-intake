@@ -325,8 +325,12 @@ body { padding: 0 20px; }
 .gs-collapse__label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .gs-collapse__title { font-size: 14px; font-weight: 650; }
 .gs-collapse__hint { color: var(--gs-muted); font-size: 12px; line-height: 1.5; }
-/* 依赖卡头里的结论行：必装缺失时才转危险色 */
+/* 依赖卡头里的结论行：只有"整句话都不对"（检测失败）才整行转危险色；
+   必装缺失由行内的描边红徽章表达，句子保持中性。 */
 .gs-collapse__hint[data-state="bad"] { color: var(--gs-danger); }
+/* 结论行内部横排：主句 + 徽章 + 中性计数，窄了自动换行 */
+#deps-summary { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#deps-summary .gs-dep-sum__note { color: var(--gs-muted); }
 /* 卡片头里的折叠按钮：不占额外内边距，吃掉剩余宽度 */
 .gs-collapse--head { flex: 1 1 auto; padding: 0; }
 
