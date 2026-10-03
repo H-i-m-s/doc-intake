@@ -40,7 +40,7 @@
 [hidden] { display: none !important; }
 
 /* 滚动条：宿主在 win32 上特意不接管（保留系统原生），插件页自己收细成中性半透明。
-   色值跟宿主 styles.css 里那套同一个路子（rgba(128,128,128,.2) + transparent），
+   色值跟宿主样式里那套同一个路子（rgba(128,128,128,.32) + transparent），
    中性灰在深浅两种底色上都成立，不必跟着主题换色。 */
 * {
   scrollbar-width: thin;
@@ -58,21 +58,17 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 宿主给设置页开的呈现容器，宽度跟着本页的「首选宽度」走。
-   页面没有横向留白时，容器就恰好贴着卡片，滚动条于是落在卡片边上——
-   只调卡片宽度是没用的（容器会跟着一起缩），得先把页面撑开。
-   这 20px 让容器比卡片宽出 40px，滚动条就被推到卡片外侧 20px 以外。 */
-body { padding: 0 20px; }
+/* 盒子链与远程访问设置页完全一致：body 只出横向 12px，列的宽度就是卡片宽度。
+   这样在任何容器宽度下两个页面的卡片外宽严格相等：min(640px, 可用宽 - 24)。 */
+body { padding: 0 12px; }
 
 .gs {
   box-sizing: border-box;
-  /* 卡片实际宽 = 800px；这个字段只决定卡片多宽。
-     窗口不够宽时会被 body 的横向内边距吃到，实际宽 = min(800, 窗口 - 40 - 12)。 */
-     卡片到右侧滚动条的间距不靠它，靠上面 body 的横向内边距——
-     宿主容器会跟着本页首选宽度缩，光收卡片等于连容器一起收。 */
-  max-width: calc(800px + 12px);
+  /* 这里就是卡片外宽（远程访问同款 640px）。横向内边距归 0，
+     不再靠 +12px 去抵消自身内边距——那套算法只有在容器足够宽时才跟远程访问对上。 */
+  max-width: 640px;
   margin: 0 auto;
-  padding: 6px 6px 30px;
+  padding: 6px 0 30px;
   display: flex;
   flex-direction: column;
   gap: var(--gs-gap);
