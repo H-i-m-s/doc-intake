@@ -244,6 +244,8 @@ let installing = false;
 let depsLogText = "";
 let advCollapsible = null;
 let depsCollapsible = null;
+let depsAutoExpanded = false; // 缺必装时只自动展开一次
+let depsUserToggled = false;  // 用户自己动过折叠，就不再替他自动展开
 
 // 主题明暗只拿来干一件正事：让原生控件（下拉弹层等）跟着明暗走。
 // 配色本身由宿主注入的主题 CSS 负责，这里不再自己写一套深色覆盖。
@@ -967,6 +969,12 @@ function renderDeps() {
     if (missingOptional) {
       summary.appendChild(textSpan(`可选未装 ${missingOptional} 项`, "gs-dep-sum__note"));
     }
+    // 缺必装依赖时自动展开一次：折叠状态下这行结论容易被略过，
+    // 而少了必装项插件是跑不通的。只做一次，用户自己动过折叠就不再多管。
+    if (missingRequired > 0 && !depsAutoExpanded && !depsUserToggled) {
+      depsAutoExpanded = true;
+      if (depsCollapsible && !depsCollapsible.isOpen()) depsCollapsible.set(true);
+    }
   } else {
     plain("尚未检测。");
   }
@@ -1142,6 +1150,8 @@ function wire() {
   ui.installCancel.addEventListener("click", clearInstallConfirm);
   advCollapsible = createCollapsible(ui.advToggle, ui.adv, false);
   depsCollapsible = createCollapsible(ui.depsToggle, ui.depsBody, false);
+  // 用户自己点过折叠开关，之后就不再替他自动展开
+  ui.depsToggle.addEventListener("click", () => { depsUserToggled = true; });
 }
 
 async function reloadConfig() {
