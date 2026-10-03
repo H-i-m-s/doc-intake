@@ -27,6 +27,8 @@ const REDUCED_MOTION = typeof window !== "undefined"
 // ---------------------------------------------------------------- 字段表
 
 // wide = 控件换行占满整行（路径 / Token / 降级链这类长文本）。
+// lines = 多值字段：控件里一行一个，存回去也是换行（配置里的老分号写法照样能解析）。
+// picker = 输入框右侧挂一个「浏览…」按钮，走宿主的选择器（目录用 directory）。
 const FIELDS = {
   pythonPath: {
     title: "Python 可执行文件路径",
@@ -50,19 +52,21 @@ const FIELDS = {
   },
   mineruCredentials: {
     title: "MinerU Token",
-    hint: "多个用分号分隔。获取地址：https://mineru.net/apiManage/token",
+    hint: "一行一个。获取地址：https://mineru.net/apiManage/token",
     type: "string",
     wide: true,
     textarea: true,
-    placeholder: "token1;token2",
+    lines: true,
+    placeholder: "token1\ntoken2",
   },
   paddleTokens: {
     title: "PaddleOCR Token",
-    hint: "多个用分号分隔。获取地址：https://aistudio.baidu.com/account/accessToken",
+    hint: "一行一个。获取地址：https://aistudio.baidu.com/account/accessToken",
     type: "string",
     wide: true,
     textarea: true,
-    placeholder: "token1;token2",
+    lines: true,
+    placeholder: "token1\ntoken2",
   },
   defaultLanguage: {
     title: "默认语言",
@@ -75,6 +79,11 @@ const FIELDS = {
     hint: "提取结果里的图片 / 视频 / 音频是否一并落到本地。",
     type: "boolean",
   },
+  saveJson: {
+    title: "默认保存结构化 JSON",
+    hint: "除了 Markdown 之外，同时落一份结构化 .json。",
+    type: "boolean",
+  },
   autoSave: {
     title: "默认自动保存到本地",
     hint: "开启后，未显式指定输出目录时也把结果写入下面的保存路径。",
@@ -82,15 +91,11 @@ const FIELDS = {
   },
   savePath: {
     title: "默认保存路径",
-    hint: "留空 = 系统文档目录下的 doc-intake（按各自的机器算，不写死盘符）。",
+    hint: "留空 = 系统文档目录下的 doc-intake（按各自的机器算，不写死盘符）。也可以点「浏览…」直接挑。",
     type: "string",
     wide: true,
+    picker: "directory",
     placeholder: "留空 = 文档目录/doc-intake",
-  },
-  saveJson: {
-    title: "默认保存结构化 JSON",
-    hint: "除了 Markdown 之外，同时落一份结构化 .json。",
-    type: "boolean",
   },
 
   // ---- MinerU ----
@@ -185,9 +190,9 @@ const BASIC_KEYS = [
   "paddleTokens",
   "defaultLanguage",
   "includeMedia",
+  "saveJson",
   "autoSave",
   "savePath",
-  "saveJson",
 ];
 
 const ADVANCED_GROUPS = [
@@ -578,6 +583,78 @@ window.addEventListener("resize", () => closeAllPickers());
 
 // ---------------------------------------------------------------- 表单构建
 
+// 多 token 字段（MinerU / PaddleOCR）在配置文件里可能还是 "a;b" 这种老写法，
+// 控件里统一拆成一行一个：挤在一行既难读也难改。
+const LIST_SPLIT = /[;\n]+/;
+function normalizeLines(value) {
+  return String(value ?? "")
+    .split(LIST_SPLIT)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+// 说明文字里的 http(s) 地址渲染成可点的链接。
+// 设置页跑在沙箱 iframe 里，自己不跳转（跳了就把设置页顶掉了），
+// 统一交给宿主的 hana.external.open；它要 manifest 里声明 app/ui.open-external。
+const HINT_URL = /https?:\/\/[^\s，。；、）】"'<>]+/g;
+
+async function openExternal(url) {
+  try {
+    await hana.external.open(url);
+  } catch (error) {
+    const why = (error && error.message) || String(error);
+    setNote(`打开链接失败：${why}。若提示权限，去设置的安全面板给 Doc Intake 打开「外部链接」。`, "warn");
+  }
+}
+
+// 路径输入 + 「浏览…」：既能手打也能用宿主的文件夹选择器挑。
+// 走 hana.resources.pick（mode: "directory"），需要 manifest 里声明 app/resources.read。
+function withPicker(input, mode) {
+  const wrap = document.createElement("span");
+  wrap.className = "gs-inputrow";
+  const pick = document.createElement("button");
+  pick.type = "button";
+  pick.className = "gs-btn gs-btn--ghost gs-btn--sm";
+  pick.textContent = "浏览…";
+  pick.addEventListener("click", async () => {
+    try {
+      const res = await hana.resources.pick({ mode });
+      const ref = res && Array.isArray(res.resources) ? res.resources[0] : null;
+      const picked = ref && typeof ref.path === "string" ? ref.path.replace(/[\\/]+$/, "") : "";
+      if (!picked) return; // 用户取消
+      input.value = picked;
+      onDraftChange();
+    } catch (error) {
+      const why = (error && error.message) || String(error);
+      setNote(`选择目录失败：${why}。若提示权限，去设置的安全面板给 Doc Intake 打开「读取本地资源」。`, "warn");
+    }
+  });
+  wrap.append(input, pick);
+  return wrap;
+}
+
+function fillHint(node, text) {
+  const raw = String(text ?? "");
+  let last = 0;
+  for (const match of raw.matchAll(HINT_URL)) {
+    if (match.index > last) node.appendChild(document.createTextNode(raw.slice(last, match.index)));
+    const url = match[0];
+    const link = document.createElement("a");
+    link.className = "gs-link";
+    link.href = url;
+    link.textContent = url;
+    link.title = `用系统浏览器打开 ${url}`;
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      void openExternal(url);
+    });
+    node.appendChild(link);
+    last = match.index + url.length;
+  }
+  if (last < raw.length) node.appendChild(document.createTextNode(raw.slice(last)));
+}
+
 function buildControl(key) {
   const meta = FIELDS[key];
   if (meta.type === "boolean") {
@@ -626,7 +703,12 @@ function buildControl(key) {
     if (meta.placeholder) area.placeholder = meta.placeholder;
     area.spellcheck = false;
     area.addEventListener("input", onDraftChange);
-    return { node: area, read: () => area.value, write: (v) => { area.value = v == null ? "" : String(v); }, type: "string" };
+    return {
+      node: area,
+      read: () => area.value,
+      write: (v) => { area.value = meta.lines ? normalizeLines(v) : (v == null ? "" : String(v)); },
+      type: "string",
+    };
   }
 
   const input = document.createElement("input");
@@ -642,7 +724,12 @@ function buildControl(key) {
   }
   if (meta.placeholder) input.placeholder = meta.placeholder;
   input.addEventListener("input", onDraftChange);
-  return { node: input, read: () => input.value, write: (v) => { input.value = v == null ? "" : String(v); }, type: meta.type };
+  return {
+    node: meta.picker ? withPicker(input, meta.picker) : input,
+    read: () => input.value,
+    write: (v) => { input.value = v == null ? "" : String(v); },
+    type: meta.type,
+  };
 }
 
 function buildField(key) {
@@ -659,7 +746,7 @@ function buildField(key) {
   if (meta.hint) {
     const hint = document.createElement("span");
     hint.className = "gs-field__hint";
-    hint.textContent = meta.hint;
+    fillHint(hint, meta.hint);
     label.appendChild(hint);
   }
 
@@ -725,7 +812,11 @@ function currentValues() {
 function isDirty() {
   const now = currentValues();
   for (const key of Object.keys(FIELDS)) {
-    if (String(now[key]) !== String(loaded[key] ?? "")) return true;
+    const meta = FIELDS[key];
+    const a = String(now[key]);
+    const b = String(loaded[key] ?? "");
+    // 多值字段显示时做过规范化，比较也得用同一套，否则一进页就报“有未保存的改动”
+    if (meta.lines ? normalizeLines(a) !== normalizeLines(b) : a !== b) return true;
   }
   return false;
 }
