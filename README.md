@@ -40,8 +40,12 @@
 | `savePath` | 默认写死 `D:\Agent` | 留空 = 系统文档目录下的 `doc-intake`（按各自机器算，不写死盘符） |
 
 **和 v1 一样的地方**：文件夹路径照旧自动展开、媒体提取、公式转 LaTeX、降级链、保存策略、
-`doc_intake` / `doc_intake_validate` 两个工具的名字与参数全部不变。
+`doc_intake` 工具的名字与参数全部不变。
 （v2 的 App 进程跑在 Node 权限模型下，读文件的工作已下放到被 spawn 的 Python 子进程完成，功能不受影响。）
+
+**和 v1 不一样的地方**：v1 的 `doc_intake_validate` 工具已移除。Token 有效性检测改成设置页里每个
+Token 字段旁的「检测」按钮，由插件自己发请求探测（纯 Node，不需要 Python 环境）。理由：验证凭证是
+配置环节的一次性动作，不该占一个模型工具位。
 
 ---
 
@@ -169,13 +173,10 @@ pip install -r python/requirements.txt
 
 #### 2. 验证 Token 是否生效
 
-配置完 Token 后，调用一次验证：
+设置页里 MinerU 和 PaddleOCR 两个 Token 字段下面各有一个「检测」按钮。填好直接点，不用先保存；
+结果逐行列出（第几个 · 掩码后的 Token · 结论），哪一把失效一眼能看到。
 
-```
-doc_intake_validate()
-```
-
-返回每个 Token 的有效性。全部通过说明降级链三档齐全，覆盖面最广。
+检测只回答「这把凭证能不能过鉴权」，不发真实解析任务，不占解析额度。
 
 #### 3. 当确认doc-intake可用及符合您胃口后，可清理自带的 `office-documents` skill
 
@@ -215,7 +216,6 @@ Hana平台对插件返回信息有字数限制，大于32k将被略去中间部�
 │                  JS 层 (Node.js)                 │
 │                                                 │
 │  doc_intake.js ─→ service.js ─→ Python spawn    │
-│  doc_intake_validate.js                         │
 │                                                 │
 │  职责: 参数校验 / 文件级并发控制 / 批量摘要      │
 │        / 结果格式化                              │
@@ -251,17 +251,16 @@ Hana平台对插件返回信息有字数限制，大于32k将被略去中间部�
 ```
 doc-intake/
 ├── manifest.json                 # v2 清单：图标、能力、设置 schema 与自定义设置页、版本
-├── index.js                      # defineApp 入口：读设置 + 注册两个工具
+├── index.js                      # defineApp 入口：读设置 + 注册工具
 ├── README.md
 ├── assets/
 │   └── icon.png                  # 图标（512×512）
 │
-├── routes/settings.js            # 设置页后端路由：配置读写 + 依赖检测 + 一键安装
+├── routes/settings.js            # 设置页后端路由：配置读写 + 依赖检测 + 一键安装 + Token 检测
 ├── ui/                           # 自定义设置页（settings.html + assets：样式、脚本、内置 SDK）
 │
 ├── tools/                        # Hana 工具入口（JS）
-│   ├── doc_intake.js             # 主工具：文档/图片提取
-│   └── doc_intake_validate.js    # 工具：Token 验证
+│   └── doc_intake.js             # 主工具：文档/图片提取
 │
 ├── lib/                          # JS 公共模块（调度、设置、输出格式、日志、并发）
 ├── sdk/                          # 随包分发的 @hana/app-sdk 闭包
@@ -280,7 +279,6 @@ doc-intake/
 │   ├── split_cli.py              # 旧版手动 PDF 切割 CLI（主流程不调用）
 │   ├── list_sources.py           # 路径展开（文件夹 → 文件列表、类型过滤）
 │   ├── utils.py                  # 图片归一化（URL/本地/对象 → {stem}_media/）
-│   ├── validate.py               # Token 验证（Python 端）
 │   ├── probe_deps.py             # 依赖探测（设置页「环境依赖管理」用）
 │   ├── logger.py                 # Python 端日志（stderr）
 │   ├── mathtype_converter.py     # MathType OLE → LaTeX
@@ -342,11 +340,12 @@ doc-intake/
 | `summaryOnly` | `boolean` | ❌ | `false` | 只返回每个文件的成功/失败状态和输出路径，不返回 Markdown 正文；提取和保存流程仍正常执行。成功但带 warnings 的文件仍算成功。 |
 | `splitOnly` | `boolean` | ❌ | `false` | 仅做图片分割测试，不调用后端。调试用，正常提取不要传。 |
 
-### 工具 2：`doc_intake_validate`
+### 工具 2：Token 检测（不在工具列表里）
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|:---:|--------|------|
-| `backend` | `"all" \| "mineru" \| "paddleocr"` | ❌ | `"all"` | 要验证的后端。`all` 同时验证 MinerU 和 PaddleOCR 的所有 Token。 |
+Token 有效性检测已从工具中移除。它不是「提取文档」这一类工作，而是配置环节的一次性检查，
+现在放在设置页：MinerU / PaddleOCR 两个 Token 字段下面各有一个「检测」按钮。
+
+数据面是设置页路由的 `POST /validate`，由 `lib/validate.js` 纯 Node 发探测请求，不 spawn Python。
 
 ---
 
@@ -622,17 +621,8 @@ doc_intake(source=["a.docx", "b.pptx", "c.xlsx"], outputDir="D:\\输出")
 
 ### Token 验证
 
-```python
-# 验证所有 Token
-doc_intake_validate()
-# → 返回：每个 Token 的有效性
-
-# 只测 MinerU
-doc_intake_validate(backend="mineru")
-
-# 只测 PaddleOCR
-doc_intake_validate(backend="paddleocr")
-```
+不在工具里做了。设置页 → 应用 → Doc Intake，MinerU / PaddleOCR 两个 Token 字段下面各有一个
+「检测」按钮，点一下逐把出结果。
 
 ---
 

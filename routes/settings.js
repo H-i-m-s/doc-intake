@@ -7,6 +7,7 @@
 //   POST /config   校验后写回（只认 SPEC 里的键）
 //   GET  /deps     用已配置的 pythonPath 探测 Python 依赖是否安装
 //   POST /install 对缺失依赖执行 pip install（只允许装 DEP_CATALOG 里列出的包）
+//   POST /validate 探测 MinerU / PaddleOCR 的 Token 是否有效（纯 Node，不 spawn Python）
 //
 // 静态设置 schema 仍留在 manifest.json：宿主拿它做 ctx.config 的字段校验、
 // 默认值与敏感值处理；这里只是把"呈现与交互"换成自定义页面。
@@ -14,6 +15,9 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { parseCredentials, parseTokens } from "../lib/settings.js";
+import { validateMineruToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
 
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROBE_SCRIPT = path.join(CURRENT_DIR, "..", "python", "probe_deps.py");
@@ -475,6 +479,47 @@ export default function registerSettingsRoutes(app, ctx) {
       return c.json(result);
     } catch (error) {
       return c.json({ ok: false, error: `安装失败：${error?.message || error}` });
+    }
+  });
+
+  // 探测 Token。请求体带的是「输入框里当前的值」，不要求先保存——
+  // 填完就能测，不然改一把 Token 得先存盘再验证，来回两步。
+  // 解析走 lib/settings.js 那两个解析器，跟真正提取时的口径保持同一份实现。
+  app.post("/validate", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      const hasMineru = typeof body?.mineruCredentials === "string";
+      const hasPaddle = typeof body?.paddleTokens === "string";
+      if (!hasMineru && !hasPaddle) {
+        return c.json({ ok: false, message: "没有收到要检测的 Token。" });
+      }
+
+      const mineruTokens = hasMineru
+        ? parseCredentials(body.mineruCredentials)
+            .map((cred) => cred?.accessKey || cred?.secretKey || "")
+            .filter(Boolean)
+        : [];
+      const paddleTokens = hasPaddle ? parseTokens(body.paddleTokens) : [];
+
+      // 本进程没有网络权限（Permission Model 未给 --allow-net），出网必须走宿主代发的出口。
+      // 它受 manifest 顶层 network.allowedHosts 约束；未声明时 fetch 会抛结构化错误。
+      const hostFetch = ctx?.network?.fetch;
+      const fetchImpl = typeof hostFetch === "function" ? hostFetch.bind(ctx.network) : null;
+
+      const [mineruResult, paddleResult] = await Promise.all([
+        hasMineru
+          ? validateTokenList(mineruTokens, (token) => validateMineruToken(token, fetchImpl))
+          : Promise.resolve(null),
+        hasPaddle
+          ? validateTokenList(paddleTokens, (token) => validatePaddleToken(token, fetchImpl))
+          : Promise.resolve(null),
+      ]);
+
+      // 键名与请求体、与设置页的字段名保持一致：
+      // 前端拿到响应后会按 meta.validate.field 取结果，两边不同名就会静默取到空数组。
+      return c.json({ ok: true, mineruCredentials: mineruResult, paddleTokens: paddleResult });
+    } catch (error) {
+      return c.json({ ok: false, message: `检测失败：${error?.message || error}` });
     }
   });
 }

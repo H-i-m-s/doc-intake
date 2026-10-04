@@ -1,7 +1,7 @@
 ---
 name: doc-intake
 description: >
-  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。需要验证 MinerU/PaddleOCR Token 或 Key 时调用 doc_intake_validate。
+  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。注意：本 skill 只负责提取，Token 有效性检测已移出工具（在 App 设置页里做）。
 compatibility: "需要 Python 环境（用户需在 App 设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
 metadata:
   default-enabled: true
@@ -20,13 +20,12 @@ metadata:
 - 用户询问文档中的文字、表格、公式、图片、视频、音频或链接。
 - 用户要求批量处理多个文件或一个文件夹。
 
-### 调用 `doc_intake_validate`
+### 验证 Token 不走工具
 
-以下情况调用 `doc_intake_validate`，不要调用 `doc_intake`：
+MinerU / PaddleOCR 的凭证是否有效，由用户在 App 设置页（设置 → 应用 → Doc Intake）点 Token 字段旁的「检测」自己看，不提供工具。
 
-- 用户要求测试或验证 MinerU/PaddleOCR Token、Key 或凭证。
-- 用户询问 Token/Key 是否有效。
-- 用户刚配置 Token 后要求确认配置。
+- 用户问「我的 Token 还有效吗」「帮我验证一下凭证」「刚配的 Token 对不对」：引导他去设置页点检测，不要假装自己查过。
+- 不要为了判断凭证状态去跑一次 `doc_intake`。提取失败有无数种原因，一次失败不能推出 Token 失效。
 
 ## 2. `doc_intake` 参数
 
@@ -95,11 +94,10 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - `SPAWN_FAILED`、`PYTHON_ERROR`：说明 Python 环境或依赖启动失败，不要编造提取结果。
 - `CONVERTER_NOT_AVAILABLE`、`CONVERSION_FAILED`、`CONVERSION_OUTPUT_INVALID`、`CONVERSION_TIMEOUT`：说明旧版 Office 转换阶段失败；不要把它描述成现代 DOCX/XLSX 解析失败。优先检查 Office/pywin32 或显式配置的 LibreOffice provider。
 - 后端全部失败：展示实际错误和 `warnings`，建议用户检查配置或更换后端。
-- Token 验证失败：说明具体后端和失败原因，不要回显完整 Token。
+- 云端后端报鉴权错误（401/403）：说明是哪个后端鉴权没过，并提示去设置页用「检测」确认凭证，不要回显完整 Token。
 
 ## 7. 禁止行为
 
 - 不要绕过 `doc_intake` 自行解析用户文档或图片二进制内容。
-- 不要把 `doc_intake_validate` 当作文档提取工具。
 - 不要为了“看起来完整”补写工具没有返回的内容。
 - 不要在未读取保存文件或媒体文件前声称已经分析了它们。

@@ -134,6 +134,55 @@ body { padding: 0 12px; }
 .gs-field--wide { flex-direction: column; align-items: stretch; gap: 7px; }
 .gs-field--wide .gs-field__control { justify-content: flex-start; }
 
+/* ---------- 字段内的 Token 检测 ---------- */
+/* 挂在多值 Token 字段下面：一个「检测」按钮 + 逐把结果。
+   不再套一层卡片边框，只用一条内框的结果列表，免得设置页里框上加框。 */
+.gs-validate { display: flex; flex-direction: column; gap: 7px; }
+.gs-validate__bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.gs-validate__status { font-size: 12.5px; color: var(--gs-muted); }
+.gs-validate__status[data-kind="ok"] { color: var(--gs-green); }
+.gs-validate__status[data-kind="err"] { color: var(--gs-danger); }
+.gs-validate__status[data-kind="warn"] { color: #d98b2b; }
+
+.gs-validate__list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gs-line);
+  border-radius: var(--gs-radius-sm);
+  overflow: hidden;
+}
+.gs-validate__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border-top: 1px solid var(--gs-line);
+}
+.gs-validate__row:first-child { border-top: 0; }
+/* 失效的那一行给一层极淡的底色，一眼能扫到第几把出了问题 */
+.gs-validate__row[data-ok="0"] { background: var(--gs-danger-tint); }
+.gs-validate__mark { flex: 0 0 auto; font-size: 12px; }
+.gs-validate__row[data-ok="1"] .gs-validate__mark { color: var(--gs-green); }
+.gs-validate__row[data-ok="0"] .gs-validate__mark { color: var(--gs-danger); }
+/* 令牌名用等宽：掩码后的头尾字符对齐，一次看几把时好比对 */
+.gs-validate__name { flex: 0 0 auto; font-family: var(--gs-mono); font-size: 12px; color: var(--gs-sub); }
+.gs-validate__msg { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--gs-muted); }
+.gs-validate__row[data-ok="0"] .gs-validate__msg { color: var(--gs-danger); }
+
+.gs-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .gs-input, .gs-select, .gs-textarea {
   box-sizing: border-box;
   width: 100%;

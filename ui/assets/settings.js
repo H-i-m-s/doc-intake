@@ -5,11 +5,13 @@
 // 注意：页面跑在沙箱 iframe 里，window.confirm 被禁 —— 安装确认走页内确认条。
 import { hana } from "./sdk.js";
 
-const API = { config: "/config", deps: "/deps", install: "/install" };
+const API = { config: "/config", deps: "/deps", install: "/install", validate: "/validate" };
 const STATUS_TIMEOUT_MS = 15000;
 const DEPS_TIMEOUT_MS = 90000;
 const INSTALL_TIMEOUT_MS = 660000;
 const READY_TIMEOUT_MS = 8000;
+// 多把 Token 并行探测，每把单次预算 15s；放宽到 60s 留出排队余量。
+const VALIDATE_TIMEOUT_MS = 60000;
 
 // 展开 / 收起动效。跟随系统「减少动态效果」时直接切换，不做动画。
 const COLLAPSE_MIN_MS = 200;
@@ -58,6 +60,7 @@ const FIELDS = {
     textarea: true,
     lines: true,
     placeholder: "token1\ntoken2",
+    validate: { field: "mineruCredentials", probe: "MinerU" },
   },
   paddleTokens: {
     title: "PaddleOCR Token",
@@ -67,6 +70,7 @@ const FIELDS = {
     textarea: true,
     lines: true,
     placeholder: "token1\ntoken2",
+    validate: { field: "paddleTokens", probe: "PaddleOCR" },
   },
   defaultLanguage: {
     title: "默认语言",
@@ -794,8 +798,120 @@ function buildField(key) {
 
   row.append(label, control);
   controls.set(key, built);
+  if (meta.validate) row.appendChild(buildValidateBlock(key, built));
   if (typeof meta.when === "function") conditionalRows.push({ row, key });
   return row;
+}
+
+// ------------------------------------------------- 字段内的 Token 检测
+
+// 挂在 MinerU / PaddleOCR 两个多值字段下面：一个「检测」按钮 + 逐把结果。
+// 测的是输入框里当前的内容，不要求先保存——填完就能验。
+// 一行一个 Token，结果按行号回报，所以「哪个失效了」是说得清的。
+function buildValidateBlock(key, built) {
+  const meta = FIELDS[key];
+  const box = document.createElement("div");
+  box.className = "gs-validate";
+
+  const bar = document.createElement("div");
+  bar.className = "gs-validate__bar";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "gs-btn gs-btn--ghost gs-btn--sm";
+  button.textContent = "检测";
+  button.title = `逐个探测${meta.validate.probe} Token 能否通过鉴权`;
+
+  const status = document.createElement("span");
+  status.className = "gs-validate__status";
+
+  const list = document.createElement("div");
+  list.className = "gs-validate__list";
+  list.hidden = true;
+
+  bar.append(button, status);
+  box.append(bar, list);
+
+  const setStatus = (message, kind) => {
+    status.textContent = message || "";
+    status.dataset.kind = kind || "";
+  };
+
+  // 输入框一动，上一次的结论就过期了 —— 立刻收起，不做旧结果残留。
+  built.node.addEventListener("input", () => {
+    list.hidden = true;
+    list.replaceChildren();
+    setStatus("", "");
+  });
+
+  let running = false;
+  button.addEventListener("click", async () => {
+    if (running) return;
+    const raw = String(built.read() ?? "");
+    const tokens = raw.split(LIST_SPLIT).map((part) => part.trim()).filter(Boolean);
+    if (tokens.length === 0) {
+      list.hidden = true;
+      setStatus("先填一个 Token 再检测。", "warn");
+      return;
+    }
+
+    running = true;
+    button.disabled = true;
+    setStatus("", "");
+    status.replaceChildren(makeBusy("检测中…"));
+
+    try {
+      const { data } = await withTimeout(
+        apiPost(API.validate, { [key]: raw }),
+        VALIDATE_TIMEOUT_MS,
+        "检测",
+      );
+      if (!data || data.ok === false) throw new Error(data?.message || "后端返回失败");
+      const rows = Array.isArray(data[meta.validate.field]) ? data[meta.validate.field] : [];
+      renderValidateRows(list, rows);
+      list.hidden = rows.length === 0;
+      const failed = rows.filter((row) => !row.ok);
+      if (rows.length === 0) setStatus("没有可检测的 Token。", "warn");
+      else if (failed.length === 0) setStatus(`${rows.length} 个 Token 全部有效。`, "ok");
+      else setStatus(`${rows.length} 个里有 ${failed.length} 个未通过。`, "err");
+    } catch (error) {
+      list.hidden = true;
+      setStatus(`检测失败：${error?.message || error}`, "err");
+    } finally {
+      running = false;
+      button.disabled = false;
+    }
+  });
+
+  return box;
+}
+
+function renderValidateRows(list, rows) {
+  list.replaceChildren(...rows.map((row) => {
+    const item = document.createElement("div");
+    item.className = "gs-validate__row";
+    item.dataset.ok = row.ok ? "1" : "0";
+
+    const mark = document.createElement("span");
+    mark.className = "gs-validate__mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = row.ok ? "✓" : "✕";
+
+    const name = document.createElement("span");
+    name.className = "gs-validate__name";
+    name.textContent = `第 ${row.index} 个 · ${row.label || "***"}`;
+
+    const message = document.createElement("span");
+    message.className = "gs-validate__msg";
+    message.textContent = row.message;
+
+    const screen = document.createElement("span");
+    screen.className = "gs-visually-hidden";
+    screen.textContent = row.ok ? "有效" : "无效";
+
+    item.append(mark, name, message, screen);
+    return item;
+  }));
 }
 
 function buildAllFields() {

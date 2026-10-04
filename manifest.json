@@ -13,6 +13,18 @@
     "app/ui.open-external",
     "app/resources.read"
   ],
+  "network": {
+    "allowedHosts": [
+      "mineru.net",
+      "paddleocr.aistudio-app.com"
+    ],
+    "methods": [
+      "GET",
+      "POST"
+    ],
+    "defaultTimeoutMs": 20000,
+    "maxResponseBytes": 65536
+  },
   "contributes": {
     "settings": {
       "title": "Doc Intake 设置",
