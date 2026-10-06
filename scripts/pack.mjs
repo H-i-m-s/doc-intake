@@ -16,9 +16,12 @@
 // scripts/pack.mjs — 零依赖出包（不调外部 tar/zip，不用 npm 库）。
 //
 // 产物（dist/）：
-//   <id>-v<version>.zip          归档；内含顶层目录 <id>/（宿主安装时自动剥壳）
+//   <id>-v<version>.zip          归档；manifest.json / index.js 直接位于包根（平铺，不套顶层目录）
 //   <id>-v<version>.zip.sha256   sha256 校验值
 //   <id>-v<version>.entry.json   市场条目（archive.url 用 {{BASE_URL}} 占位）
+//
+// 布局为什么是平铺：宿主自己的出包工具产出的就是平铺包，宿主的校验器也只在包根找
+// manifest.json，套一层目录会被判成「读不到 manifest.json」；zip 由安装器解到 <id>/ 下。
 //
 // 打包前若存在 scripts/selfcheck.mjs 会先跑它，不过就拒绝出包；不存在则跳过（当前无自检）。
 //
@@ -78,7 +81,7 @@ function runSelfcheck() {
   }
 }
 
-// ── 1) 递归收集待打包文件（顶层目录 <id>/，跳过排除项与符号链接） ────────────
+// ── 1) 递归收集待打包文件（包根平铺，跳过排除项与符号链接） ────────────
 function collect(dir, base, out = []) {
   for (const name of readdirSync(dir)) {
     const abs = join(dir, name);
@@ -228,8 +231,8 @@ function main() {
   const zipName = `${baseName}.zip`;
   const zipPath = join(outDir, zipName);
 
-  // 收集（顶层目录名 = manifest.id），保证 zip 内末级目录名等于 id。
-  const files = collect(ROOT, ROOT).map((f) => ({ ...f, entry: `${manifest.id}/${f.entry}` }));
+  // 收集：条目直接以包根为起点（平铺）。宿主的加载器按目录名找 app，zip 由安装器解到 <id>/ 下。
+  const files = collect(ROOT, ROOT);
   if (files.length === 0) {
     console.error("[pack] 没有可打包的文件，拒绝出包");
     process.exit(1);
@@ -257,7 +260,7 @@ function main() {
   console.log(`[pack] 完成 ${relOut(zipPath)}  ${(zipBytes.length / 1024).toFixed(1)} KiB  ${files.length} 条`);
   console.log(`        sha256 ${digest}`);
   console.log(`        entry  ${relOut(entryPath)}`);
-  console.log(`        条目   ${manifest.id}/manifest.json, ${manifest.id}/index.js, …`);
+  console.log(`        条目   manifest.json, index.js, …`);
 }
 
 main();

@@ -60,7 +60,7 @@ function Invoke-Pack {
   return $zipPath
 }
 
-# ---------- 2. 出包：调 scripts/pack.mjs，产物落 dist（顶层 <id>/ 包裹，正斜杠条目） ----------
+# ---------- 2. 出包：调 scripts/pack.mjs，产物落 dist（包根平铺，正斜杠条目） ----------
 # 出包排在发布门禁之前：不管后面发布成不成，包都先出好，不会白跑一趟。
 $asset = Invoke-Pack
 
@@ -69,8 +69,8 @@ $zip = [System.IO.Compression.ZipFile]::OpenRead($asset)
 try {
   $bad = @($zip.Entries | Where-Object { $_.FullName.Contains("\") })
   if ($bad.Count -gt 0) { throw "zip 条目含反斜杠（yauzl 会拒绝）: $($bad[0].FullName)" }
-  $mf = $zip.Entries | Where-Object { $_.FullName -eq "doc-intake/manifest.json" }
-  if (-not $mf) { throw "zip 中缺少 doc-intake/manifest.json" }
+  $mf = $zip.Entries | Where-Object { $_.FullName -eq "manifest.json" }
+  if (-not $mf) { throw "zip 中缺少 manifest.json" }
   $sr = New-Object System.IO.StreamReader($mf.Open())
   $zipVersion = ($sr.ReadToEnd() | ConvertFrom-Json).version
   $sr.Close()
