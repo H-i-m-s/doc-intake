@@ -17,6 +17,7 @@ import threading
 from typing import Optional
 
 from logger import get_logger
+import auth_ledger
 
 
 def _mask(key: str) -> str:
@@ -34,13 +35,14 @@ class KeyPool:
         on_failure: 失败告警回调，签名 (masked_key, available, total) -> None。
     """
 
-    def __init__(self, credentials: Optional[list] = None, *, on_failure=None, logger_name: str = "key_pool"):
+    def __init__(self, credentials: Optional[list] = None, *, on_failure=None, logger_name: str = "key_pool", provider: str = ""):
         self._lock = threading.Lock()
         self.credentials: list = list(credentials) if credentials else []
         self.failed: set[str] = set()
         self._index = 0
         self._notified: set[str] = set()
         self.on_failure = on_failure
+        self.provider = provider
         self._log = get_logger(logger_name)
 
     def reset(self) -> None:
@@ -84,8 +86,12 @@ class KeyPool:
                     return cred
             return None
 
-    def mark_failed(self, cred_or_token) -> bool:
-        """标记 credential 失败。返回是否新增失败。"""
+    def mark_failed(self, cred_or_token, reason: str = "") -> bool:
+        """标记 credential 失败。返回是否新增失败。
+
+        若构造时给了 provider，额外往 auth_ledger 记一笔（provider, index, 掩码, reason）。
+        index 是这把 Token 在 self.credentials 里的位置（1 起）。
+        """
         token = cred_or_token if isinstance(cred_or_token, str) else self._cred_key(cred_or_token)
         if not token:
             return False
@@ -93,8 +99,36 @@ class KeyPool:
             if token in self.failed:
                 return False
             self.failed.add(token)
+            self.record_auth_failure(token, reason)
             self._notify_failure(token)
             return True
+
+    def _locate_index(self, token: str) -> int:
+        """token 在 self.credentials 里的序号（从 1 开始）；找不到返回 0。"""
+        for position, cred in enumerate(self.credentials, start=1):
+            if self._cred_key(cred) == token:
+                return position
+        return 0
+
+    def record_auth_failure(self, cred_or_token, reason: str = "") -> None:
+        """只往 auth_ledger 记一笔，不改变 failed 状态，也不触发 on_failure。
+
+        与 mark_failed 分开：有些路径（如全部 token 失败的收尾）只想要上报，
+        不想要再次改变池子状态或重复触发告警。
+        """
+        if not self.provider:
+            return
+        token = cred_or_token if isinstance(cred_or_token, str) else self._cred_key(cred_or_token)
+        if not token:
+            return
+        index = self._locate_index(token)
+        if index < 1:
+            return
+        try:
+            auth_ledger.record(self.provider, index, _mask(token), reason or "鉴权失败")
+        except Exception as exc:
+            # 上报是附加信息，绝不能因为它影响主流程；但也不静默吃掉，留一条 debug。
+            self._log.debug("鉴权失败上报未记上", provider=self.provider, error=str(exc))
 
     def _notify_failure(self, token: str) -> None:
         if token in self._notified:

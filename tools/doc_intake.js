@@ -3,6 +3,16 @@ import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-
 import { getSettings, DEFAULT_PDF_BACKEND_CHAIN } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
 import { DocIntakeError } from "../lib/errors.js";
+import {
+  buildTokenNotice,
+  evaluateTokenStatus,
+  probeTokenFields,
+  readStatus,
+  readTokenConfig,
+  recordAuthFailures,
+  shouldBackgroundProbe,
+  writeStatus,
+} from "../lib/token-status.js";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, extname, isAbsolute, join, normalize, parse, resolve } from "node:path";
@@ -531,7 +541,8 @@ export function buildResult(sources, results, settings = {}, options = {}) {
 
 export const name = "doc_intake";
 export const description =
-  "提取文档/图片内容，输出 Markdown。支持 PDF（MinerU）、图片（PaddleOCR）、Office 文档（本地解析，含 DOC/XLS/PPT 旧格式转换）。";
+  "提取文档/图片内容，输出 Markdown。支持 PDF（MinerU）、图片（PaddleOCR）、Office 文档（本地解析，含 DOC/XLS/PPT 旧格式转换）。"
+  + "若返回里带 tokenNotice 字段，说明用户的云端 Token（MinerU / PaddleOCR）有问题，需要按它里面的 text 提醒用户。";
 
 export const parameters = {
   type: "object",
@@ -600,13 +611,66 @@ export async function execute(input = {}, ctx) {
       _legacyConversionConcurrency: settings.legacyConversionConcurrency ?? 1,
     };
     const results = await processFiles(sources, enrichedInput, ctx, settings);
-    return buildResult(sources, results, settings, {
+    const out = buildResult(sources, results, settings, {
       summaryOnly: input.summaryOnly === true,
     });
+
+    const tokenNotice = await applyTokenStatus(results, ctx);
+    if (tokenNotice) {
+      // 两个地方都放：content 是模型真正读到的那份，details.data 留给上层程序读。
+      out.content = [...(out.content || []), { type: "text", text: tokenNotice.text }];
+      out.details = {
+        ...(out.details || {}),
+        data: { ...(out.details?.data || {}), tokenNotice },
+      };
+    }
+    return out;
   } catch (error) {
     return toToolError(error, {
       action: name,
       source: input.source ? input.source.join(", ") : null,
     });
+  }
+}
+
+// 更新 Token 健康状态，并给出这次要不要提示。
+//
+// 次序有讲究，不能反：
+//   1) 先把这次提取真实撞到的鉴权拒绝并进状态（最硬的证据，不是猜的）
+//   2) 再算要不要提示 —— 读的是刚更新过的状态
+//   3) 最后顺手判断该不该后台补探（不 await，结论留给下次）
+// 拿不到存储就整段跳过：提示是附加信息，不能因为它把提取结果搞坏。
+async function applyTokenStatus(results, ctx) {
+  const storage = ctx?.storage;
+  if (!storage?.global) return null;
+  try {
+    const config = readTokenConfig(ctx);
+
+    const failures = [];
+    for (const item of Array.isArray(results) ? results : []) {
+      const list = item?.ok ? item?.result?.metadata?.authFailures : null;
+      if (Array.isArray(list)) failures.push(...list);
+    }
+
+    let status = readStatus(storage);
+    if (failures.length > 0) {
+      status = recordAuthFailures(status, config, failures);
+      writeStatus(storage, status);
+    }
+    const notice = buildTokenNotice(evaluateTokenStatus(config, status));
+
+    // 距上次探测超过窗口就补探一次。不 await：这次提取不为它多等一轮网络。
+    if (shouldBackgroundProbe(config, status)) {
+      const hostFetch = ctx?.network?.fetch;
+      const fetchImpl = typeof hostFetch === "function" ? hostFetch.bind(ctx.network) : null;
+      if (fetchImpl) {
+        probeTokenFields({ config, status, fetchImpl, storage }).catch((error) => {
+          void ctx?.logger?.debug?.(`Token 后台补探失败：${error?.message || error}`);
+        });
+      }
+    }
+    return notice;
+  } catch {
+    return null;
   }
 }

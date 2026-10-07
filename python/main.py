@@ -21,6 +21,7 @@ from extractors import get_extractor
 from extractors._utils import markdown_media_path
 from logger import configure_logging, get_logger, log
 from pdf_splitter import PdfMemoryChunk, iter_pdf_memory_chunks, pdf_page_count
+from auth_ledger import drain as _drain_auth_failures
 
 
 @contextmanager
@@ -466,6 +467,12 @@ def format_result(result: ExtractionResult):
     """返回给 JS 端的 dict，结构与本地 JSON 的 metadata 对齐（顶层有 name/outputDir/markdown/metadata）。"""
     meta = result.metadata or {}
 
+    # 鉴权失败账本：drain() 只在此处调一次 —— format_result 是所有结果路径
+    # （单后端链、分块合并、split-only）的唯一出口，因而两边都覆盖。
+    # 既进 compact_meta（Node 实际读这里），也回写 result.metadata。
+    auth_failures = _drain_auth_failures()
+    meta["authFailures"] = auth_failures
+
     # 没保存图路径（output_dir 没设）→ 抹所有 <img> 标签和 base64 markdown 图片。
     # video/audio 标签始终保留(它们 src 是本地路径,不会进 base64)。
     # 有保存路径 → 只 strip base64，<img src="本地路径"> 保留供 agent 看。
@@ -493,6 +500,7 @@ def format_result(result: ExtractionResult):
         "conversionDurationMs": meta.get("conversionDurationMs"),
         "warnings": result.warnings,
         "usedBackendInChain": meta.get("usedBackendInChain"),
+        "authFailures": auth_failures,
     }
     if result.md_path:
         compact_meta["mdPath"] = result.md_path

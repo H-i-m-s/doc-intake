@@ -8,6 +8,12 @@
 //   GET  /deps     用已配置的 pythonPath 探测 Python 依赖是否安装
 //   POST /install 对缺失依赖执行 pip install（只允许装 DEP_CATALOG 里列出的包）
 //   POST /validate 探测 MinerU / PaddleOCR 的 Token 是否有效（纯 Node，不 spawn Python）
+//   GET  /token-status       读 Token 健康状态（纯读，不出网）
+//   POST /token-status/probe 主动探一次已保存的 Token，并落盘结论
+//   POST /token-status/mute  开启「改动 Token 前不再提示」
+//
+// 状态存在 App 自己的全局存储里（ctx.storage.global），不放在设置里 —— 它是运行
+// 观察结果，不是用户配置，不应该出现在设置 schema 里让用户去改。
 //
 // 静态设置 schema 仍留在 manifest.json：宿主拿它做 ctx.config 的字段校验、
 // 默认值与敏感值处理；这里只是把"呈现与交互"换成自定义页面。
@@ -16,8 +22,16 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseCredentials, parseTokens } from "../lib/settings.js";
 import { validateMineruToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
+import {
+  combinedFingerprint,
+  evaluateTokenStatus,
+  probeTokenFields,
+  readStatus,
+  recordProbeRows,
+  tokenListOf,
+  writeStatus,
+} from "../lib/token-status.js";
 
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROBE_SCRIPT = path.join(CURRENT_DIR, "..", "python", "probe_deps.py");
@@ -484,7 +498,8 @@ export default function registerSettingsRoutes(app, ctx) {
 
   // 探测 Token。请求体带的是「输入框里当前的值」，不要求先保存——
   // 填完就能测，不然改一把 Token 得先存盘再验证，来回两步。
-  // 解析走 lib/settings.js 那两个解析器，跟真正提取时的口径保持同一份实现。
+  // 解析走 tokenListOf（内部就是 lib/settings.js 那两个解析器），
+  // 跟真正提取时的口径、跟 Python 侧的 credential 序号保持同一份实现。
   app.post("/validate", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     try {
@@ -494,12 +509,8 @@ export default function registerSettingsRoutes(app, ctx) {
         return c.json({ ok: false, message: "没有收到要检测的 Token。" });
       }
 
-      const mineruTokens = hasMineru
-        ? parseCredentials(body.mineruCredentials)
-            .map((cred) => cred?.accessKey || cred?.secretKey || "")
-            .filter(Boolean)
-        : [];
-      const paddleTokens = hasPaddle ? parseTokens(body.paddleTokens) : [];
+      const mineruList = hasMineru ? tokenListOf("mineruCredentials", body.mineruCredentials) : [];
+      const paddleList = hasPaddle ? tokenListOf("paddleTokens", body.paddleTokens) : [];
 
       // 本进程没有网络权限（Permission Model 未给 --allow-net），出网必须走宿主代发的出口。
       // 它受 manifest 顶层 network.allowedHosts 约束；未声明时 fetch 会抛结构化错误。
@@ -508,18 +519,94 @@ export default function registerSettingsRoutes(app, ctx) {
 
       const [mineruResult, paddleResult] = await Promise.all([
         hasMineru
-          ? validateTokenList(mineruTokens, (token) => validateMineruToken(token, fetchImpl))
+          ? validateTokenList(mineruList.map((item) => item.token), (token) => validateMineruToken(token, fetchImpl))
           : Promise.resolve(null),
         hasPaddle
-          ? validateTokenList(paddleTokens, (token) => validatePaddleToken(token, fetchImpl))
+          ? validateTokenList(paddleList.map((item) => item.token), (token) => validatePaddleToken(token, fetchImpl))
           : Promise.resolve(null),
       ]);
 
+      // 逐把结果里带上配置里的真实行号（上一次检测也算一次检测，结论要进状态）。
+      const mineruRows = hasMineru
+        ? (mineruResult || []).map((row, i) => ({ ...row, index: mineruList[i]?.index ?? row.index }))
+        : null;
+      const paddleRows = hasPaddle
+        ? (paddleResult || []).map((row, i) => ({ ...row, index: paddleList[i]?.index ?? row.index }))
+        : null;
+      rememberRows(ctx, "mineruCredentials", body.mineruCredentials, mineruRows);
+      rememberRows(ctx, "paddleTokens", body.paddleTokens, paddleRows);
+
       // 键名与请求体、与设置页的字段名保持一致：
       // 前端拿到响应后会按 meta.validate.field 取结果，两边不同名就会静默取到空数组。
-      return c.json({ ok: true, mineruCredentials: mineruResult, paddleTokens: paddleResult });
+      return c.json({ ok: true, mineruCredentials: mineruRows, paddleTokens: paddleRows });
     } catch (error) {
       return c.json({ ok: false, message: `检测失败：${error?.message || error}` });
     }
   });
+
+  // ---- Token 健康状态 ----
+
+  // 纯读，不出网：页面要能立刻画出横幅，不能为了算个状态先等一轮网络。
+  app.get("/token-status", async (c) => {
+    try {
+      const config = await readConfig(ctx);
+      const status = readStatus(requireStorage(ctx));
+      return c.json({ ok: true, ...evaluateTokenStatus(config, status) });
+    } catch (error) {
+      return c.json({ ok: false, message: `读取 Token 状态失败：${error?.message || error}` });
+    }
+  });
+
+  // 打开设置页时自动走一次。探的是已保存的值：草稿还在输入框里没落地，探它没有意义，
+  // 而且用户边打字边发请求是纯干扰。
+  app.post("/token-status/probe", async (c) => {
+    try {
+      const config = await readConfig(ctx);
+      const storage = requireStorage(ctx);
+      const hostFetch = ctx?.network?.fetch;
+      const fetchImpl = typeof hostFetch === "function" ? hostFetch.bind(ctx.network) : null;
+      const { status } = await probeTokenFields({
+        config,
+        status: readStatus(storage),
+        fetchImpl,
+        storage,
+      });
+      return c.json({ ok: true, ...evaluateTokenStatus(config, status) });
+    } catch (error) {
+      return c.json({ ok: false, message: `检测 Token 失败：${error?.message || error}` });
+    }
+  });
+
+  // 静音记的是「按下按钮那一刻 Token 长什么样」的指纹，不是简单的 true。
+  // 所以用户改完 Token 指纹就对不上，静音自动作废、提示自己回来。
+  app.post("/token-status/mute", async (c) => {
+    try {
+      const config = await readConfig(ctx);
+      const storage = requireStorage(ctx);
+      const status = readStatus(storage);
+      const muted = { ...status, mutedFor: combinedFingerprint(config) };
+      writeStatus(storage, muted);
+      return c.json({ ok: true, ...evaluateTokenStatus(config, muted) });
+    } catch (error) {
+      return c.json({ ok: false, message: `静音失败：${error?.message || error}` });
+    }
+  });
+}
+
+// 状态要落盘（App 全局存储），拿不到就显式报错。不静默降级成内存态：
+// 那样这个功能会时灵时不灵，比直接坏掉更难查。
+function requireStorage(ctx) {
+  const storage = ctx?.storage;
+  if (!storage?.global) throw new Error("宿主未提供 App 存储（ctx.storage.global 不可用）");
+  return storage;
+}
+
+function rememberRows(ctx, field, raw, rows) {
+  if (!Array.isArray(rows) || typeof raw !== "string") return;
+  try {
+    const storage = requireStorage(ctx);
+    writeStatus(storage, recordProbeRows(readStatus(storage), { field, raw, rows }));
+  } catch {
+    // 存不下就算了：检测结果本身已经返回给页面了，横幅下一次自己会重算。
+  }
 }

@@ -40,6 +40,25 @@
       <p class="gs-sub">基础项与高级设置改的是插件行为；环境依赖管理检测你填的 Python 环境里库装得怎么样。</p>
     </header>
 
+    <!-- 顶部 Token 健康提示（吸顶）。三块：状态、静音、本次关闭。
+         红 = 这一档此刻已经不可用；黄 = 还能用，但有杂质或限制。 -->
+    <div class="gs-tokenbar" id="token-bar" role="status" hidden>
+      <div class="gs-tokenbar__body">
+        <p class="gs-tokenbar__title" id="token-bar-title"></p>
+        <p class="gs-tokenbar__detail" id="token-bar-detail"></p>
+      </div>
+      <div class="gs-tokenbar__acts">
+        <span class="gs-tip">
+          <button class="gs-btn gs-btn--ghost gs-btn--sm" id="token-mute" type="button">改动 Token 前不再提示</button>
+          <span class="gs-tip__bubble" role="tooltip">下次改动 Token 之前不再提示。本地提取够用、或者 Token 失效与否都不影响你，都可以按这个。改完 Token，这条提示会自己回来。</span>
+        </span>
+        <span class="gs-tip">
+          <button class="gs-tokenbar__close" id="token-close" type="button" aria-label="关闭提示（仅本次）">×</button>
+          <span class="gs-tip__bubble" role="tooltip">只关掉这一次。下次打开设置页还会提示；想彻底不再看到，请点左边的按钮。</span>
+        </span>
+      </div>
+    </div>
+
     <p class="gs-banner" id="python-banner" hidden></p>
 
     <!-- 1 · 基础项 -->

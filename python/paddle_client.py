@@ -31,6 +31,14 @@ def _redact_secret_text(text: str, secret: str | None = None) -> str:
     return value
 
 
+def _auth_reason(error_text: str) -> str:
+    """从原始异常里提炼一句已脱敏的鉴权失败原因。"""
+    lower = str(error_text or "").lower()
+    if "quota" in lower or "limit" in lower:
+        return "配额不足"
+    return "鉴权失败"
+
+
 class PaddleClient:
     """PaddleOCR HTTP API 客户端（不依赖 PyTorch）"""
 
@@ -44,6 +52,7 @@ class PaddleClient:
         self._pool = KeyPool(
             self.tokens,
             logger_name="paddleocr",
+            provider="paddleocr",
             on_failure=self._log_key_failure if self.settings.get("notifyKeyFailure", True) else None,
         )
 
@@ -63,9 +72,9 @@ class PaddleClient:
             return cred
         return None
 
-    def mark_token_failed(self, token: str) -> bool:
+    def mark_token_failed(self, token: str, reason: str = "") -> bool:
         """标记 Token 失败，后续不再使用。返回是否新增失败标记。"""
-        return self._pool.mark_failed(token)
+        return self._pool.mark_failed(token, reason)
 
     def reset_key_pool(self) -> None:
         """重置 Key 池（清除失败状态）。"""
@@ -141,10 +150,12 @@ class PaddleClient:
 
             # Key 轮询：失败一次换下一个 token，全部失败后才放弃
             max_attempts = max(1, len(keys if keys else self.tokens))
+            last_token = None
             for attempt in range(max_attempts):
                 token = self._get_token(keys if attempt == 0 else None)
                 if not token:
                     raise ValueError("PaddleOCR 需要配置 Access Token")
+                last_token = token
 
                 self.logger.info("开始 PaddleOCR 提取",
                                  source=source,
@@ -180,7 +191,7 @@ class PaddleClient:
                         error_msg = str(e).lower()
                         # 认证/配额错误 → 标记当前 token 失败，换下一个
                         if any(k in error_msg for k in ["auth", "token", "401", "403", "quota", "limit"]):
-                            self.mark_token_failed(token)
+                            self.mark_token_failed(token, reason=_auth_reason(str(e)))
                             self.logger.warning(
                                 f"Token {self._mask_key(token)} 报错，准备切换",
                                 error=_redact_secret_text(str(e), token),
@@ -203,6 +214,9 @@ class PaddleClient:
                 # 所有 token 都失败了。把最后一次错误按 token/其他分类抛出
                 err_lower = str(last_error).lower()
                 if any(k in err_lower for k in ["auth", "token", "401", "403", "quota", "limit"]):
+                    # 收尾处再补记一笔（若该 token 已在循环中记过，first-wins 不会覆盖）。
+                    if last_token:
+                        self._pool.record_auth_failure(last_token, "Token 失效或配额不足")
                     raise PaddleAuthError(f"PaddleOCR Token 失效或配额不足: {last_error}")
                 raise last_error
 

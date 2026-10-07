@@ -5,7 +5,15 @@
 // 注意：页面跑在沙箱 iframe 里，window.confirm 被禁 —— 安装确认走页内确认条。
 import { hana } from "./sdk.js";
 
-const API = { config: "/config", deps: "/deps", install: "/install", validate: "/validate" };
+const API = {
+  config: "/config",
+  deps: "/deps",
+  install: "/install",
+  validate: "/validate",
+  tokenStatus: "/token-status",
+  tokenProbe: "/token-status/probe",
+  tokenMute: "/token-status/mute",
+};
 const STATUS_TIMEOUT_MS = 15000;
 const DEPS_TIMEOUT_MS = 90000;
 const INSTALL_TIMEOUT_MS = 660000;
@@ -248,6 +256,11 @@ const ui = {
   saveState: el("save-state"),
   note: el("gs-note"),
   banner: el("python-banner"),
+  tokenBar: el("token-bar"),
+  tokenTitle: el("token-bar-title"),
+  tokenDetail: el("token-bar-detail"),
+  tokenMute: el("token-mute"),
+  tokenClose: el("token-close"),
   basic: el("basic-fields"),
   advToggle: el("adv-toggle"),
   adv: el("adv-fields"),
@@ -278,6 +291,9 @@ let advCollapsible = null;
 let depsCollapsible = null;
 let depsAutoExpanded = false; // 缺必装时只自动展开一次
 let depsUserToggled = false;  // 用户自己动过折叠，就不再替他自动展开
+// × 只是"这次打开先别显示"：纯前端内存态，不写任何存储，下次打开照旧提示。
+let tokenBarDismissed = false;
+let tokenBarBusy = false;
 
 // 主题明暗只拿来干一件正事：让原生控件（下拉弹层等）跟着明暗走。
 // 配色本身由宿主注入的主题 CSS 负责，这里不再自己写一套深色覆盖。
@@ -874,6 +890,8 @@ function buildValidateBlock(key, built) {
       if (rows.length === 0) setStatus("没有可检测的 Token。", "warn");
       else if (failed.length === 0) setStatus(`${rows.length} 个 Token 全部有效。`, "ok");
       else setStatus(`${rows.length} 个里有 ${failed.length} 个未通过。`, "err");
+      // 手动检测也是一次检测，结论已经进状态了 —— 顶上那条横幅跟着重算。
+      void refreshTokenBar();
     } catch (error) {
       list.hidden = true;
       setStatus(`检测失败：${error?.message || error}`, "err");
@@ -1029,6 +1047,66 @@ function updateBanner() {
   ui.banner.textContent = "还没有填写 Python 可执行文件路径。填好并保存后，这个插件才能工作，依赖检测也才有对象。";
 }
 
+// ---------------------------------------------------------------- Token 健康提示
+
+// 状态由后端算好（lib/token-status.js），页面只负责画。
+// 静音与有效期都在后端那侧判定，前端不自己二次判断，免得两处口径漂开。
+function renderTokenBar(state) {
+  if (tokenBarDismissed || !state || state.ok === false || !state.level) {
+    ui.tokenBar.hidden = true;
+    return;
+  }
+  ui.tokenBar.hidden = false;
+  ui.tokenBar.dataset.level = state.level;
+  ui.tokenTitle.textContent = state.title || "";
+  ui.tokenDetail.textContent = state.detail || "";
+}
+
+// 纯读，不出网。先画一版已有结论，用户一进页就能看到东西。
+async function refreshTokenBar() {
+  try {
+    const { data } = await withTimeout(api(API.tokenStatus), STATUS_TIMEOUT_MS, "读取 Token 状态");
+    renderTokenBar(data);
+  } catch {
+    // 读不到就当没有提示：宁可不显示，也不编一条出来吓人。
+    ui.tokenBar.hidden = true;
+  }
+}
+
+// 打开设置页自动探一次。理由很实在：MinerU 的 Token 有三个月寿命，
+// 光靠"上次谁手点过检测"，页面很容易停在过期之前。
+// 身后端探的是已保存的值，输入框里改了没存的不探。
+async function probeTokenBar() {
+  try {
+    const { data } = await withTimeout(apiPost(API.tokenProbe, {}), VALIDATE_TIMEOUT_MS, "检测 Token");
+    // 探测本身失败（而不是某把 Token 失效）要显式报出来：
+    // 拿不到 App 存储、读不了配置这类毛病不能吞，否则这条横幅会时有时无、无从查起。
+    // 至于"某把 Token 问不出结论"（没网之类），后端是以正常响应回来的，不在这里报。
+    if (data && data.ok === false) setNote(`Token 检测没跑成：${data.message || "未知原因"}`, "err");
+    renderTokenBar(data);
+  } catch (error) {
+    setNote(`Token 检测没跑成：${error?.message || error}`, "err");
+  }
+}
+
+// 静音记的是"按下那一刻 Token 长什么样"的指纹；改完 Token 指纹就对不上，
+// 提示会自己回来。所以这一步不需要用户再回来手动取消。
+async function muteTokenBar() {
+  if (tokenBarBusy) return;
+  tokenBarBusy = true;
+  ui.tokenMute.disabled = true;
+  try {
+    const { data } = await withTimeout(apiPost(API.tokenMute, {}), STATUS_TIMEOUT_MS, "静音");
+    if (!data || data.ok === false) throw new Error(data?.message || "后端返回失败");
+    renderTokenBar(data);
+  } catch (error) {
+    setNote(`静音失败：${error?.message || error}`, "err");
+  } finally {
+    tokenBarBusy = false;
+    ui.tokenMute.disabled = false;
+  }
+}
+
 // ---------------------------------------------------------------- 配置读写
 
 async function loadConfig() {
@@ -1039,6 +1117,7 @@ async function loadConfig() {
   ui.save.disabled = true;
   ui.saveState.textContent = "";
   updateBanner();
+  void refreshTokenBar();
 }
 
 async function saveConfig() {
@@ -1052,6 +1131,8 @@ async function saveConfig() {
     ui.saveState.textContent = "已保存";
     setNote("设置已保存，改动即时生效。", "ok");
     updateBanner();
+    // Token 变了，老结论挂在旧指纹上已经失效；重新读一次，该消失的消失、该出现的出现。
+    void refreshTokenBar();
     // pythonPath 变了，依赖检测结果跟着失效
     void loadDeps();
   } catch (error) {
@@ -1375,6 +1456,11 @@ function wire() {
   ui.depsRefresh.addEventListener("click", () => void loadDeps());
   ui.installOk.addEventListener("click", () => void doInstall());
   ui.installCancel.addEventListener("click", clearInstallConfirm);
+  ui.tokenMute.addEventListener("click", () => void muteTokenBar());
+  ui.tokenClose.addEventListener("click", () => {
+    tokenBarDismissed = true;
+    ui.tokenBar.hidden = true;
+  });
   advCollapsible = createCollapsible(ui.advToggle, ui.adv, false);
   depsCollapsible = createCollapsible(ui.depsToggle, ui.depsBody, false);
   // 用户自己点过折叠开关，之后就不再替他自动展开
@@ -1390,6 +1476,7 @@ async function reloadConfig() {
     setNote(`读取设置失败：${error?.message || error}`, "err");
   }
   void loadDeps();
+  void probeTokenBar();
 }
 
 (async function boot() {
@@ -1406,4 +1493,5 @@ async function reloadConfig() {
   }
   ui.root.setAttribute("aria-busy", "false");
   void loadDeps();
+  void probeTokenBar();
 })();

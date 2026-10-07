@@ -27,6 +27,19 @@ def _redact_secret_text(text: str, secret: str | None = None) -> str:
     return value
 
 
+def _auth_reason(error_text: str) -> str:
+    """从原始异常里提炼一句已脱敏的鉴权失败原因。"""
+    text = str(error_text or "")
+    lower = text.lower()
+    if "A0211" in text:
+        return "Token 已过期"
+    if "A0202" in text:
+        return "Token 无效"
+    if "quota" in lower or "limit" in lower:
+        return "配额不足"
+    return "鉴权失败"
+
+
 class MinerUClient:
     """MinerU API 客户端（支持多 credential KeyPool，失败后自动切换）"""
 
@@ -37,6 +50,7 @@ class MinerUClient:
         self._pool = KeyPool(
             self.credentials,
             logger_name="mineru",
+            provider="mineru",
             on_failure=self._log_key_failure if self.settings.get("notifyKeyFailure", True) else None,
         )
 
@@ -52,9 +66,9 @@ class MinerUClient:
     def get_pool_stats(self) -> dict:
         return self._pool.stats()
 
-    def mark_credential_failed(self, cred_or_token) -> bool:
+    def mark_credential_failed(self, cred_or_token, reason: str = "") -> bool:
         """标记某凭证为失败，后续跳过。"""
-        return self._pool.mark_failed(cred_or_token)
+        return self._pool.mark_failed(cred_or_token, reason)
 
     def _get_credential(self, credentials: Optional[list] = None) -> tuple[Optional[str], Optional[str]]:
         """获取下一个可用凭证（跳过已失败的）。返回 (access_key, secret_key）。
@@ -157,7 +171,7 @@ class MinerUClient:
 
                 # auth/quota 错误才切换 token；其它错误直接 throw（上层 chain 降级）
                 if any(k in error_msg for k in ["auth", "token", "401", "403", "quota", "limit"]):
-                    self.mark_credential_failed(token or "")
+                    self.mark_credential_failed(token or "", reason=_auth_reason(str(e)))
                     self.logger.warning(
                         "MinerU 凭证报错，准备切换",
                         key=self._pool._cred_key(token or "")[:8] + "..." if token else "",

@@ -34,6 +34,11 @@
   --gs-danger-line: color-mix(in srgb, var(--gs-danger) 42%, transparent);
   --gs-green-tint: color-mix(in srgb, var(--gs-green) 15%, transparent);
   --gs-accent-ring: color-mix(in srgb, var(--gs-accent) 22%, transparent);
+
+  /* 警示黄：沿用这个页面里已经定下的那个值（检测状态、页内提示的 warn 都用它），
+     这次只是把它提成变量，好让顶部横幅跟其它地方是同一个黄。 */
+  --gs-warn: #d98b2b;
+  --gs-warn-line: color-mix(in srgb, var(--gs-warn) 40%, transparent);
 }
 
 /* .gs-switch 等设了 display，会盖掉 HTML 的 hidden 属性，显式兜底 */
@@ -91,6 +96,88 @@ body { padding: 0 12px; }
   background: var(--gs-soft);
   border: 1px solid var(--gs-line);
 }
+
+/* ---------- 顶部 Token 健康提示 ---------- */
+/* 吸顶：往下翻到高级设置时这条仍然看得见。
+   取色纪律：红/黄各只走 danger / warn 一个语义色，底色是语义色混进卡片底色，
+   所以深浅主题下层级一致；左侧那 3px 是唯一的强调，不铺渐变也不加图标。 */
+.gs-tokenbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0;
+  padding: 9px 12px 9px 14px;
+  border: 1px solid var(--gs-line);
+  border-left: 3px solid var(--gs-line);
+  border-radius: var(--gs-radius-sm);
+  background: var(--gs-surface);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.gs-tokenbar[data-level="red"] {
+  background: color-mix(in srgb, var(--gs-danger) 10%, var(--gs-surface));
+  border-color: var(--gs-danger-line);
+  border-left-color: var(--gs-danger);
+}
+.gs-tokenbar[data-level="yellow"] {
+  background: color-mix(in srgb, var(--gs-warn) 13%, var(--gs-surface));
+  border-color: var(--gs-warn-line);
+  border-left-color: var(--gs-warn);
+}
+.gs-tokenbar__body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.gs-tokenbar__title { margin: 0; font-weight: 600; }
+.gs-tokenbar[data-level="red"] .gs-tokenbar__title { color: var(--gs-danger); }
+.gs-tokenbar[data-level="yellow"] .gs-tokenbar__title { color: var(--gs-warn); }
+.gs-tokenbar__detail { margin: 0; color: var(--gs-sub); overflow-wrap: anywhere; }
+.gs-tokenbar__acts { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; }
+
+/* ×：不引图标库，跟页面里的 ✓ / ✕ 一样走文字字形。
+   命中区按 24×24 撑开，视觉上仍然只是一个安静的字符。 */
+.gs-tokenbar__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--gs-radius-sm);
+  background: transparent;
+  color: var(--gs-muted);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.gs-tokenbar__close:hover { color: var(--gs-ink); background: var(--gs-soft); }
+.gs-tokenbar__close:focus-visible { outline: 2px solid var(--gs-accent-ring); outline-offset: 1px; }
+
+/* 悬浮说明：自己画，不用原生 title —— 原生那套延迟长、样式也不跟主题。
+   hover 与键盘 focus 都能弹；触屏上按不出来不影响主流程。 */
+.gs-tip { position: relative; display: inline-flex; }
+.gs-tip__bubble {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  width: 258px;
+  padding: 8px 10px;
+  border: 1px solid var(--gs-line);
+  border-radius: var(--gs-radius-sm);
+  background: var(--gs-surface);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--gs-ink) 16%, transparent);
+  color: var(--gs-sub);
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s ease;
+}
+.gs-tip:hover .gs-tip__bubble,
+.gs-tip:focus-within .gs-tip__bubble { opacity: 1; visibility: visible; }
 
 /* ---------- 卡片 ---------- */
 .gs-card {
