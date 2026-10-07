@@ -107,13 +107,19 @@ def default_save_path() -> str:
 
 
 def determine_output_dir(args, settings) -> Optional[str]:
-    """确定输出目录"""
+    """确定输出目录（要不要落盘、落在哪的唯一权威）。
+
+    为什么放在这边：JS 侧进程受 Node Permission Model 限制，只能读安装目录 /
+    app-data / 宿主 locales，探测「有没有 Documents 目录」会抛 ERR_ACCESS_DENIED，
+    所以带文件系统判断的默认值只能在不受限的子进程里算。
+    """
     if args.output_dir:
         return args.output_dir
-    
-    if settings.get("autoSave", False):
+
+    # summaryOnly 要留下可读取的完整结果，否则调用方只有状态而没有路径。
+    if settings.get("autoSave", False) or settings.get("summaryOnly", False):
         return settings.get("savePath") or default_save_path()
-    
+
     return None
 
 
