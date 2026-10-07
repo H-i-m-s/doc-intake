@@ -16,9 +16,16 @@
 // scripts/pack.mjs — 零依赖出包（不调外部 tar/zip，不用 npm 库）。
 //
 // 产物（dist/）：
-//   <id>-v<version>.zip          归档；manifest.json / index.js 直接位于包根（平铺，不套顶层目录）
-//   <id>-v<version>.zip.sha256   sha256 校验值
-//   <id>-v<version>.entry.json   市场条目（archive.url 用 {{BASE_URL}} 占位）
+//   <id>-v<version>.zip            归档；manifest.json / index.js 直接位于包根（平铺，不套顶层目录）
+//   <id>-v<version>.zip.sha256     sha256 校验值（只给人看，市场同步器不读）
+//   app-<id>-<version>.entry.json  市场条目（archive.url 用 {{BASE_URL}} 占位）
+//
+// 市场（liliMozi/hana-marketplace）的附件规矩，名字都是死的：
+//   1) entry 附件必须叫 app-<id>-<version>.entry.json。同步器按 "app-<id>-" 开头 + ".entry.json"
+//      结尾筛，必须唯一命中，再逐字符比对名字。注意版本号前面没有 v。
+//   2) 归档附件的名字由 entry 里 archive.url 指名，必须与它逐字符一致。
+//   3) entry 里的 publisher 必须与登记仓库 registry.json 的值一致；发布即固化，改要发新版本。
+//   4) entry 附件有 512 KiB 上限（同步器的 MAX_ENTRY_BYTES），超了整批同步直接失败；本脚本会提示。
 //
 // 布局为什么是平铺：宿主自己的出包工具产出的就是平铺包，宿主的校验器也只在包根找
 // manifest.json，套一层目录会被判成「读不到 manifest.json」；zip 由安装器解到 <id>/ 下。
@@ -26,9 +33,9 @@
 // 打包前若存在 scripts/selfcheck.mjs 会先跑它，不过就拒绝出包；不存在则跳过（当前无自检）。
 //
 // 用法：
-//   node scripts/pack.mjs                 # 出包到 <app>/dist
+//   node scripts/pack.mjs                 # 出包到 <app>/dist，publisher 取 DEFAULT_PUBLISHER
 //   node scripts/pack.mjs --out <dir>     # 自定义输出目录
-//   node scripts/pack.mjs --publisher <p> # 指定 entry.json 的 publisher
+//   node scripts/pack.mjs --publisher <p> # 覆盖 publisher（必须与 registry.json 登记值一致）
 import { createHash } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -38,6 +45,11 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** entry.json 的 publisher。必须与市场登记（registry.json）里的值逐字符一致；发布后固化，改要发新版本。 */
+const DEFAULT_PUBLISHER = "H-i-m-s";
+/** 市场同步器读 entry 附件时的响应字节上限（MAX_ENTRY_BYTES）。超了整批同步失败。 */
+const MARKET_ENTRY_MAX_BYTES = 512 * 1024;
 
 /** 任意层级的整目录排除项。release.ps1 出包时也调本脚本，所以这里是唯一的排除清单：
  *  开发资料、测试、Python 字节码缓存不进包，安装位的 App 用不到它们。 */
@@ -187,7 +199,7 @@ function buildEntry({ manifest, publisher, zipName, digest, size }) {
     kind: "app",
     id: manifest.id,
     name: manifest.name || manifest.id,
-    publisher: publisher || manifest.id,
+    publisher: publisher || DEFAULT_PUBLISHER,
     description: typeof manifest.description === "string" ? manifest.description : "",
     version: manifest.version,
     permissions: capabilities.map((capability) => ({ capability })),
@@ -246,7 +258,10 @@ function main() {
   const digest = createHash("sha256").update(zipBytes).digest("hex");
   writeFileSync(`${zipPath}.sha256`, `${digest}  ${zipName}\n`, "utf8");
 
-  const entryPath = join(outDir, `${baseName}.entry.json`);
+  // 市场同步器要求 entry 附件叫 app-<id>-<version>.entry.json（版本号前没有 v），
+  // 与 zip 的 <id>-v<version>.zip 不是同一种命名法，别混。
+  const entryName = `app-${manifest.id}-${manifest.version}.entry.json`;
+  const entryPath = join(outDir, entryName);
   const entry = buildEntry({
     manifest,
     publisher: arg("--publisher"),
@@ -261,6 +276,14 @@ function main() {
   console.log(`        sha256 ${digest}`);
   console.log(`        entry  ${relOut(entryPath)}`);
   console.log(`        条目   manifest.json, index.js, …`);
+  console.log(`        发布者 ${entry.publisher}`);
+
+  const entryBytes = statSync(entryPath).size;
+  console.log(`        市场   entry ${entryBytes} / ${MARKET_ENTRY_MAX_BYTES} 字节`);
+  if (entryBytes > MARKET_ENTRY_MAX_BYTES) {
+    console.warn(`[pack] 警告：市场条目超过 ${MARKET_ENTRY_MAX_BYTES} 字节上限，同步器读不下这份 entry，`);
+    console.warn(`       登记会失败。大头通常是 manifest.icon 被内联成 base64（膨胀约 4/3），先压那张图。`);
+  }
 }
 
 main();

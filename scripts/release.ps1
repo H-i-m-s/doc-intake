@@ -14,10 +14,21 @@ Doc Intake 出包与发版脚本（结构对齐 git-save-load/scripts/release.ps
   - gh 已登录（gh auth login）
   - 该 tag 的 Release 不存在（重名会拦下，避免同版本发两次不同内容）
   - manifest.json 的 version 就是本次要发的版本号（tag 与它强绑定）
+  - entry 附件不超过市场同步器的 512 KiB 上限（超了市场读不下，登记必失败）
 
 出包统一交给 scripts/pack.mjs，产物落 <repo>\dist：
-  <id>-v<version>.zip / .zip.sha256 / .entry.json
+  <id>-v<version>.zip / <id>-v<version>.zip.sha256 / app-<id>-<version>.entry.json
 -PackageOnly 是 -Publish 的补集写法，等同于默认的「只出包」。
+
+市场附件规范（对照 liliMozi/hana-marketplace，2026-10 核对）:
+  市场只读 GitHub 的「latest 正式 Release」（草稿、预发布一律拒），且要两个附件同时在场：
+    app-doc-intake-<version>.entry.json  条目。同步器按 "app-doc-intake-" 开头 + ".entry.json"
+                                         结尾筛，必须唯一命中，再逐字符比对名字；版本号前没有 v。
+    doc-intake-v<version>.zip            归档。名字由 entry 里 archive.url 指名，必须与之逐字符一致。
+  entry 里的 archive.url 保持 {{BASE_URL}} 占位，不要手改成真实 URL；sha256 与 size 由 pack.mjs 现算，
+  发布时不要再改这两个文件，否则市场按 size/sha256 校验会失败。
+  entry 里的 publisher 必须与市场登记仓库 registry.json 里的值一致（由 pack.mjs 的 DEFAULT_PUBLISHER 决定）。
+  zip 上限 50 MiB。zip.sha256 侧车文件市场不读，传不传都行。
 
 自检：pack.mjs 里留了挂载点——scripts/selfcheck.mjs 存在就先跑它，不存在则跳过。
 当前未提供 selfcheck.mjs，所以出包不会跑自检；以后补上即自动生效。
@@ -64,6 +75,14 @@ function Invoke-Pack {
 # 出包排在发布门禁之前：不管后面发布成不成，包都先出好，不会白跑一趟。
 $asset = Invoke-Pack
 
+# ---------- 2.5 定位市场条目 ----------
+# 名字由市场同步器钉死：app-<id>-<version>.entry.json，发布时和 zip 一起传。
+$entryName = "app-{0}-{1}.entry.json" -f $manifest.id, $version
+$entryPath = Join-Path $repoRoot ("dist\{0}" -f $entryName)
+if (-not (Test-Path $entryPath)) { throw "pack.mjs 未产出市场条目：$entryPath" }
+$entryBytes = (Get-Item -LiteralPath $entryPath).Length
+Write-Host "==> 市场条目: $entryName ($entryBytes 字节)"
+
 # ---------- 3. 校验 zip：条目必须是正斜杠（yauzl 拒绝反斜杠条目），manifest 版本一致 ----------
 $zip = [System.IO.Compression.ZipFile]::OpenRead($asset)
 try {
@@ -88,7 +107,7 @@ if ($PackageOnly -or -not $Publish) {
   Write-Host "==> 只出包，未发布。要发布到 GitHub Release 加 -Publish。"
   Write-Host "    zip:    $asset"
   Write-Host "    sha256: $asset.sha256  （校验值侧车文件）"
-  Write-Host "    entry:  $(Join-Path $repoRoot ('dist\{0}-{1}.entry.json' -f $manifest.id, $tag))  （市场条目）"
+  Write-Host "    entry:  $entryPath  （市场条目，发布时要和 zip 一起传）"
   return
 }
 
@@ -105,18 +124,29 @@ if ($LASTEXITCODE -ne 0) { throw "gh CLI 未登录，先运行 gh auth login" }
 cmd /c "gh release view $tag --repo $RepoSlug >nul 2>&1"
 if ($LASTEXITCODE -eq 0) { throw "Release $tag 已存在，换版本号或先删除旧 Release" }
 
+# 市场同步器读 entry 附件时有 512 KiB 的响应上限（MAX_ENTRY_BYTES），超了整批同步直接失败。
+# 在发布之前拦下，避免发出一个市场读不下的 Release。
+$entryLimit = 512 * 1024
+if ($entryBytes -gt $entryLimit) {
+  throw "市场条目 $entryName 有 $entryBytes 字节，超过同步器 $entryLimit 字节上限；先压缩 manifest.icon 指向的图（内联 base64 会膨胀约 4/3）再出包"
+}
+
 # ---------- 6. 创建 GitHub Release 并上传 ----------
 $notesFile = Join-Path $env:TEMP "doc-intake-notes-$tag.md"
 $notesText = "## Doc Intake $tag`n`n$Notes`n`n---`n`n安装：下载附件 zip 拖入 HanaAgent 设置 → 插件；提交到官方插件目录后可直接在市场更新。`n"
 [System.IO.File]::WriteAllText($notesFile, $notesText, (New-Object System.Text.UTF8Encoding($false)))
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-& gh release create $tag $asset --repo $RepoSlug --title "Doc Intake $tag" --notes-file $notesFile
+& gh release create $tag $asset $entryPath --repo $RepoSlug --title "Doc Intake $tag" --notes-file $notesFile
 $ErrorActionPreference = $prevEap
 Remove-Item $notesFile -Force
-if ($LASTEXITCODE -ne 0) { throw "gh release create 失败（zip 仍在 $asset，可到网页端手动上传）" }
+if ($LASTEXITCODE -ne 0) { throw "gh release create 失败（zip 仍在 $asset，条目在 $entryPath，可到网页端手动上传）" }
 
 Write-Host ""
-Write-Host "==> 发布完成。市场条目需要的两个字段："
-Write-Host "    packageUrl: https://github.com/$RepoSlug/releases/download/$tag/doc-intake-$tag.zip"
-Write-Host "    sha256:     $sha256"
+$entryPublisher = ([System.IO.File]::ReadAllText($entryPath, (New-Object System.Text.UTF8Encoding($false))) | ConvertFrom-Json).publisher
+Write-Host "==> 发布完成。两个附件都在 $tag 上："
+Write-Host "    $entryName"
+Write-Host "    doc-intake-$tag.zip   sha256 $sha256"
+Write-Host ""
+Write-Host "==> 市场登记（hana-marketplace 的 registry.json）里那一条要写成："
+Write-Host ('    { "kind": "app", "id": "' + $manifest.id + '", "repository": "' + $RepoSlug + '", "publisher": "' + $entryPublisher + '" }')
