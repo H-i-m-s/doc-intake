@@ -19,7 +19,7 @@ from extractors.base import ExtractionResult
 from image_splitter import ImageSplitter, merge_markdown_deduplicate
 from utils import normalize_images
 from logger import get_logger
-from key_pool import KeyPool
+from key_pool import KeyPool, _mask
 from pdf_splitter import crop_pdf_to_page_range
 
 
@@ -193,7 +193,7 @@ class PaddleClient:
                         if any(k in error_msg for k in ["auth", "token", "401", "403", "quota", "limit"]):
                             self.mark_token_failed(token, reason=_auth_reason(str(e)))
                             self.logger.warning(
-                                f"Token {self._mask_key(token)} 报错，准备切换",
+                                f"Token {_mask(token)} 报错，准备切换",
                                 error=_redact_secret_text(str(e), token),
                             )
                             attempt_failed = True
