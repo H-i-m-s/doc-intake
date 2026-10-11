@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// 本文件衍生自 git-save-load 的 scripts/pack.mjs（同一作者项目 H-i-m-s/git-save-load），
-// 该文件又部分衍生自 GitHana 的同名文件：
+// 本文件大部分内容衍生自 GitHana 的同名文件：
 //   GitHana: https://github.com/Nyasers/GitHana
 //   Copyright (c) 2026 Nyasers，以 Mozilla Public License v. 2.0 授权。
-// 本文件已由 doc-intake 修改（排除清单、可选自检），修改后的版本同样以 MPL-2.0 发布。
+// 本文件已由 git-save-load 修改，修改后的版本同样以 MPL-2.0 发布。完整声明见根目录 NOTICE。
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -13,7 +12,10 @@
 // This Source Code Form is "Incompatible With Secondary Licenses", as
 // defined by the Mozilla Public License, v. 2.0.
 //
-// scripts/pack.mjs — 零依赖出包（不调外部 tar/zip，不用 npm 库）。
+// release/pack.mjs — 零依赖出包（不调外部 tar/zip，不用 npm 库）。
+//
+// 采集范围与 publisher 一律从 release/config.json 读，代码里不硬编码插件相关的东西。
+// 想给另一个插件用，整个 release/ 复制过去，只改 config.json。
 //
 // 产物（dist/）：
 //   <id>-v<version>.zip            归档；manifest.json / index.js 直接位于包根（平铺，不套顶层目录）
@@ -30,80 +32,152 @@
 // 布局为什么是平铺：宿主自己的出包工具产出的就是平铺包，宿主的校验器也只在包根找
 // manifest.json，套一层目录会被判成「读不到 manifest.json」；zip 由安装器解到 <id>/ 下。
 //
-// 打包前若存在 scripts/selfcheck.mjs 会先跑它，不过就拒绝出包；不存在则跳过（当前无自检）。
-//
 // 用法：
-//   node scripts/pack.mjs                 # 出包到 <app>/dist，publisher 取 DEFAULT_PUBLISHER
-//   node scripts/pack.mjs --out <dir>     # 自定义输出目录
-//   node scripts/pack.mjs --publisher <p> # 覆盖 publisher（必须与 registry.json 登记值一致）
+//   node release/pack.mjs                 # 出包到 config.pack.out，publisher 取 config.publisher
+//   node release/pack.mjs --out <dir>     # 自定义输出目录
+//   node release/pack.mjs --publisher <p> # 覆盖 publisher（必须与 registry.json 登记值一致）
+//   node release/pack.mjs --no-selfcheck  # 跳过自检
 import { createHash } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const RELEASE_DIR = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(RELEASE_DIR, "..");
 
-/** entry.json 的 publisher。必须与市场登记（registry.json）里的值逐字符一致；发布后固化，改要发新版本。 */
-const DEFAULT_PUBLISHER = "H-i-m-s";
 /** 市场同步器读 entry 附件时的响应字节上限（MAX_ENTRY_BYTES）。超了整批同步失败。 */
 const MARKET_ENTRY_MAX_BYTES = 512 * 1024;
 
-/** 任意层级的整目录排除项。release.ps1 出包时也调本脚本，所以这里是唯一的排除清单：
- *  开发资料、测试、Python 字节码缓存不进包，安装位的 App 用不到它们。 */
-const SKIP_DIRS = new Set([
-  ".git",
-  ".github",
-  "node_modules",
-  "dist",
-  "scripts",      // 出包脚本自身
-  "test",         // 开发者自测（test/*.py 与样例）
-  "doc",          // 设计文档、图标素材（体积大头，仅开发期需要）
-  "samples",      // python/mathtype/samples 等开发语料
-  "__pycache__",  // Python 字节码缓存
-]);
-/** 常见临时/系统文件（按文件名匹配）。 */
-const SKIP_FILE_RE = /^(\.DS_Store|Thumbs\.db|desktop\.ini|\._)|\.(tmp|temp|swp|swo|log|bak|pyc|pyo)$|~$/i;
+/** 自检模式：required 必须过；optional 有就跑、没有就跳过；none 从不跑。 */
+const SELFCHECK_MODES = new Set(["required", "optional", "none"]);
 
 function arg(name) {
   const i = process.argv.indexOf(name);
   return i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : null;
 }
 
-const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
+const hasFlag = (name) => process.argv.includes(name);
 
-// ── 0) 出包前自检（有则跑，无则跳过） ───────────────────────────────────────
-function runSelfcheck() {
-  const script = join(ROOT, "scripts", "selfcheck.mjs");
-  if (!existsSync(script)) {
-    console.log("[pack] 未发现 scripts/selfcheck.mjs，跳过自检");
-    return true;
-  }
+// ── 配置：release/config.json 是采集范围与发布身份的唯一来源 ─────────────────────
+function loadConfig() {
+  const path = join(RELEASE_DIR, "config.json");
+  let raw;
   try {
-    execFileSync(process.execPath, [script], { stdio: "pipe" });
-    console.log("[pack] selfcheck 通过");
-    return true;
+    raw = JSON.parse(readFileSync(path, "utf8"));
   } catch (e) {
-    const out = [e.stdout, e.stderr].map((b) => String(b || "")).join("").trim();
-    console.error("[pack] selfcheck 未通过，拒绝出包：");
-    if (out) console.error(out.split("\n").map((l) => "    " + l).join("\n"));
-    return false;
+    console.error(`[pack] 读不到或解析不了 ${path}：${(e && e.message) || e}`);
+    process.exit(1);
   }
+  const problems = [];
+  if (typeof raw.publisher !== "string" || !raw.publisher.trim()) problems.push("publisher 必须是非空字符串");
+  if (raw.schema !== 1) problems.push("schema 必须是 1");
+  const pack = raw.pack && typeof raw.pack === "object" ? raw.pack : {};
+  const list = (value, label) => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.some((v) => typeof v !== "string" || !v)) {
+      problems.push(`pack.${label} 必须是字符串数组`);
+      return [];
+    }
+    return value;
+  };
+  const selfcheck = pack.selfcheck === undefined ? "optional" : pack.selfcheck;
+  if (!SELFCHECK_MODES.has(selfcheck)) problems.push(`pack.selfcheck 只能是 required / optional / none，现在是 ${JSON.stringify(selfcheck)}`);
+  const config = {
+    publisher: raw.publisher,
+    defaultBranch: typeof raw.defaultBranch === "string" && raw.defaultBranch ? raw.defaultBranch : "master",
+    release: {
+      repo: raw.release && typeof raw.release.repo === "string" ? raw.release.repo : null,
+      title: raw.release && typeof raw.release.title === "string" ? raw.release.title : null,
+    },
+    pack: {
+      out: typeof pack.out === "string" && pack.out ? pack.out : "dist",
+      excludeDirs: new Set(list(pack.excludeDirs, "excludeDirs")),
+      excludeNames: new Set(list(pack.excludeNames, "excludeNames")),
+      excludePrefixes: list(pack.excludePrefixes, "excludePrefixes"),
+      excludeExtensions: new Set(list(pack.excludeExtensions, "excludeExtensions").map((e) => e.replace(/^\./, "").toLowerCase())),
+      excludeSuffixes: list(pack.excludeSuffixes, "excludeSuffixes"),
+      selfcheck,
+    },
+  };
+  if (problems.length) {
+    console.error(`[pack] release/config.json 有问题：\n${problems.map((p) => "    - " + p).join("\n")}`);
+    process.exit(1);
+  }
+  return config;
 }
 
-// ── 1) 递归收集待打包文件（包根平铺，跳过排除项与符号链接） ────────────
-function collect(dir, base, out = []) {
+// ── 0) 出包前自检 ───────────────────────────────────────────────────────────
+/** 自检的机器可读结果。publish.mjs 拿它去填自测报告里的数字（同一次自检，不重跑）。 */
+let selfcheckReport = null;
+
+function runSelfcheck(config) {
+  const script = join(RELEASE_DIR, "selfcheck.mjs");
+  if (config.pack.selfcheck === "none" || hasFlag("--no-selfcheck")) {
+    console.log("[pack] 已配置跳过自检");
+    return true;
+  }
+  if (!existsSync(script)) {
+    if (config.pack.selfcheck === "optional") {
+      console.log("[pack] 未发现 release/selfcheck.mjs，跳过自检");
+      return true;
+    }
+    console.error("[pack] config 要求自检（required），但 release/selfcheck.mjs 不存在");
+    return false;
+  }
+
+  // 跑 --json：同一趟既给终端看，也能把数字交给编排层去填自测报告。
+  // 老版本 selfcheck 没有 --json 分支时会解析失败，那就退回只当门槛用。
+  const result = spawnSync(process.execPath, [script, "--json"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  const raw = String(result.stdout || "").trim();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    /* 没有 --json 分支 */
+  }
+
+  if (result.status === 0) {
+    selfcheckReport = parsed;
+    console.log("[pack] selfcheck 通过");
+    return true;
+  }
+
+  console.error("[pack] selfcheck 未通过，拒绝出包：");
+  const errors = Array.isArray(parsed?.errors) ? parsed.errors : [];
+  if (errors.length) {
+    console.error(errors.map((e) => String(e).split("\n").map((l) => "    " + l).join("\n")).join("\n"));
+  } else {
+    const out = [raw, result.stderr].map((b) => String(b || "")).join("").trim();
+    if (out) console.error(out.split("\n").map((l) => "    " + l).join("\n"));
+  }
+  return false;
+}
+
+// ── 1) 递归收集待打包文件（包根平铺，跳过排除项与符号链接） ──
+function makeNameFilter(pack) {
+  return (name) => {
+    if (pack.excludeNames.has(name)) return true;
+    if (pack.excludePrefixes.some((p) => name.startsWith(p))) return true;
+    if (pack.excludeSuffixes.some((s) => name.endsWith(s))) return true;
+    const dot = name.lastIndexOf(".");
+    if (dot > 0 && pack.excludeExtensions.has(name.slice(dot + 1).toLowerCase())) return true;
+    return false;
+  };
+}
+
+function collect(dir, base, pack, isExcludedName, out = []) {
   for (const name of readdirSync(dir)) {
     const abs = join(dir, name);
     const st = statSync(abs);
     if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
-      if (SKIP_DIRS.has(name)) continue;
-      collect(abs, base, out);
+      if (pack.excludeDirs.has(name)) continue;
+      collect(abs, base, pack, isExcludedName, out);
     } else if (st.isFile()) {
-      if (SKIP_FILE_RE.test(name)) continue;
+      if (isExcludedName(name)) continue;
       out.push({ abs, entry: relative(base, abs).split(sep).join("/"), size: st.size });
     }
   }
@@ -199,7 +273,7 @@ function buildEntry({ manifest, publisher, zipName, digest, size }) {
     kind: "app",
     id: manifest.id,
     name: manifest.name || manifest.id,
-    publisher: publisher || DEFAULT_PUBLISHER,
+    publisher,
     description: typeof manifest.description === "string" ? manifest.description : "",
     version: manifest.version,
     permissions: capabilities.map((capability) => ({ capability })),
@@ -230,21 +304,29 @@ function existsSyncFile(p) {
 
 // ── main ────────────────────────────────────────────────────────────────────
 function main() {
-  const manifest = readJson(join(ROOT, "manifest.json"));
+  const config = loadConfig();
+  const manifest = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
   if (!manifest.id || !manifest.version) {
     console.error("[pack] manifest.json 缺 id/version，拒绝出包");
     process.exit(1);
   }
 
-  if (!runSelfcheck()) process.exit(1);
+  if (!runSelfcheck(config)) process.exit(1);
+  // 把自检数字以一行 JSON 交出去，给编排层填自测报告用。不设这个环境变量时完全无感。
+  if (process.env.RELEASE_PACK_REPORT === "1" && selfcheckReport) {
+    console.log(`[pack] selfcheck-report ${JSON.stringify(selfcheckReport)}`);
+  }
 
-  const outDir = resolve(arg("--out") || join(ROOT, "dist"));
+  const pack = config.pack;
+  const outArg = arg("--out");
+  const outDir = resolve(ROOT, outArg || pack.out);
   const baseName = `${manifest.id}-v${manifest.version}`;
   const zipName = `${baseName}.zip`;
   const zipPath = join(outDir, zipName);
 
   // 收集：条目直接以包根为起点（平铺）。宿主的加载器按目录名找 app，zip 由安装器解到 <id>/ 下。
-  const files = collect(ROOT, ROOT);
+  const isExcludedName = makeNameFilter(pack);
+  const files = collect(ROOT, ROOT, pack, isExcludedName);
   if (files.length === 0) {
     console.error("[pack] 没有可打包的文件，拒绝出包");
     process.exit(1);
@@ -264,7 +346,7 @@ function main() {
   const entryPath = join(outDir, entryName);
   const entry = buildEntry({
     manifest,
-    publisher: arg("--publisher"),
+    publisher: arg("--publisher") || config.publisher,
     zipName,
     digest,
     size: zipBytes.length,
@@ -275,8 +357,8 @@ function main() {
   console.log(`[pack] 完成 ${relOut(zipPath)}  ${(zipBytes.length / 1024).toFixed(1)} KiB  ${files.length} 条`);
   console.log(`        sha256 ${digest}`);
   console.log(`        entry  ${relOut(entryPath)}`);
-  console.log(`        条目   manifest.json, index.js, …`);
   console.log(`        发布者 ${entry.publisher}`);
+  console.log(`        版本   ${manifest.version}   分支 ${config.defaultBranch}`);
 
   const entryBytes = statSync(entryPath).size;
   console.log(`        市场   entry ${entryBytes} / ${MARKET_ENTRY_MAX_BYTES} 字节`);

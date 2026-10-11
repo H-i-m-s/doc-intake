@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+
+  "publisher": "H-i-m-s",
+  "defaultBranch": "master",
+
+  "release": {
+    "repo": "H-i-m-s/doc-intake"
+  },
+
+  "pack": {
+    "out": "dist",
+    "excludeDirs": [
+      ".git",
+      ".github",
+      "node_modules",
+      "dist",
+      "release",
+      "doc",
+      "test",
+      "samples",
+      "__pycache__"
+    ],
+    "excludeNames": [".DS_Store", "Thumbs.db", "desktop.ini", ".gitignore"],
+    "excludePrefixes": ["._"],
+    "excludeExtensions": ["tmp", "temp", "swp", "swo", "log", "bak", "pyc", "pyo"],
+    "excludeSuffixes": ["~"],
+    "selfcheck": "required"
+  }
+}

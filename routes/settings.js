@@ -461,7 +461,7 @@ async function installDeps(ctx, packages) {
 }
 
 // 包根 manifest.json 的 version。这是本 App 版本的唯一事实源：发版脚本
-// （scripts/release.ps1）的 tag 由它推出，打包与门禁也都校验它。读不到就交空串，
+// （release/ship.ps1）的 tag 由它推出，打包与门禁也都校验它。读不到就交空串，
 // 更新检查那边会把「当前版本」显示成占位符，不瞎猜一个出来。
 function readAppVersion() {
   try {
