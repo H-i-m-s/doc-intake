@@ -4,6 +4,8 @@
 // 容错：任何请求失败都在页内显式报出原因，绝不让页面无声地停在「检测中」。
 // 注意：页面跑在沙箱 iframe 里，window.confirm 被禁 —— 安装确认走页内确认条。
 import { hana } from "./sdk.js";
+import { createUpdateApi } from "./update-api.mjs";
+import { installUpdateNotice } from "./update-notice.mjs";
 
 const API = {
   config: "/config",
@@ -278,6 +280,14 @@ const ui = {
   installConfirmText: el("install-confirm-text"),
   installOk: el("install-ok"),
   installCancel: el("install-cancel"),
+  aboutCurrent: el("about-current"),
+  aboutLatest: el("about-latest"),
+  aboutTag: el("about-tag"),
+  aboutEnabled: el("about-enabled"),
+  aboutInterval: el("about-interval"),
+  aboutIntervalHint: el("about-interval-hint"),
+  aboutCheck: el("about-check"),
+  aboutNotes: el("about-notes"),
 };
 
 let loaded = {};            // 服务端读回的配置（对比用）
@@ -1447,12 +1457,97 @@ async function loadDeps() {
   renderDeps();
 }
 
+// ---------------------------------------------------------------- 更新说明
+
+// 检查间隔的合法区间与服务端 lib/update-check.mjs 同源（那边是权威）。
+// 前端也存一份，是为了打字时就能给得出范围，不必为一个数字来回一趟。
+// 不能直接把 lib/update-check.mjs import 进来：那一份要 node:fs，浏览器里跑不了。
+const INTERVAL_MIN = 1;
+const INTERVAL_MAX = 10080;
+const INTERVAL_FALLBACK = 360;
+
+// 取数通道：设置页跑在宿主的沙箱 iframe 里，走 hana.api.fetch（凭据头由 SDK 带）。
+// 路由只给本页相对路径，服务端在 routes/settings.js 的 /update-check。
+const updateApi = createUpdateApi({
+  fetchJson: async (path, init) => (await api(path, init)).data,
+});
+let updateNotice = null;
+
+function parseInterval(raw) {
+  const s = String(raw ?? "").trim();
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= INTERVAL_MIN && n <= INTERVAL_MAX ? n : null;
+}
+
+/** 间隔那一行的副文案：平时是一句说明，填得不对时就地变红说清范围。 */
+function setIntervalHint(bad) {
+  const node = ui.aboutIntervalHint;
+  if (!node) return;
+  if (bad) {
+    node.textContent = `要填 ${INTERVAL_MIN} – ${INTERVAL_MAX} 的整数分钟`;
+    node.dataset.kind = "err";
+  } else {
+    node.textContent = "超过就自动检查";
+    delete node.dataset.kind;
+  }
+}
+
+/** 快照一到就刷这一格。不自己算版本高低，只听服务端的判断（拿不到就保持上一个值）。 */
+function syncAbout() {
+  if (!ui.aboutCurrent) return;
+  const d = updateNotice?.data;
+  ui.aboutCurrent.textContent = d?.current ? `v${d.current}` : "—";
+  ui.aboutLatest.textContent = d ? (d.latest ? `v${d.latest.version}` : "—") : "…";
+  ui.aboutLatest.dataset.state = d?.hasUpdate ? "new" : "";
+  const showTag = !!d?.hasUpdate;
+  ui.aboutTag.hidden = !showTag;
+  if (showTag) ui.aboutTag.textContent = `有新版本 v${d.latest.version}`;
+  if (ui.aboutEnabled) ui.aboutEnabled.checked = d ? d.enabled !== false : true;
+  // 输入框正在填的时候别去覆盖它，否则打字打到一半会被刷走。
+  if (ui.aboutInterval && document.activeElement !== ui.aboutInterval) {
+    const minutes = d?.intervalMinutes ?? INTERVAL_FALLBACK;
+    if (ui.aboutInterval.value !== String(minutes)) ui.aboutInterval.value = String(minutes);
+    setIntervalHint(false);
+  }
+}
+
+// 这一格改完就存，但走的不是 /config，是插件进程里那份状态文件（更新提示开关与检查间隔）。
+// 两笔都成功才算存好：任何一笔失败都报出来，不让界面停在一个没生效的位置上。
+async function commitAbout() {
+  const enabled = !!ui.aboutEnabled?.checked;
+  const minutes = parseInterval(ui.aboutInterval?.value);
+  if (minutes === null) {
+    setIntervalHint(true);
+    setNote(`检查间隔要填 ${INTERVAL_MIN} – ${INTERVAL_MAX} 之间的整数分钟`, "err");
+    return;
+  }
+  setIntervalHint(false);
+  try {
+    await withTimeout(updateApi.dismissUpdate({ action: "toggle", enabled }), STATUS_TIMEOUT_MS, "保存更新提示");
+    await withTimeout(updateApi.setUpdateInterval(minutes), STATUS_TIMEOUT_MS, "保存检查间隔");
+    // 新间隔可能已经过期，顺手问一次（间隔没到它不会真出门）。
+    void updateNotice?.refresh();
+    setNote("已保存", "ok");
+  } catch (error) {
+    setNote(`保存失败：${error?.message || error}`, "err");
+  }
+}
+
 // ---------------------------------------------------------------- 启动
 
 function wire() {
   ui.save.addEventListener("click", () => void saveConfig());
   ui.reload.addEventListener("click", () => void reloadConfig());
   ui.refresh.addEventListener("click", () => void reloadConfig());
+  ui.aboutCheck.addEventListener("click", () => updateNotice?.openManual());
+  ui.aboutNotes.addEventListener("click", () => updateNotice?.openCached());
+  ui.aboutEnabled.addEventListener("change", () => void commitAbout());
+  ui.aboutInterval.addEventListener("input", () => {
+    // 打字时只做一件事：改对了就把红字收回。打到一半不判它错。
+    if (parseInterval(ui.aboutInterval.value) !== null) setIntervalHint(false);
+  });
+  ui.aboutInterval.addEventListener("change", () => void commitAbout());
   ui.depsRefresh.addEventListener("click", () => void loadDeps());
   ui.installOk.addEventListener("click", () => void doInstall());
   ui.installCancel.addEventListener("click", clearInstallConfirm);
@@ -1490,6 +1585,15 @@ async function reloadConfig() {
     await loadConfig();
   } catch (error) {
     setNote(`读取设置失败：${error?.message || error}`, "err");
+  }
+  // 更新说明：弹窗自己会按服务端定的间隔去查一次，快照一到就刷「关于」那一格。
+  // 没有网络通道时它不报错，只是拿不到新东西，已缓存的版本与历史照旧能看。
+  try {
+    updateNotice = installUpdateNotice({ hana, api: updateApi });
+    updateNotice?.subscribe(() => syncAbout());
+    syncAbout();
+  } catch (error) {
+    setNote(`更新说明没装上：${error?.message || error}`, "err");
   }
   ui.root.setAttribute("aria-busy", "false");
   void loadDeps();

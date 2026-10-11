@@ -29,6 +29,9 @@
     })();
   </script>
   <link rel="stylesheet" href="./assets/settings.css">
+  <!-- 更新说明弹窗的样式：与设置页样式分文件放，那一份是从别的 App 整文件拷来的，
+       单独一个文件才能用 diff 看出三边的差异。 -->
+  <link rel="stylesheet" href="./assets/update-notice.css">
 </head>
 <body>
   <main class="gs" id="gs" aria-busy="true">
@@ -106,6 +109,45 @@
           </div>
         </div>
         <pre class="gs-log" id="deps-log" hidden></pre>
+      </div>
+    </section>
+
+    <!-- 4 · 关于（版本与更新说明） -->
+    <section class="gs-card" id="sec-about">
+      <div class="gs-card__head">
+        <div>
+          <h2 class="gs-card__title">关于</h2>
+          <p class="gs-card__desc">版本与更新说明都来自 GitHub Release，不随 App 打包；关掉更新提示后仍可在这里手动看。</p>
+        </div>
+        <div class="gs-about__acts">
+          <button class="gs-btn gs-btn--ghost gs-btn--sm" id="about-check" type="button">检查更新</button>
+          <button class="gs-btn gs-btn--ghost gs-btn--sm" id="about-notes" type="button">查看更新说明</button>
+        </div>
+      </div>
+      <div class="gs-about">
+        <div class="gs-about__row">
+          <span class="gs-about__label">当前版本</span>
+          <b class="gs-about__ver" id="about-current">—</b>
+          <span class="gs-about__label">最新版本</span>
+          <b class="gs-about__ver" id="about-latest">—</b>
+          <button class="gs-about__tag" id="about-tag" type="button" hidden></button>
+        </div>
+        <label class="gs-about__row gs-about__row--ctl">
+          <span class="gs-about__label">更新提示</span>
+          <span class="gs-about__hint">扫到新版本就浮一层提醒</span>
+          <span class="gs-switch">
+            <input type="checkbox" id="about-enabled">
+            <span class="gs-switch__track" aria-hidden="true"><span class="gs-switch__thumb"></span></span>
+          </span>
+        </label>
+        <label class="gs-about__row gs-about__row--ctl">
+          <span class="gs-about__label">检查间隔</span>
+          <span class="gs-about__hint" id="about-interval-hint">超过就自动检查</span>
+          <span class="gs-about__numwrap">
+            <input class="gs-input gs-input--num" type="text" inputmode="numeric" id="about-interval" autocomplete="off" spellcheck="false">
+            <em>分钟</em>
+          </span>
+        </label>
       </div>
     </section>
 

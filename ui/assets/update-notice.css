@@ -1,0 +1,196 @@
+/* ui/assets/update-notice.css — 更新说明弹窗的样式。
+ *
+ * 从 magpie-hana 的 ui/update-notice.css 整文件拷来（2026-10-11），而那一份又是从
+ * token-tracker-app 的 ui/token-tracker.css 里「更新说明弹窗」那一节搬的。
+ * 类名沿用 tt- 前缀：同一套界面搬过来的，留着能一眼看出几边的对应关系。
+ *
+ * 唯一动过的是变量名。原来那些 --tt-* 指向 token-tracker 自己的调色板，magpie-hana 那份
+ * 映射到它两个页面的 --s-*；这里映射到本 App 设置页自己的 --gs-*（定义在 ui/assets/settings.css
+ * 顶部的 :root，它自己再从宿主注入的 --hana-* / --bg / --text / --accent 取）。
+ * 直接指向 --gs-*：那些变量在本页一定存在，所以这一层不留兜底色 ——
+ * 写一个可能不存在的兜底值，等于给「拿不到主题」这件事编一个颜色出来。
+ *
+ * 映射只写在这一层，下面整段样式与另外两份逐字相同；改的时候三边一起改。
+ */
+
+:root {
+  --tt-radius-inner: var(--gs-radius-sm);
+
+  --tt-t1: var(--gs-ink);
+  --tt-t2: var(--gs-sub);
+  --tt-t3: var(--gs-muted);
+  --tt-t4: var(--gs-muted);
+  --tt-em: var(--gs-ink);
+
+  --tt-bg: var(--gs-soft);
+  --tt-card: var(--gs-surface);
+  --tt-b1: var(--gs-line);
+  --tt-b2: var(--gs-line);
+  --tt-b3: var(--gs-line);
+  --tt-row-hover: var(--gs-soft);
+
+  --tt-select-bg: var(--gs-tint);
+  --tt-select-fg: var(--gs-accent);
+  --tt-select-b: var(--gs-accent);
+  --tt-red: var(--gs-danger);
+  /* 宿主只给 --green 与 --danger 两个语义色，没有 warning 这一档。
+     这个变量在本弹窗里只用在「取回失败」那行字上，那本来就是错，所以并到 danger
+     这条链上 —— 不自己编一个橙色，编出来的颜色最容易跟主题打架。 */
+  --tt-orange: var(--gs-danger);
+  --tt-green: var(--gs-green);
+  --tt-blue: var(--gs-accent);
+
+  /* 字体跟本页一致：宿主给就先听宿主的，最后才回到系统字体栈。 */
+  --tt-font: var(--hana-font-ui, var(--font-ui, system-ui, -apple-system, "Segoe UI", sans-serif));
+  --tt-font-mono: var(--gs-mono);
+}
+
+/* ── 更新说明弹窗 ──────────────────────────────────────────────────────────
+   模态：native <dialog>.showModal 把底下界面挡死，::backdrop 那层负责模糊与压暗。
+   三条关闭路径（点背景 / × / 我已知晓）接在 ui/update-notice.mjs，这里只管长相。
+   弹窗内容全部来自 GitHub Release，样式不假设会有哪些分组。 */
+.tt-update-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(86vh, 640px);
+  box-sizing: border-box;
+  border: 1px solid var(--tt-b2);
+  border-radius: 10px;
+  background: var(--tt-card);
+  color: var(--tt-t1);
+  padding: 16px;
+  /* 这一层是「要读的东西」，不是仪表盘上的注脚，字号整体比页面大一档。
+     基数字号定在这里，底部按钮（.tt-btn 是 font: inherit）跟着它走。 */
+  font-size: 13.5px;
+  font-family: var(--tt-font);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .45);
+}
+/* 焦点圈：弹窗一打开，浏览器会把初始焦点放在第一个可聚焦的元素上（就是右上角那个 ×），
+   顺手把它那圈系统描边画出来（外白 + 内系统强调色），深色底上很扎眼。
+   这一层一律不画 outline：初始焦点交给弹窗自己（tabindex=-1），键盘走到按钮上时
+   用底色变化交代焦点，跟设置页同一套写法。 */
+.tt-update-dialog:focus,
+.tt-update-dialog:focus-visible,
+.tt-update-dialog :focus,
+.tt-update-dialog :focus-visible { outline: none; }
+.tt-update-x:focus-visible { color: var(--tt-t1); border-color: var(--tt-b2); background: var(--tt-row-hover); }
+.tt-update-ft .tt-btn:focus-visible { background: var(--tt-row-hover); color: var(--tt-em); }
+.tt-update-ft .tt-btn.primary:focus-visible { filter: brightness(1.08); }
+/* 居中不能指望 UA：本文件顶部那条 `* { margin: 0 }` 把对话框自带的 margin: auto 一并抹掉了，
+   于是它停在左上角。这里把定位与居中显式写回来（inset: 0 + margin: auto）。 */
+.tt-update-dialog[open] { position: fixed; inset: 0; margin: auto; display: flex; flex-direction: column; }
+/* 进出场。深色毛玻璃适合安静地浮起来：位移只几像素，主要靠淡入；收回比弹出短一截，
+   收得干脆才不黏。退场时长由 JS 现读一次（要等它走完才摘节点），所以改这里就能生效。 */
+@keyframes tt-update-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes tt-update-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(3px) scale(.995); } }
+@keyframes tt-update-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tt-update-scrim-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes tt-update-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@media (prefers-reduced-motion: no-preference) {
+  .tt-update-dialog[open] { animation: tt-update-in 190ms cubic-bezier(.2, .8, .3, 1) both; }
+  .tt-update-dialog[open]::backdrop { animation: tt-update-scrim-in 190ms ease both; }
+  /* 退场：与 [open] 同权重，靠写在后面取胜；退场中不再接手指，免得多点一下重复提交。 */
+  .tt-update-dialog.is-closing { animation: tt-update-out 130ms cubic-bezier(.4, 0, .7, 1) both; pointer-events: none; }
+  .tt-update-dialog.is-closing::backdrop { animation: tt-update-scrim-out 130ms ease both; }
+  .tt-update-state.checking .tt-update-dot { animation: tt-update-pulse 1s ease-in-out infinite; }
+}
+/* 背景整层模糊：这一层就是「聚焦更新说明」的全部实现。 */
+.tt-update-dialog::backdrop {
+  background: rgba(4, 6, 10, .52);
+  backdrop-filter: blur(6px) saturate(115%);
+  -webkit-backdrop-filter: blur(6px) saturate(115%);
+  /* ::backdrop 天生的形状是铺满视口的矩形，圆角得自己交待；这一层跟着 App 窗体的圆角走。 */
+  border-radius: 14px;
+}
+.tt-update-hd { display: flex; align-items: flex-start; gap: 10px; }
+.tt-update-title { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.tt-update-x {
+  margin-left: auto; flex: 0 0 auto; width: 24px; height: 24px; display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 6px; background: none; color: var(--tt-t3);
+  font: 15px/1 var(--tt-font); cursor: pointer;
+}
+.tt-update-x:hover { color: var(--tt-t1); border-color: var(--tt-b2); background: var(--tt-row-hover); }
+.tt-update-state { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12.5px; color: var(--tt-t2); }
+.tt-update-state .tt-update-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--tt-t3); flex: 0 0 auto; }
+.tt-update-state.new { color: var(--tt-select-fg); }
+.tt-update-state.new .tt-update-dot { background: var(--tt-select-b); }
+.tt-update-state.error { color: var(--tt-red); }
+.tt-update-state.error .tt-update-dot { background: var(--tt-red); }
+/* 「正在检查」：蓝点加一点呼吸，告诉这事在跑。 */
+.tt-update-state.checking { color: var(--tt-select-fg); }
+.tt-update-state.checking .tt-update-dot { background: var(--tt-select-b); }
+.tt-update-vers {
+  display: flex; align-items: baseline; gap: 12px; margin-top: 13px; padding: 11px 13px;
+  border: 1px solid var(--tt-b1); border-radius: 8px; background: var(--tt-bg);
+}
+.tt-update-vers > div { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.tt-update-vers span { font-size: 11.5px; color: var(--tt-t3); }
+.tt-update-vers b { font: 600 15px/1 var(--tt-font-mono); font-variant-numeric: tabular-nums; }
+.tt-update-vers .new b { color: var(--tt-select-fg); }
+.tt-update-vers i { font-style: normal; font-size: 11.5px; color: var(--tt-t2); }
+.tt-update-vr { width: 1px; align-self: stretch; background: var(--tt-b1); }
+/* 内容区长的时候自己滚，弹窗不跟着长；点、拖、滚都不会关掉它。 */
+.tt-update-body {
+  margin-top: 12px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--tt-b2) transparent;
+  border-top: 1px solid var(--tt-b1); border-bottom: 1px solid var(--tt-b1); padding: 10px 2px 10px 0;
+}
+.tt-update-note { margin: 0 0 8px; font-size: 12.5px; line-height: 1.55; color: var(--tt-t2); }
+.tt-update-note.err { color: var(--tt-orange); }
+.tt-update-ver + .tt-update-ver { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--tt-b3); }
+.tt-update-ver-hd { display: flex; align-items: baseline; gap: 7px; margin-bottom: 8px; }
+.tt-update-ver-hd b { font: 600 14px/1 var(--tt-font-mono); }
+.tt-update-ver-hd span { font-size: 11.5px; color: var(--tt-t3); }
+.tt-update-ver-hd em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--tt-t4); }
+/* 「当前」角标比「最新」清楚一档：它标的是界线，扫的时候得先认出它。 */
+.tt-update-ver-hd em.cur { color: var(--tt-t2); }
+/* 分组标题的颜色按关键词给（新增/修复/优化），认不出就不上色。 */
+.tt-update-grp { margin: 0 0 9px; }
+.tt-update-grp:last-child { margin-bottom: 0; }
+.tt-update-grp h4 { margin: 0 0 5px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--tt-t3); }
+.tt-update-grp.new h4 { color: var(--tt-blue); }
+.tt-update-grp.fix h4 { color: var(--tt-orange); }
+.tt-update-grp.tune h4 { color: var(--tt-green); }
+.tt-update-grp ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.tt-update-grp li {
+  position: relative; padding-left: 12px; font-size: 13px; line-height: 1.55;
+  color: var(--tt-t1); overflow-wrap: anywhere;
+}
+.tt-update-grp li::before {
+  content: ''; position: absolute; left: 2px; top: 8.5px;
+  width: 3px; height: 3px; border-radius: 50%; background: var(--tt-b2);
+}
+.tt-update-ft { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.tt-update-ft .tt-btn.primary { margin-left: auto; }
+/* 系统开了「减少动态效果」：上面那组出场/退场动效根本不会声明，弹窗直接出现、直接消失。 */
+@media (prefers-reduced-motion: reduce) { .tt-update-dialog { scroll-behavior: auto; } }
+
+/* ── 弹窗底部那两个按钮 ────────────────────────────────────────────────────
+   token-tracker 那边 .tt-btn 是全局件（看板各处都在用），本 App 只有这一个弹窗用得上，
+   所以收在弹窗里，不往页面上撒。数值与那边一致。 */
+.tt-update-dialog .tt-btn {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid var(--tt-b2);
+  border-radius: var(--tt-radius-inner);
+  background: var(--tt-card);
+  color: var(--tt-t2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 9px;
+}
+.tt-update-dialog .tt-btn:hover {
+  background: var(--tt-row-hover);
+  color: var(--tt-em);
+  border-color: var(--tt-b2);
+}
+.tt-update-dialog .tt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.tt-update-dialog .tt-btn.primary {
+  background: var(--tt-select-bg);
+  color: var(--tt-select-fg);
+  border-color: var(--tt-select-b);
+}
+.tt-update-dialog .tt-btn.ghost { background: transparent; border-color: transparent; }

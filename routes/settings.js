@@ -19,10 +19,12 @@
 // 默认值与敏感值处理；这里只是把"呈现与交互"换成自定义页面。
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateMineruToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
+import { createUpdateCheck, normalizeIntervalMinutes } from "../lib/update-check.mjs";
 import {
   combinedFingerprint,
   evaluateTokenStatus,
@@ -458,6 +460,19 @@ async function installDeps(ctx, packages) {
   };
 }
 
+// 包根 manifest.json 的 version。这是本 App 版本的唯一事实源：发版脚本
+// （scripts/release.ps1）的 tag 由它推出，打包与门禁也都校验它。读不到就交空串，
+// 更新检查那边会把「当前版本」显示成占位符，不瞎猜一个出来。
+function readAppVersion() {
+  try {
+    const raw = fs.readFileSync(path.join(CURRENT_DIR, "..", "manifest.json"), "utf8");
+    const manifest = JSON.parse(raw);
+    return typeof manifest?.version === "string" ? manifest.version : "";
+  } catch {
+    return "";
+  }
+}
+
 export default function registerSettingsRoutes(app, ctx) {
   app.get("/config", async (c) => {
     try {
@@ -475,6 +490,69 @@ export default function registerSettingsRoutes(app, ctx) {
       return c.json({ ok: true, config: await readConfig(ctx) });
     } catch (error) {
       return c.json({ ok: false, message: error?.message || String(error) });
+    }
+  });
+
+  // ---- 更新说明 --------------------------------------------------------
+  // 数据层在 ../lib/update-check.mjs（与 magpie-hana / token-tracker-app 同源），
+  // 界面在 ui/assets/update-notice.mjs。这一节只负责把两边接起来：
+  //   GET  /update-check            → 交一份快照（间隔没到就不出网）
+  //   GET  /update-check?force=1    → 一定去 GitHub 取一次
+  //   GET  /update-check?cached=1   → 只交手里那份，一次网络都不出
+  //   POST /update-check            → ack / later / toggle / interval
+  //
+  // 出网只能走宿主代发的通道：App 进程没开 --net，能去哪些域名写在 manifest.json 的
+  // network.allowedHosts 里（那里的 github.com 就是给这一节用的）。拿不到通道也不报错，
+  // 那一层会自己退化成「没有网络能力」，界面照旧能看到已缓存的版本与历史。
+  const updateCheck = createUpdateCheck({
+    dataDir: typeof ctx?.dataDir === "string" ? ctx.dataDir : "",
+    appVersion: readAppVersion(),
+    // 那边的 log 形状是 log(level, message)，跟本文件的 logger 不同，转一道。
+    log: (level, ...args) => {
+      const line = `更新说明：${args.join(" ")}`;
+      try {
+        if (level === "warn") (ctx?.logger?.warn || console.warn)(line);
+        else (ctx?.logger?.info || console.info)(line);
+      } catch {
+        // 记日志失败不影响功能。
+      }
+    },
+    fetchImpl: typeof ctx?.network?.fetch === "function" ? (url, init) => ctx.network.fetch(url, init) : null,
+  });
+
+  app.get("/update-check", async (c) => {
+    try {
+      if (c.req.query("cached") === "1") return c.json({ ok: true, update: updateCheck.snapshot() });
+      const update = await updateCheck.check({ force: c.req.query("force") === "1" });
+      return c.json({ ok: true, update });
+    } catch (error) {
+      return c.json({ ok: false, error: error?.message || String(error) }, 503);
+    }
+  });
+
+  // 「我已知晓」与「先不看」都走这里。后者只记在 App 进程内存里，重启就忘。
+  // 另外两个动作是设置页那两格：更新提示开关、自动检查的间隔（分钟）。
+  app.post("/update-check", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const action = String(body?.action || "");
+    try {
+      if (action === "ack" || action === "later") {
+        return c.json({ ok: true, update: updateCheck.dismiss(body.version, action === "ack" ? "read" : "later") });
+      }
+      if (action === "toggle") {
+        return c.json({ ok: true, update: updateCheck.setEnabled(body.enabled !== false) });
+      }
+      if (action === "interval") {
+        // 本地先按合法区间拦一道，给界面一个能读的理由；那一层还会再校一次。
+        if (normalizeIntervalMinutes(body.minutes) === null) {
+          return c.json({ ok: false, error: "检查间隔要填 1 到 10080 之间的整数分钟数" }, 400);
+        }
+        return c.json({ ok: true, update: updateCheck.setIntervalMinutes(body.minutes) });
+      }
+      return c.json({ ok: false, error: "action 只认 ack / later / toggle / interval" }, 400);
+    } catch (error) {
+      // 间隔非法是这里唯一的预料内错误：setIntervalMinutes 带着自己的文案抛。
+      return c.json({ ok: false, error: error?.message || String(error) }, 400);
     }
   });
 

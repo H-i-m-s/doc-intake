@@ -669,4 +669,46 @@ body { padding: 0 12px; }
   .gs-dep { grid-template-columns: 1fr auto; }
   .gs-dep__purpose { grid-column: 1 / -1; }
   .gs-dep--head { display: none; }
+  .gs-about__row { flex-wrap: wrap; }
 }
+
+/* ---------- 关于卡片（版本 / 更新说明） ----------
+   内容全部读自 GitHub Release（见 lib/update-check.mjs），这一张只负责画。
+   弹窗自己是另一套类（.tt-update-*），样式在同目录的 update-notice.css 里。 */
+.gs-about { display: flex; flex-direction: column; gap: 2px; }
+.gs-about__acts { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+
+.gs-about__row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 0;
+  border-top: 1px solid color-mix(in srgb, var(--gs-line) 60%, transparent);
+}
+.gs-about__row:first-child { border-top: 0; padding-top: 2px; }
+.gs-about__row--ctl { cursor: pointer; }
+
+.gs-about__label { flex: 0 0 auto; font-size: 13px; color: var(--gs-ink); }
+.gs-about__hint { flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--gs-muted); }
+/* 间隔填得不对时就地变红说清范围，不另开一行报错 */
+.gs-about__hint[data-kind="err"] { color: var(--gs-danger); }
+
+.gs-about__ver {
+  font-family: var(--gs-mono); font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.gs-about__ver[data-state="new"] { color: var(--gs-accent); }
+
+/* 「有新版本」是个入口（点开更新说明），不是纯标记：描述边不填底色。 */
+.gs-about__tag {
+  margin-left: auto; flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--gs-accent) 45%, transparent);
+  border-radius: 999px; background: transparent; color: var(--gs-accent);
+  font: inherit; font-size: 11px; padding: 1px 9px; cursor: pointer;
+}
+.gs-about__tag:hover { background: var(--gs-tint); }
+
+.gs-about__numwrap {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.gs-about__numwrap .gs-input--num { width: 92px; text-align: right; }
+.gs-about__numwrap em { font-style: normal; font-size: 11.5px; color: var(--gs-muted); }
