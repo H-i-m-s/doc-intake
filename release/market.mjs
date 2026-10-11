@@ -356,7 +356,20 @@ export function marketStage(config, ctx, args) {
   if (Array.isArray(existing) && existing[0]) {
     ctx.prUrl = existing[0].html_url;
     warn("这个分支已经有一个开着的 PR，没有重复创建");
-    info(`已有 PR：${ctx.prUrl}`);
+    // 不复用标题正文是不行的：上面那次 push 已经把这一版的内容推上去了，PR 本身却还挂着
+    // 上一版的标题和正文（正文里还写着上一版的 Release 链接、图标链接、自测数字）。
+    // 维护者点开看到的是旧版本号，就会以为新版本没提上来。补一次 PATCH，让它跟内容对齐。
+    const patched = ghApiJson(`repos/${MARKET.upstream}/pulls/${existing[0].number}`, {
+      method: "PATCH",
+      body: { title, body },
+      acceptNonZero: true,
+    });
+    if (patched?.html_url) {
+      info(`已有 PR：${ctx.prUrl}（标题与正文已刷成 ${ctx.tag}）`);
+    } else {
+      warn(`这条 PR 的标题与正文没能刷成 ${ctx.tag}，可能要在网页上手动改`);
+      info(`已有 PR：${ctx.prUrl}`);
+    }
     return;
   }
   throw die("创建 PR 失败", "看看上面 gh 的报错，必要时手工到网页上开 PR");
