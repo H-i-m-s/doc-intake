@@ -236,11 +236,18 @@ function compareVersions(a, b) {
 // 入口参数
 // ─────────────────────────────────────────────────────────────────────────────
 function parseArgs(rawArgv) {
-  // 允许 --key=value 和 --key value 两种写法
+  // 允许 --key=value 和 --key value 两种写法。
+  //
+  // 这里不用正则。之前那版是 /^--([A-Za-z][A-Za-z-]*)=(.*)$/，少了 s 标志，
+  // 而正则里的 . 默认不匹配换行——所以 --notes= 一旦带上多行内容，整条就不匹配，
+  // 被原样丢进 argv，最后报出来的是「不认识的参数：--notes=…」。
+  // 报错指向参数名，真正的毛病在值的换行里，绕很远才看得出来。
+  // 拆 --k=v 只需要找第一个等号，indexOf 不会漏，也没有标志位可漏。
   const argv = [];
   for (const a of rawArgv) {
-    const m = /^--([A-Za-z][A-Za-z-]*)=(.*)$/.exec(a);
-    if (m) argv.push(`--${m[1]}`, m[2]);
+    const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+    // eq > 2：等号至少在第三位，参数名才不会为空（-- 本身占两位）
+    if (eq > 2) argv.push(a.slice(0, eq), a.slice(eq + 1));
     else argv.push(a);
   }
   const args = { mode: null, version: null, notes: "", notesFile: null, dryRun: false, verify: false, skipVersionWrite: false };
@@ -248,7 +255,9 @@ function parseArgs(rawArgv) {
     const a = argv[i];
     if (a === "--mode") args.mode = argv[++i];
     else if (a === "--version") args.version = argv[++i];
-    else if (a === "--notes") args.notes = argv[++i] ?? "";
+    // trim 是为了跟 --notes-file 那条对齐（那边有 readFileSync(...).trim()）。
+    // 少了它，--notes 末尾多一个换行、多一个空格，就会跟走文件那条路生成的说明不一样。
+    else if (a === "--notes") args.notes = (argv[++i] ?? "").trim();
     else if (a === "--notes-file") args.notesFile = argv[++i];
     else if (a === "--dry-run") args.dryRun = true;
     else if (a === "--verify") args.verify = true;

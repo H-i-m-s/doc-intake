@@ -58,9 +58,9 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 ## 3. 后端选择
 
-默认不传 `backend`，让应用按文件类型和设置中的降级链处理。
+默认不传 `backend`，应用会自行按文件类型和设置中的降级链处理（即若用户无明确的特殊要求，你无须传递backend，不得自作主张选择用哪个backend）。以下信息仅作为工具调用阐述，极少数情况才会用到
 
-- PDF：默认本地后端；用户配置云端链时按设置顺序降级。
+- PDF：默认mineru > paddleocr > local（云端优先、本地兜底）；用户设置中存在自行配置项
 - 图片：默认走 PaddleOCR 配置链。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM、HTML：走本地 Python 解析；旧版 DOC/XLS/PPT 会先由配置的转换层转为 OOXML，再复用对应现代格式适配器。
 - 用户要求不上传 PDF 或只用本地解析时传 `backend="local"`。

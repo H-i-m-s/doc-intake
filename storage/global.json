@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "entries": {
+    "tokenStatus": {
+      "version": 1,
+      "lastProbeAt": 1791868053672,
+      "fields": {
+        "mineruCredentials": {
+          "fingerprint": "5e44455f760d3043",
+          "checkedAt": 1791868053672,
+          "items": [
+            {
+              "index": 1,
+              "label": "sk-X…1EOg",
+              "ok": true,
+              "message": "Token 有效",
+              "source": "probe",
+              "at": 1791868053672
+            }
+          ]
+        },
+        "paddleTokens": {
+          "fingerprint": "f3d59741137ba8a7",
+          "checkedAt": 1791868053672,
+          "items": [
+            {
+              "index": 1,
+              "label": "1dac…3570",
+              "ok": true,
+              "message": "Token 有效",
+              "source": "probe",
+              "at": 1791868053672
+            }
+          ]
+        }
+      },
+      "mutedFor": null
+    }
+  }
+}

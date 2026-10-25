@@ -1,0 +1,165 @@
+{
+  "enabled": true,
+  "ackVersion": "",
+  "intervalMinutes": 360,
+  "fetchedAt": 1791730209245,
+  "releases": [
+    {
+      "tag": "v3.0.0",
+      "version": "3.0.0",
+      "pre": "",
+      "title": "Doc Intake v3.0.0",
+      "date": "2026-10-07T04:54:32Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/v3.0.0",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "新增 Token 健康状态提示：设置页顶部横幅（红 = 这一档此刻不可用，黄 = 还能用但有杂质或限制），可一键静音、也可只关本次；结论同时带给 Agent，Token 失效时会在提取结果里提醒你去更新",
+            "修复新装用户首次调用就报错：安装时不再探查默认保存路径，落盘位置改由提取端决定",
+            "修复 PaddleOCR Token 被云端拒绝时的崩溃（打码函数名写错），多 Token 轮换恢复正常",
+            "图标压缩，安装包体积下降约 0.1 MB"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v2.8.0",
+      "version": "2.8.0",
+      "pre": "",
+      "title": "Doc Intake v2.8.0",
+      "date": "2026-10-06T16:46:14Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/v2.8.0",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "修复卡片内元素超出边界的问题",
+            "新增 Token 有效性检测，移除 agent 自动检测工具",
+            "修复打包产物嵌套目录：zip 内条目改为平铺在包根，安装位不再出现双层目录"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v2.7.0",
+      "version": "2.7.0",
+      "pre": "",
+      "title": "Doc Intake v2.7.0",
+      "date": "2026-10-03T03:56:43Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/v2.7.0",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "自上一版 Release（v2.3.0）以来的主要变化：",
+            "MathType 公式：新增 MTEF v3（Equation Editor 3.x）与 MTEF v5 的记录解析与渲染，Equation.3 / Equation.5 公式直接出 LaTeX，不再退回预览图；v3 语料从 12/30 提到 29/30，补上模板槽位、附饰、矩阵分隔线、上下标续挂等边界。",
+            "公式文本：数学字母数字符号归一化；公式里的中文改按 \\text{} 输出，并合并紧邻的 \\text{} ；修正同段落多个公式串预览图、docx 退路与无效下标组。",
+            "提取：修复 pptx 的 MathType 提取；PDF 降级链默认留空即自动。",
+            "可移植化：清掉本机路径与个人信息引用，真机样本与测试资产收进插件目录，自测不再依赖任何绝对路径与环境变量。",
+            "设置页重建：自绘下拉；默认保存路径支持直接输入或「浏览…」调用系统文件夹选择器；依赖清单高亮提示，缺必装依赖时卡片自动展开并在折叠头给出红色徽章；MinerU / PaddleOCR Token 改为一行一个，并给出可点击的获取地址；底部保存条与卡片样式统一；列宽与滚动条统一到 640px 一档、滚动条收细成中性半透明。",
+            "工程：新增出包与一键发版脚本（打包含结构自检、zip 条目与版本号校验）；README 与图标更新。"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v2.3.0",
+      "version": "2.3.0",
+      "pre": "",
+      "title": "v2.3.0",
+      "date": "2026-08-16T11:45:57Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/v2.3.0",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "更顺手的使用体验、新增对老版本xsl、doc的支持"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v2.2.0",
+      "version": "2.2.0",
+      "pre": "",
+      "title": "v2.2.0",
+      "date": "2026-08-07T15:23:28Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/v2.2.0",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "本版本优化 Agent 获取提取结果路径和媒体文件信息的方式，降低大量媒体文件对上下文的占用。",
+            "新增媒体路径返回上限设置 mediaPathReturnLimit ，默认值为 20。",
+            "媒体数量不超过上限时，返回： mediaDir",
+            "mediaPaths",
+            "mediaDir",
+            "mediaCount",
+            "统一将 Agent-facing 字段 imagesDir 更名为 mediaDir 。",
+            "Markdown、媒体目录和 JSON 路径统一返回绝对路径。",
+            "修复媒体路径不完整时被静默丢失的问题。",
+            "修复保存失败却仍返回成功状态的问题。",
+            "保存失败时明确返回 status: \"failed\" 和错误原因。",
+            "保持已保存 JSON 文件的原有结构不变。"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "2.0.0",
+      "version": "2.0.0",
+      "pre": "",
+      "title": "改善逻辑、提升使用体验、修复大量问题",
+      "date": "2026-07-27T04:00:42Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/2.0.0",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "新增：通过分块（默认4x28Kib，实测8x28Kib也可以，且8x28=224足以应对绝大多数文件）的方式解决文件返回字符数上限，让Agent不需要保存到本地也可以完整阅读到文件文本，极大提升可用性",
+            "删除：原有通过文件数量来判断返回信息的问题",
+            "修复PPT提取器重复解码图片问题、大幅提高文件提取速度",
+            "修复部分Docx媒体提取问题",
+            "修复含有空格的路径在md中的引用问题",
+            "修复部分媒体未能提取的问题",
+            "修复部分媒体提取后无法被引用的问题",
+            "修复……（内容太多想不起来了）"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "1.6.5",
+      "version": "1.6.5",
+      "pre": "",
+      "title": "1.6.5",
+      "date": "2026-07-25T04:28:34Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/1.6.5",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "No content."
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "1.5.0",
+      "version": "1.5.0",
+      "pre": "",
+      "title": "1.5.0",
+      "date": "2026-07-22T15:36:50Z",
+      "url": "https://github.com/H-i-m-s/doc-intake/releases/tag/1.5.0",
+      "sections": [
+        {
+          "heading": "",
+          "items": [
+            "增强安全性、修复页数太长结果分块问题、修复长pdf提取分chunk问题"
+          ]
+        }
+      ]
+    }
+  ]
+}
