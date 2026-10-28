@@ -883,28 +883,6 @@ function chainValues(raw, options) {
   return out;
 }
 
-// 拖拽手柄：六个点，内联 SVG，不引图标库。
-function chainGripIcon() {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 8 14");
-  svg.setAttribute("width", "8");
-  svg.setAttribute("height", "14");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  for (const cy of [2, 7, 12]) {
-    for (const cx of [2, 6]) {
-      const dot = document.createElementNS(ns, "circle");
-      dot.setAttribute("cx", String(cx));
-      dot.setAttribute("cy", String(cy));
-      dot.setAttribute("r", "1.1");
-      dot.setAttribute("fill", "currentColor");
-      svg.appendChild(dot);
-    }
-  }
-  return svg;
-}
-
 // 指针落在哪一行之前：按行中线判，被拖的那行不参与比较。
 // 返回 null 表示落在列表末尾。
 // 中线用按下时缓存的原位叠标，不读 getBoundingClientRect：让位有 180ms 过渡，
@@ -953,9 +931,9 @@ function chainClearRowStyles(list) {
   }
 }
 
-function chainReleaseHandle(handle, pointerId) {
+function chainReleaseHandle(target, pointerId) {
   try {
-    if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+    if (target.hasPointerCapture?.(pointerId)) target.releasePointerCapture(pointerId);
   } catch { /* 捕获早就没了，忽略 */ }
 }
 
@@ -963,19 +941,20 @@ function chainReleaseHandle(handle, pointerId) {
 // 过渡不关：让位过的行会自己滑回去，而不是啪一下弹回。
 function endChainDrag() {
   if (!chainDrag) return;
-  const { row, handle, pointerId, list } = chainDrag;
+  const { row, pointerId, list } = chainDrag;
   chainDrag = null;
   row.classList.remove("gs-chain-row--dragging");
   chainClearRowStyles(list);
   for (const el of list.children) el.style.transition = "";
-  chainReleaseHandle(handle, pointerId);
+  chainReleaseHandle(row, pointerId);
 }
 
 // 用 pointer 事件而不是 HTML5 draggable：Electron 里的默认拖影难看且不可控。
-// 只在手柄上 pointerdown 才会进准备态，点勾选框不会开始拖。
-function wireChainDrag(row, handle, list) {
-  handle.addEventListener("pointerdown", (event) => {
+// 整张卡片都能拖，只有勾选框拦下 pointerdown：那里要的是勾选，不是排序。
+function wireChainDrag(row, list) {
+  row.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.target?.closest?.(".gs-chain-box")) return;
     endChainDrag();
     // 行高与布局位置拖拽全程不变：按下时量一次存着，之后不再碰几何。
     // 存的是未叠加 transform 的原位，让位过渡怎么跑都不会影响落点判定。
@@ -989,7 +968,6 @@ function wireChainDrag(row, handle, list) {
     const gap = parseFloat(getComputedStyle(list).rowGap);
     chainDrag = {
       row,
-      handle,
       list,
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -1006,11 +984,11 @@ function wireChainDrag(row, handle, list) {
       shifts: new Map(),
     };
     // 捕获指针：拖出窗口也还能收到 move / up
-    try { handle.setPointerCapture(event.pointerId); } catch { /* 不支持就算了 */ }
+    try { row.setPointerCapture(event.pointerId); } catch { /* 不支持就算了 */ }
     event.preventDefault();
   });
 
-  handle.addEventListener("pointermove", (event) => {
+  row.addEventListener("pointermove", (event) => {
     const drag = chainDrag;
     if (!drag || drag.pointerId !== event.pointerId || drag.row !== row) return;
     if (!drag.active) {
@@ -1054,14 +1032,14 @@ function wireChainDrag(row, handle, list) {
     // 5 过渡恢复成空串。重排后每行的视觉位置跟它被 transform 顶到的位置是同一个，
     //   所以清 transform 的时候没有可动的东西，画面不跳；先关再开，也不会多播一遍
     for (const el of rows) el.style.transition = "";
-    chainReleaseHandle(drag.handle, drag.pointerId);
+    chainReleaseHandle(row, drag.pointerId);
     onDraftChange();
   };
 
-  handle.addEventListener("pointerup", (event) => finish(event, true));
-  handle.addEventListener("pointercancel", (event) => finish(event, false));
+  row.addEventListener("pointerup", (event) => finish(event, true));
+  row.addEventListener("pointercancel", (event) => finish(event, false));
   // 捕获丢了就把状态收掉，不把半途的位置当成用户意愿提交
-  handle.addEventListener("lostpointercapture", (event) => finish(event, false));
+  row.addEventListener("lostpointercapture", (event) => finish(event, false));
 }
 
 function buildChainControl(meta) {
@@ -1079,27 +1057,20 @@ function buildChainControl(meta) {
     row.className = "gs-chain-row";
     row.dataset.value = opt.value;
 
-    const handle = document.createElement("span");
-    handle.className = "gs-chain-handle";
-    handle.setAttribute("aria-hidden", "true");
-    handle.title = "拖动调整顺序";
-    handle.appendChild(chainGripIcon());
-
-    const label = document.createElement("label");
-    label.className = "gs-chain-label";
     const box = document.createElement("input");
     box.type = "checkbox";
     box.className = "gs-chain-box";
+    box.setAttribute("aria-label", opt.label);
+
     const name = document.createElement("span");
     name.className = "gs-chain-name";
     name.textContent = opt.label;
-    label.append(box, name);
 
     const note = document.createElement("span");
     note.className = "gs-chain-note";
     note.textContent = opt.note || "";
 
-    row.append(handle, label, note);
+    row.append(box, name, note);
     list.appendChild(row);
     rows.set(opt.value, { row, box, note, option: opt });
 
@@ -1108,7 +1079,7 @@ function buildChainControl(meta) {
       syncEmptyHint();
       onDraftChange();
     });
-    wireChainDrag(row, handle, list);
+    wireChainDrag(row, list);
   }
 
   // 全不勾时提醒一下真正会用的内置顺序（这条只是提示，不进 read()）

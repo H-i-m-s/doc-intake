@@ -430,72 +430,53 @@ body { padding: 0 12px; }
 .gs-switch input:disabled + .gs-switch__track { opacity: 0.5; cursor: default; }
 
 /* ---------- 后端降级链（勾选 + 拖拽排序） ---------- */
-/* 一行一个后端：手柄 / 勾选框 / 显示名 / 行尾备注。
-   视觉跟其他字段行对齐：透明底 + 分隔线，不做成一个一个的卡片块。
-   拖拽时才浮起（那时才给底色和阴影），平时它就是列表里的一行。 */
+/* 一行一个后端，每行是一张卡片：圆角、淡底、行间留缝。
+   整张卡片就是拖拽区，不做手柄图标——那个小图标在卡片里只是一道噪点。 */
 .gs-chain { display: flex; flex-direction: column; gap: 10px; width: 100%; }
-.gs-chain-list { display: flex; flex-direction: column; }
+.gs-chain-list { display: flex; flex-direction: column; gap: 6px; }
 
 .gs-chain-row {
   position: relative;
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 10px 8px;
-  border-top: 1px solid var(--gs-line);
+  gap: 11px;
+  min-height: 44px;
+  padding: 11px 14px;
+  border-radius: var(--gs-radius-sm);
+  background: color-mix(in srgb, var(--gs-ink) 5%, transparent);
   /* transform 带一点点回弹：让位的行不是瞬间跳过去，是滑过去再稳稳停住 */
   transition: background 0.15s ease, transform 180ms cubic-bezier(0.34, 1.42, 0.64, 1);
   user-select: none;
+  cursor: grab;
 }
-.gs-chain-row:first-child { border-top: 0; }
-.gs-chain-row:hover { background: color-mix(in srgb, var(--gs-ink) 5%, transparent); }
-/* 拖拽中：整行从列表里浮起来、跟手走。质感靠影子和底色，不做形变
+.gs-chain-row:hover { background: color-mix(in srgb, var(--gs-ink) 8%, transparent); }
+/* 拖拽中：卡片从列表里浮起来、跟手走。质感靠影子和实底，不做形变
    （不加 scale、不旋转、不用彩色）；transform 在这里不要过渡，否则跟手会拖一下 */
 .gs-chain-row--dragging {
   background: var(--gs-surface);
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--gs-ink) 20%, transparent);
-  border-radius: var(--gs-radius-sm);
-  border-top-color: transparent;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--gs-ink) 22%, transparent);
   cursor: grabbing;
   will-change: transform;
   transition: background 0.15s ease;
 }
 
-/* 拖拽手柄：命中区比图标大一矩，光标给出可拖的暗示。
-   touch-action: none 是必须的，否则指针拖到一半会被滚动手势抢走。 */
-.gs-chain-handle {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 22px;
-  color: var(--gs-muted);
-  cursor: grab;
-  touch-action: none;
-}
-.gs-chain-handle:hover { color: var(--gs-sub); }
-.gs-chain-row--dragging .gs-chain-handle { cursor: grabbing; }
-
-.gs-chain-label {
+.gs-chain-name {
   flex: 1 1 auto;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   font-size: 13px;
-  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-/* 勾选框自绘：原生控件的形状跟这一页的线条语言不合，只改 accent 色又会把主题强调色拖进来。
-   这里用中性灰填，选中靠对钩和底的对比，不靠颜色。 */
+/* 勾选框自绘：原生控件的形状跟卡片不合。颜色跟主题强调色走，
+   不另外定义一套高亮色，否则界面里会多出一种语言。 */
 .gs-chain-box {
   appearance: none;
   -webkit-appearance: none;
   flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   margin: 0;
   position: relative;
   border: 1px solid color-mix(in srgb, var(--gs-ink) 26%, transparent);
@@ -504,13 +485,13 @@ body { padding: 0 12px; }
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
-.gs-chain-box:hover { border-color: color-mix(in srgb, var(--gs-ink) 44%, transparent); }
-.gs-chain-box:checked { background: var(--gs-sub); border-color: var(--gs-sub); }
+.gs-chain-box:hover { border-color: color-mix(in srgb, var(--gs-accent) 62%, transparent); }
+.gs-chain-box:checked { background: var(--gs-accent); border-color: var(--gs-accent); }
 .gs-chain-box:checked::after {
   content: "";
   position: absolute;
-  left: 4px;
-  top: 1px;
+  left: 4.5px;
+  top: 1.5px;
   width: 4px;
   height: 7px;
   border: solid var(--gs-surface);
@@ -518,7 +499,6 @@ body { padding: 0 12px; }
   transform: rotate(45deg);
 }
 .gs-chain-box:focus-visible { outline: 2px solid var(--gs-accent-ring); outline-offset: 2px; }
-.gs-chain-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .gs-chain-note { flex: 0 0 auto; font-size: 12px; color: var(--gs-muted); }
 /* 地址没填：只是提醒，不是错，但不能淡到看不清 */
