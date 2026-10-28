@@ -859,7 +859,7 @@ function buildControl(key) {
 // 勾选决定启用，拖拽决定先后；读出来还是 "a>b" 这种字符串，存储格式没变。
 // 空串 = 自动档，具体回落到哪几档由 Python 侧决定，前端只负责把规则画出来。
 const CHAIN_SEP = /[;,>\n]+/;
-// 位移超过这个像素数才真进拖拽态：点一下手柄或者手指轻微抖动都不应该挪行。
+// 位移超过这个像素数才真进拖拽态：手指轻微抖动不应该挪行。
 const CHAIN_DRAG_SLOP = 4;
 // 行间距读不出来时的兜底值：跟 .gs-chain-list 的 gap 一致。
 const CHAIN_ROW_GAP = 2;
