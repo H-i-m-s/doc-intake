@@ -907,15 +907,16 @@ function chainGripIcon() {
 
 // 指针落在哪一行之前：按行中线判，被拖的那行不参与比较。
 // 返回 null 表示落在列表末尾。
-// 让位中的行被 translateY 顶开过，rect 跟着搬走了；减掉自己顶出去的那段才是它没被动过的中线，
-// 否则落点判定会被自己的动画牵着走：越拖越偏，回头还得多拖一截才换位。
+// 中线用按下时缓存的原位叠标，不读 getBoundingClientRect：让位有 180ms 过渡，
+// 读到的会是动画中间态，而位移表里记的是目标值，两者错位会让中线漂、落点来回跳。
 function chainDropRef(list, row, clientY) {
-  const shifts = chainDrag?.shifts;
+  const origins = chainDrag?.origins;
   for (const el of list.children) {
     if (el === row) continue;
-    const rect = el.getBoundingClientRect();
-    const top = rect.top - (shifts?.get(el) || 0);
-    if (clientY < top + rect.height / 2) return el;
+    const cached = origins?.get(el);
+    const top = cached ? cached.top : el.getBoundingClientRect().top;
+    const height = cached ? cached.height : el.getBoundingClientRect().height;
+    if (clientY < top + height / 2) return el;
   }
   return null;
 }
@@ -976,8 +977,15 @@ function wireChainDrag(row, handle, list) {
   handle.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     endChainDrag();
-    // 行高和行间距拖拽全程不变：按下时量一次存着，之后每帧都用这个数，不去碰 getComputedStyle
-    const height = row.getBoundingClientRect().height;
+    // 行高与布局位置拖拽全程不变：按下时量一次存着，之后不再碰几何。
+    // 存的是未叠加 transform 的原位，让位过渡怎么跑都不会影响落点判定。
+    const origins = new Map();
+    let rowHeight = 0;
+    for (const el of list.children) {
+      const rect = el.getBoundingClientRect();
+      origins.set(el, { top: rect.top, height: rect.height });
+      if (el === row) rowHeight = rect.height;
+    }
     const gap = parseFloat(getComputedStyle(list).rowGap);
     chainDrag = {
       row,
@@ -988,11 +996,13 @@ function wireChainDrag(row, handle, list) {
       startY: event.clientY,
       active: false,
       ref: null,
-      // 当前落点索引：跟上一帧一样就不用重算让位
+      // 当前落点索引：跟上一帧一样就不重算让位
       to: -1,
       // 行距 = 行高 + 行间距：让位时整行挪一格就是挪这么远
-      pitch: height + (Number.isFinite(gap) ? gap : CHAIN_ROW_GAP),
-      // 每行当前被顶出去的位移，让位中顺便用来还原它没被动过的中线
+      pitch: rowHeight + (Number.isFinite(gap) ? gap : CHAIN_ROW_GAP),
+      // 每行的原始叠标，让位判定与中线计算共用
+      origins,
+      // 每行当前被顶出去的位移，用来判断哪些行需要写回 style
       shifts: new Map(),
     };
     // 捕获指针：拖出窗口也还能收到 move / up
