@@ -55,19 +55,30 @@ const FIELDS = {
     type: "string",
     labels: { auto: "自动", mineru: "MinerU", paddleocr: "PaddleOCR", "mineru-local": "MinerU（本地）", "paddleocr-local": "PaddleOCR（本地）", local: "本地（PyMuPDF）" },
   },
+  // options = 降级链的候选后端：勾选决定启用，拖拽决定先后，存回去仍是 "a>b" 这种字符串。
+  // endpoint 指到对应的服务地址字段：地址没填时那一行的备注会换成「会被跳过」。
   pdfBackendChain: {
     title: "PDF 后端降级链",
-    hint: "留空 = 自动（mineru > paddleocr > mineru-local > paddleocr-local > local）。也可显式写顺序，用 > 或 ; 分隔，按顺序尝试、失败自动降到下一档。",
-    type: "string",
+    hint: "勾选要启用的后端，拖动左侧手柄调顺序；排在前面的先试，失败自动降到下一档。一个都不勾 = 自动档。",
+    type: "chain",
     wide: true,
-    placeholder: "留空 = mineru>paddleocr>mineru-local>paddleocr-local>local",
+    options: [
+      { value: "mineru", label: "MinerU", note: "云端" },
+      { value: "paddleocr", label: "PaddleOCR", note: "云端" },
+      { value: "mineru-local", label: "MinerU（本地）", note: "需填服务地址", endpoint: "mineruLocalEndpoint" },
+      { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
+      { value: "local", label: "本地（PyMuPDF）", note: "始终可用" },
+    ],
   },
   imageBackendChain: {
     title: "图片后端降级链",
-    hint: "留空 = 自动（paddleocr > paddleocr-local）。也可显式写顺序，用 > 或 ; 分隔。",
-    type: "string",
+    hint: "勾选要启用的后端，拖动左侧手柄调顺序；排在前面的先试，失败自动降到下一档。一个都不勾 = 自动档。",
+    type: "chain",
     wide: true,
-    placeholder: "留空 = paddleocr>paddleocr-local",
+    options: [
+      { value: "paddleocr", label: "PaddleOCR", note: "云端" },
+      { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
+    ],
   },
   mineruCredentials: {
     title: "MinerU Token",
@@ -781,6 +792,8 @@ function buildControl(key) {
     return { node: label, read: () => input.checked, write: (v) => { input.checked = !!v; }, type: "boolean" };
   }
 
+  if (meta.type === "chain") return buildChainControl(meta);
+
   if (meta.labels) {
     const select = document.createElement("select");
     select.className = "gs-select";
@@ -838,6 +851,262 @@ function buildControl(key) {
     write: (v) => { input.value = v == null ? "" : String(v); },
     type: meta.type,
   };
+}
+
+// ---------------------------------------------------------------- 后端降级链
+
+// 勾选决定启用，拖拽决定先后；读出来还是 "a>b" 这种字符串，存储格式没变。
+// 空串 = 自动档，具体回落到哪几档由 Python 侧决定，前端只负责把规则画出来。
+const CHAIN_SEP = /[;,>\n]+/;
+// 位移超过这个像素数才真进拖拽态：点一下手柄或者手指轻微抖动都不应该挪行。
+const CHAIN_DRAG_SLOP = 4;
+// 同一时刻只允许一行在拖，状态放模块级：拖拽被多个入口清理时不会互相打架。
+let chainDrag = null;
+// 每个链控件一份「地址备注刷新」函数：地址字段一变就调它们重算备注。
+const chainRefreshers = new Set();
+
+// 降级链字符串 → 后端值数组：> 和 ; 两种分隔符都认，清单外的值直接丢掉，
+// 重复出现的只留第一次。read / write / isDirty 共用这一套口径。
+function chainValues(raw, options) {
+  const known = options.map((opt) => opt.value);
+  const seen = new Set();
+  const out = [];
+  for (const part of String(raw ?? "").split(CHAIN_SEP)) {
+    const value = part.trim();
+    if (!value || !known.includes(value) || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+// 拖拽手柄：六个点，内联 SVG，不引图标库。
+function chainGripIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 8 14");
+  svg.setAttribute("width", "8");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const cy of [2, 7, 12]) {
+    for (const cx of [2, 6]) {
+      const dot = document.createElementNS(ns, "circle");
+      dot.setAttribute("cx", String(cx));
+      dot.setAttribute("cy", String(cy));
+      dot.setAttribute("r", "1.1");
+      dot.setAttribute("fill", "currentColor");
+      svg.appendChild(dot);
+    }
+  }
+  return svg;
+}
+
+// 指针落在哪一行之前：按行中线判，被拖的那行不参与比较。
+// 返回 null 表示落在列表末尾。
+function chainDropRef(list, row, clientY) {
+  for (const el of list.children) {
+    if (el === row) continue;
+    const rect = el.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) return el;
+  }
+  return null;
+}
+
+// 插入线画在落点那一行的上边；落点在末尾时改画在最后一行的下边。
+function chainPaintDrop(list, row, ref) {
+  for (const el of list.children) {
+    el.classList.remove("gs-chain-row--drop-before", "gs-chain-row--drop-after");
+  }
+  if (ref) {
+    ref.classList.add("gs-chain-row--drop-before");
+    return;
+  }
+  let last = null;
+  for (const el of list.children) if (el !== row) last = el;
+  if (last) last.classList.add("gs-chain-row--drop-after");
+}
+
+// 拖拽状态的唯一出口：pointerup / pointercancel / 捕获丢失 / 列表被重写都走这里。
+function endChainDrag() {
+  if (!chainDrag) return;
+  const { row, handle, pointerId, list } = chainDrag;
+  chainDrag = null;
+  row.classList.remove("gs-chain-row--dragging");
+  for (const el of list.children) {
+    el.classList.remove("gs-chain-row--drop-before", "gs-chain-row--drop-after");
+  }
+  try {
+    if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+  } catch { /* 捕获早就没了，忽略 */ }
+}
+
+// 用 pointer 事件而不是 HTML5 draggable：Electron 里的默认拖影难看且不可控。
+// 只在手柄上 pointerdown 才会进准备态，点勾选框不会开始拖。
+function wireChainDrag(row, handle, list) {
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    endChainDrag();
+    chainDrag = {
+      row,
+      handle,
+      list,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      ref: null,
+    };
+    // 捕获指针：拖出窗口也还能收到 move / up
+    try { handle.setPointerCapture(event.pointerId); } catch { /* 不支持就算了 */ }
+    event.preventDefault();
+  });
+
+  handle.addEventListener("pointermove", (event) => {
+    const drag = chainDrag;
+    if (!drag || drag.pointerId !== event.pointerId || drag.row !== row) return;
+    if (!drag.active) {
+      if (Math.abs(event.clientY - drag.startY) < CHAIN_DRAG_SLOP
+        && Math.abs(event.clientX - drag.startX) < CHAIN_DRAG_SLOP) return;
+      drag.active = true;
+      row.classList.add("gs-chain-row--dragging");
+    }
+    drag.ref = chainDropRef(list, row, event.clientY);
+    chainPaintDrop(list, row, drag.ref);
+  });
+
+  const finish = (event, commit) => {
+    const drag = chainDrag;
+    if (!drag || drag.pointerId !== event.pointerId || drag.row !== row) return;
+    const moved = drag.active;
+    const ref = drag.ref;
+    endChainDrag();
+    if (!commit || !moved) return;
+    // 落点就在原位时不动 DOM，也就不会平白报一条「有未保存的改动」
+    const stays = ref === null ? row === list.lastElementChild : row.nextElementSibling === ref;
+    if (stays) return;
+    list.insertBefore(row, ref);
+    onDraftChange();
+  };
+
+  handle.addEventListener("pointerup", (event) => finish(event, true));
+  handle.addEventListener("pointercancel", (event) => finish(event, false));
+  // 捕获丢了就把状态收掉，不把半途的位置当成用户意愿提交
+  handle.addEventListener("lostpointercapture", (event) => finish(event, false));
+}
+
+function buildChainControl(meta) {
+  const wrap = document.createElement("div");
+  wrap.className = "gs-chain";
+
+  const list = document.createElement("div");
+  list.className = "gs-chain-list";
+  wrap.appendChild(list);
+
+  const rows = new Map();
+
+  for (const opt of meta.options) {
+    const row = document.createElement("div");
+    row.className = "gs-chain-row";
+    row.dataset.value = opt.value;
+
+    const handle = document.createElement("span");
+    handle.className = "gs-chain-handle";
+    handle.setAttribute("aria-hidden", "true");
+    handle.title = "拖动调整顺序";
+    handle.appendChild(chainGripIcon());
+
+    const label = document.createElement("label");
+    label.className = "gs-chain-label";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "gs-chain-box";
+    const name = document.createElement("span");
+    name.className = "gs-chain-name";
+    name.textContent = opt.label;
+    label.append(box, name);
+
+    const note = document.createElement("span");
+    note.className = "gs-chain-note";
+    note.textContent = opt.note || "";
+
+    row.append(handle, label, note);
+    list.appendChild(row);
+    rows.set(opt.value, { row, box, note, option: opt });
+
+    // 勾选框不禁用：允许先勾上再去填地址，不逼用户来回跑
+    box.addEventListener("change", () => {
+      syncEmptyHint();
+      onDraftChange();
+    });
+    wireChainDrag(row, handle, list);
+  }
+
+  // 全不勾时提醒一下真正会用的内置顺序（这条只是提示，不进 read()）
+  const empty = document.createElement("div");
+  empty.className = "gs-chain-empty";
+  empty.hidden = true;
+  empty.textContent = `未勾选任何后端，将使用内置顺序：${
+    meta.options.map((opt) => opt.value).join(" > ")
+  }`;
+  wrap.appendChild(empty);
+
+  function syncEmptyHint() {
+    let any = false;
+    for (const entry of rows.values()) if (entry.box.checked) any = true;
+    empty.hidden = any;
+  }
+
+  // 本地后端依赖服务地址：地址空着就直说它会被跳过。只碰备注，不动勾选。
+  function refreshNotes() {
+    for (const entry of rows.values()) {
+      const dep = entry.option.endpoint;
+      if (!dep) continue;
+      const endpoint = String(controls.get(dep)?.read() ?? "").trim();
+      const skip = !endpoint;
+      const text = skip ? "未填服务地址，会被跳过" : (entry.option.note || "");
+      // 这个函数会在每次草稿变更时被调，值没变就别重写节点
+      if (entry.note.textContent !== text) entry.note.textContent = text;
+      if (skip) entry.note.dataset.kind = "skip";
+      else delete entry.note.dataset.kind;
+    }
+  }
+
+  function read() {
+    const picked = [];
+    // 顺序直接从 DOM 取：拖拽只改 DOM，不再另存一份顺序，免得两边对不上
+    for (const el of list.children) {
+      const entry = rows.get(el.dataset.value);
+      if (entry && entry.box.checked) picked.push(el.dataset.value);
+    }
+    return picked.join(">");
+  }
+
+  function write(value) {
+    // 地址字段可能排在本字段之后才写进来（writeAll 按字段表顺序走），
+    // 正在拖的那行也要先收尾，否则它抱着一个马上要被重排的位置。
+    if (chainDrag && chainDrag.list === list) endChainDrag();
+    const picked = chainValues(value, meta.options);
+    const chosen = new Set(picked);
+    // 勾上的按解析顺序排前面，没提到的后端保持清单顺序跟在后面（但都不勾）
+    const order = picked.concat(
+      meta.options.map((opt) => opt.value).filter((v) => !chosen.has(v)),
+    );
+    for (const v of order) {
+      const entry = rows.get(v);
+      if (entry) list.appendChild(entry.row);
+    }
+    for (const [v, entry] of rows) entry.box.checked = chosen.has(v);
+    syncEmptyHint();
+    // 这一轮写完之后再算一遍备注，那时地址字段已经有值了
+    queueMicrotask(refreshNotes);
+  }
+
+  syncEmptyHint();
+  refreshNotes();
+  chainRefreshers.add(refreshNotes);
+
+  return { node: wrap, read, write, type: "chain" };
 }
 
 function buildField(key) {
@@ -1072,6 +1341,14 @@ function isDirty() {
     const meta = FIELDS[key];
     const a = String(now[key]);
     const b = String(loaded[key] ?? "");
+    // 降级链存的是字符串，读回来时已经把 "a;b" 规范化成 "a>b"，直接比字符串会在刚打开页就误报改动。
+    // 两边都拆成后端数组逐项比，顺序也算。（只认清单内的值，跟控件里的解析一致）
+    if (meta.type === "chain") {
+      const left = chainValues(a, meta.options);
+      const right = chainValues(b, meta.options);
+      if (left.length !== right.length || left.some((v, i) => v !== right[i])) return true;
+      continue;
+    }
     // 多值字段显示时做过规范化，比较也得用同一套，否则一进页就报“有未保存的改动”
     if (meta.lines ? normalizeLines(a) !== normalizeLines(b) : a !== b) return true;
   }
@@ -1084,6 +1361,8 @@ function onDraftChange() {
   if (!dirty) ui.saveState.textContent = "";
   else ui.saveState.textContent = "有未保存的改动";
   syncFieldVisibility();
+  // 地址字段一变，本地后端那两行的备注跟着换（勾选状态不碰）
+  for (const refresh of chainRefreshers) refresh();
   renderDepSource();
   updateBanner();
 }

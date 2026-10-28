@@ -429,6 +429,86 @@ body { padding: 0 12px; }
 .gs-switch input:focus-visible + .gs-switch__track { box-shadow: 0 0 0 3px var(--gs-accent-ring); }
 .gs-switch input:disabled + .gs-switch__track { opacity: 0.5; cursor: default; }
 
+/* ---------- 后端降级链（勾选 + 拖拽排序） ---------- */
+/* 一行一个后端：手柄 / 勾选框 / 显示名 / 行尾备注。
+   行高与内边距对齐 .gs-input（同为 13px 字、10px 横向内边距），不另起一套尺寸。
+   只用 --gs- 变量取色：不加彩色强调块，勾选态的 accent 跟开关同一语义。 */
+.gs-chain { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.gs-chain-list { display: flex; flex-direction: column; gap: 2px; }
+
+.gs-chain-row {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border-radius: var(--gs-radius-sm);
+  background: color-mix(in srgb, var(--gs-ink) 4%, transparent);
+  transition: background 0.15s ease, opacity 0.15s ease;
+  user-select: none;
+}
+.gs-chain-row:hover { background: color-mix(in srgb, var(--gs-ink) 6%, transparent); }
+/* 拖拽中：整行半透明，落点靠插入线说 */
+.gs-chain-row--dragging { opacity: 0.45; }
+
+/* 拖拽手柄：命中区比图标大一矩，光标给出可拖的暗示。
+   touch-action: none 是必须的，否则指针拖到一半会被滚动手势抢走。 */
+.gs-chain-handle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 22px;
+  margin-left: -2px;
+  color: var(--gs-muted);
+  cursor: grab;
+  touch-action: none;
+}
+.gs-chain-handle:hover { color: var(--gs-sub); }
+.gs-chain-row--dragging .gs-chain-handle { cursor: grabbing; }
+
+.gs-chain-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.gs-chain-box {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--gs-accent);
+  cursor: pointer;
+}
+.gs-chain-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.gs-chain-note { flex: 0 0 auto; font-size: 12px; color: var(--gs-muted); }
+/* 地址没填：同一句话说重一点，但比普通备注更弱（只是提醒，不是错） */
+.gs-chain-note[data-kind="skip"] { color: color-mix(in srgb, var(--gs-muted) 72%, transparent); }
+
+/* 插入线：2px，取墨色混稀而不是语义色，不抢这一页的配色纪律 */
+.gs-chain-row--drop-before::before,
+.gs-chain-row--drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--gs-ink) 55%, transparent);
+}
+.gs-chain-row--drop-before::before { top: -2px; }
+.gs-chain-row--drop-after::after { bottom: -2px; }
+
+.gs-chain-empty { font-size: 12px; line-height: 1.5; color: var(--gs-muted); }
+
 /* ---------- 高级设置的折叠头 ---------- */
 .gs-collapse {
   display: flex;
@@ -658,7 +738,7 @@ body { padding: 0 12px; }
 
 @media (prefers-reduced-motion: reduce) {
   .gs-spinner { animation: none; }
-  .gs-collapse__caret, .gs-switch__track, .gs-switch__thumb { transition: none; }
+  .gs-collapse__caret, .gs-switch__track, .gs-switch__thumb, .gs-chain-row { transition: none; }
 }
 
 @media (max-width: 520px) {
