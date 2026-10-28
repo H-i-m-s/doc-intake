@@ -8,6 +8,7 @@ import re as _re
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional, Iterable
@@ -136,18 +137,83 @@ _BARCODE_ONLY_MAX_MEDIA = 3
 _BARCODE_ONLY_MIN_RATIO = 0.30
 
 
-def _scan_source_for_barcodes(source: str, file_type: str, max_pages: Optional[int] = None):
+def _scan_source_for_barcodes(
+    source: str,
+    file_type: str,
+    max_pages: Optional[int] = None,
+    metadata_only: bool = False,
+):
     """按文件类型挑一个扫描入口；不支持的格式返回 None（等于「没结论」）。"""
     try:
         if file_type == "pdf":
-            return barcode_scan.scan_pdf(source, max_pages=max_pages)
+            return barcode_scan.scan_pdf(source, max_pages=max_pages, metadata_only=metadata_only)
         if file_type == "image":
+            # 图片没有「只数规模」这回事：不真正解一次就不知道有没有码
             return barcode_scan.scan_image_file(source)
         if file_type in ("docx", "pptx", "xlsx", "xlsm"):
-            return barcode_scan.scan_office(source, Path(source).suffix)
+            return barcode_scan.scan_office(
+                source, Path(source).suffix, metadata_only=metadata_only
+            )
     except Exception:
         return None
     return None
+
+
+def _barcode_scan_over_threshold(scan) -> bool:
+    """量出的规模是否已经让免落盘短路不可能成立。"""
+    if scan is None:
+        return False
+    return (
+        scan.text_chars > _BARCODE_ONLY_MAX_TEXT_CHARS
+        or scan.page_count > _BARCODE_ONLY_MAX_PAGES
+        or scan.media_count > _BARCODE_ONLY_MAX_MEDIA
+    )
+
+
+def _prefetch_barcode_scan(args, settings: dict, file_type: str, output_dir: Optional[str]):
+    """规模已超阈值时，把完整扫码扔到后台，和随后的提取重叠。
+
+    返回 (future, pool, over_threshold)。over_threshold=True 表示短路注定不成立，
+    调用方不必再跑一次短路判定 —— 那会为了必输的判定把全文再扫一遍。
+
+    只对 PDF / Office 做这个预判：单张图片的正文数、页数、媒体数恒定在阈值之下，
+    探一次等于白解一次码。这里的 metadata_only 探测只数页与成员，成本可忽略。
+    云端 HTTP 读和本地 zxing 都释放 GIL，两边才能真并行。
+    """
+    if output_dir or not settings.get("barcodeScan", True) or not barcode_scan.is_available():
+        return None, None, False
+    if file_type not in ("pdf", "docx", "pptx", "xlsx", "xlsm"):
+        return None, None, False
+
+    meta = _scan_source_for_barcodes(
+        args.source, file_type, _BARCODE_ONLY_MAX_PAGES, metadata_only=True
+    )
+    if not _barcode_scan_over_threshold(meta):
+        return None, None, False
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(
+        _scan_source_for_barcodes, args.source, file_type, _BARCODE_ONLY_MAX_PAGES, False
+    )
+    return future, pool, True
+
+
+def _take_barcode_prefetch(future, pool) -> Optional[list]:
+    """取后台扫码结果并折算成 dedupe 后的结构；失败只当没有码。"""
+    if future is None:
+        return None
+    scan = None
+    try:
+        scan = future.result()
+    except Exception:
+        scan = None
+    finally:
+        # 任务已经结束，不再等它；wait=False 避免意外阻塞现场
+        if pool is not None:
+            pool.shutdown(wait=False)
+    if scan is None or not scan.hits:
+        return None
+    return barcode_scan.dedupe(scan.hits)
 
 
 def _barcode_only_markdown(codes: list[dict]) -> str:
@@ -169,6 +235,32 @@ def _barcode_only_markdown(codes: list[dict]) -> str:
             lines.append(f"- {label}：")
             lines.extend(body)
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _append_barcode_section(markdown: str, codes: list[dict]) -> str:
+    """未落盘时，把码内容作为一节追加到正文末尾。
+
+    落盘时码内容挂在引用它的那张图下面；不落盘就没有媒体文件可挂，只能集中放末尾。
+    末尾说明扫描只覆盖前几页，免得读者以为全文都扫过了。
+    """
+    if not codes:
+        return markdown
+    lines = ["## 二维码与条码", ""]
+    for code in codes:
+        label = code.get("format_label") or "条码"
+        if not code.get("text"):
+            lines.append(f"- {label}：无法解码（{code.get('error') or '未知错误'}）")
+            continue
+        body = barcode_scan.code_lines(code["text"])
+        if len(body) == 1:
+            lines.append(f"- {label}：{body[0]}")
+        else:
+            lines.append(f"- {label}：")
+            lines.extend(body)
+    lines.append("")
+    lines.append("（以上来自文件前 3 页的扫描，未覆盖全文）")
+    base = (markdown or "").rstrip("\n")
+    return f"{base}\n\n" + "\n".join(lines) + "\n"
 
 
 def _barcode_only_result(args, settings: dict, file_type: str, output_dir: Optional[str]):
@@ -714,10 +806,17 @@ def _run(args) -> dict:
 
         return format_result(result)
 
+    # 规模已超短路阈值的文件，先把完整扫码扔后台，和随后的提取重叠；
+    # 短路注定不成立，就不再白跑一遍判定。
+    barcode_future, barcode_pool, barcode_over_threshold = _prefetch_barcode_scan(
+        args, settings, file_type, output_dir
+    )
+
     # 只有码、没正文且不需要落盘：不碰 extractor、不调云端，直接给码内容。
-    barcode_only = _barcode_only_result(args, settings, file_type, output_dir)
-    if barcode_only is not None:
-        return barcode_only
+    if not barcode_over_threshold:
+        barcode_only = _barcode_only_result(args, settings, file_type, output_dir)
+        if barcode_only is not None:
+            return barcode_only
 
     backend_chain = select_backend_chain(file_type, backend, settings)
     include_images = settings.get("includeMedia", settings.get("includeImages", True))
@@ -735,20 +834,23 @@ def _run(args) -> dict:
             include_images=include_images,
             available_credentials=available_credentials,
         )
-        return _finalize_single_result(result, args, output_dir, settings, start_time)
+    else:
+        first_chunk, remaining_chunks = chunk_state
+        result = _extract_memory_pdf_chunks(
+            args=args,
+            settings=settings,
+            output_dir=output_dir,
+            backend_chain=backend_chain,
+            include_images=include_images,
+            available_credentials=available_credentials,
+            first_chunk=first_chunk,
+            remaining_chunks=remaining_chunks,
+        )
 
-    first_chunk, remaining_chunks = chunk_state
-    merged = _extract_memory_pdf_chunks(
-        args=args,
-        settings=settings,
-        output_dir=output_dir,
-        backend_chain=backend_chain,
-        include_images=include_images,
-        available_credentials=available_credentials,
-        first_chunk=first_chunk,
-        remaining_chunks=remaining_chunks,
+    prefetched_codes = _take_barcode_prefetch(barcode_future, barcode_pool)
+    return _finalize_single_result(
+        result, args, output_dir, settings, start_time, prefetched_codes
     )
-    return _finalize_single_result(merged, args, output_dir, settings, start_time)
 
 
 def _finalize_single_result(
@@ -757,6 +859,7 @@ def _finalize_single_result(
     output_dir: Optional[str],
     settings: dict,
     start_time: float,
+    prefetched_codes: Optional[list] = None,
 ) -> dict:
     result.name = args.source
     if output_dir and result.markdown:
@@ -768,6 +871,11 @@ def _finalize_single_result(
             result.output_dir = None
     else:
         result.output_dir = output_dir
+        # 只有未落盘时才追加：落盘时码内容已经挂在图片下面，再来一节就是重复。
+        if prefetched_codes:
+            result.markdown = _append_barcode_section(result.markdown, prefetched_codes)
+            result.metadata = result.metadata or {}
+            result.metadata["barcodeCodes"] = prefetched_codes
 
     duration = time.time() - start_time
     log.log_response(
@@ -927,22 +1035,27 @@ def _inject_barcode_annotations(result: ExtractionResult, markdown: str, setting
         return markdown
 
     try:
-        return _annotate_media(result, markdown, images)
+        # 宿主同时可能跑多个文件，核是被分掉的，并发度得按这个折算
+        hint = int((settings or {}).get("maxConcurrentLocal", 8) or 8)
+        return _annotate_media(result, markdown, images, hint)
     except Exception as exc:
         # 标注是附加信息，不能因为它让整份结果保存失败
         result.warnings.append(f"二维码解析失败: {exc}")
         return markdown
 
 
-def _annotate_media(result: ExtractionResult, markdown: str, images: list[str]) -> str:
+def _annotate_media(
+    result: ExtractionResult, markdown: str, images: list[str], concurrent_hint: int = 8
+) -> str:
     batch = images[:_BARCODE_MAX_IMAGES]
     skipped = len(images) - len(batch)
     if skipped > 0:
         result.warnings.append(f"还有 {skipped} 张图未扫描条码")
 
+    scans = barcode_scan.scan_image_files(batch, concurrent_hint=concurrent_hint)
     per_media: dict[str, list] = {}
-    for path in batch:
-        hits = barcode_scan.scan_image_file(path).hits
+    for path, scan in zip(batch, scans):
+        hits = scan.hits if scan is not None else []
         if hits:
             per_media[Path(path).name] = hits
     if not per_media:

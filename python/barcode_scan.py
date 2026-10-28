@@ -9,8 +9,10 @@ zxing-cpp 是可选依赖，模块顶层不硬 import：没装扩展的机器上
 from __future__ import annotations
 
 import io
+import os
 import re
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
@@ -38,6 +40,14 @@ _RENDER_MAX_MEDIA = 3
 
 # 行内注释的上限，超了就退到围栏代码块（长 base64 之类不能横着铺满一行）
 _MAX_INLINE_CHARS = 120
+
+# 解析能力靠线程堆：zxing 与 PIL 都释放 GIL，线程比进程便宜（无序列化、无启动开销）。
+# 上限 8 是因为 16 路实测已经回落，再高只是抢 GIL 调度。
+_MAX_WORKERS_CAP = 8
+
+# 并行解码前能攒的字节上限。一页扫描件动辄几十张上 MB 的大图，攒到底容易把内存吃穿，
+# 越过预算的部分改回堆一张解一张。
+_MAX_COLLECT_BYTES = 48 * 1024 * 1024
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff", ".gif"}
 
@@ -106,6 +116,20 @@ def _formats() -> list:
 
 def is_available() -> bool:
     return _zxing() is not None
+
+
+def worker_count(task_count: int, concurrent_hint: int = 8) -> int:
+    """单个 Python 进程该开几路解码。
+
+    宿主的文件级并发池（maxConcurrentLocal）会同时拉起好几个 Python 进程，核是被分掉的；
+    单进程再用满就是超订，上下文切换反而变慢。所以按「核数 / 同时跑的文件数」折算，
+    再用上限和任务数封顶。
+    """
+    if task_count <= 1:
+        return 1
+    cpu = os.cpu_count() or 1
+    per_process = max(1, cpu // max(1, int(concurrent_hint or 8)))
+    return max(1, min(per_process, _MAX_WORKERS_CAP, task_count))
 
 
 def _to_gray(img):
@@ -236,6 +260,72 @@ def scan_image_file(path: str) -> ScanResult:
     return ScanResult(hits=hits, text_chars=0, media_count=1, page_count=1)
 
 
+def _scan_one_safe(path: str) -> ScanResult:
+    """单张图出错只算这张图没结果，不能拖垮整批。"""
+    try:
+        return scan_image_file(path)
+    except Exception:
+        return ScanResult()
+
+
+def scan_image_files(paths, workers: Optional[int] = None, concurrent_hint: int = 8) -> list:
+    """批量扫图，返回与 paths 等长同序的 ScanResult 列表。"""
+    items = list(paths or [])
+    if not items:
+        return []
+    if workers is None:
+        workers = worker_count(len(items), concurrent_hint)
+    workers = max(1, min(int(workers or 1), len(items)))
+    # 单张就串行：开线程池的固定开销比解一张图还大
+    if workers <= 1:
+        return [_scan_one_safe(path) for path in items]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # map 按入参顺序返回，结果不随调度顺序漂移
+        return list(pool.map(_scan_one_safe, items))
+
+
+def _decode_bytes_item(item):
+    return decode_bytes(item[1])
+
+
+def _decode_array_item(item):
+    return decode_array(item[1])
+
+
+def _decode_payloads(payloads: list, workers: int) -> list:
+    """[(source_label, bytes)] → 按入参顺序展开的 hits。"""
+    if not payloads:
+        return []
+    if workers <= 1:
+        groups = [decode_bytes(payload) for _label, payload in payloads]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            groups = list(pool.map(_decode_bytes_item, payloads))
+    hits: list = []
+    for (label, _payload), group in zip(payloads, groups):
+        for hit in group:
+            hit.source = label
+            hits.append(hit)
+    return hits
+
+
+def _decode_arrays(arrays: list, workers: int) -> list:
+    """[(source_label, ndarray)] → 按入参顺序展开的 hits。"""
+    if not arrays:
+        return []
+    if workers <= 1:
+        groups = [decode_array(array) for _label, array in arrays]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            groups = list(pool.map(_decode_array_item, arrays))
+    hits: list = []
+    for (label, _array), group in zip(arrays, groups):
+        for hit in group:
+            hit.source = label
+            hits.append(hit)
+    return hits
+
+
 def _page_pixmap_array(page):
     """整页渲染成灰度/三通道数组，供矢量绘制码兜底识别。"""
     if np is None:
@@ -250,8 +340,19 @@ def _page_pixmap_array(page):
         return None
 
 
-def scan_pdf(path: str, max_pages: Optional[int] = None) -> ScanResult:
-    """扫 PDF：优先解内嵌位图，小文档再整页渲染兜底（矢量码只能靠渲染拿到像素）。"""
+def scan_pdf(
+    path: str,
+    max_pages: Optional[int] = None,
+    metadata_only: bool = False,
+    workers: Optional[int] = None,
+    concurrent_hint: int = 8,
+) -> ScanResult:
+    """扫 PDF：优先解内嵌位图，小文档再整页渲染兜底（矢量码只能靠渲染拿到像素）。
+
+    PyMuPDF 的 Document 不是线程安全的，取字节和渲染都留在主线程，只把纯内存解码
+    丢进线程池。metadata_only=True 只数规模（正文长度、页数、媒体数），不解码也不
+    渲染：给「要不要走短路」的预判断用，代价接近零。
+    """
     try:
         import fitz
     except Exception:
@@ -261,7 +362,7 @@ def scan_pdf(path: str, max_pages: Optional[int] = None) -> ScanResult:
     except Exception:
         return ScanResult()
 
-    hits: list[Hit] = []
+    hits: list = []
     text_chars = 0
     media_count = 0
     page_count = doc.page_count
@@ -278,10 +379,22 @@ def scan_pdf(path: str, max_pages: Optional[int] = None) -> ScanResult:
                 # xref<=0 是 inline image，PyMuPDF 不暴露原始字节
                 if xref > 0 and xref not in seen:
                     seen.add(xref)
-                    xrefs.append(xref)
-            media_count += len(xrefs)
+                    media_count += 1
+                    if not metadata_only:
+                        xrefs.append(xref)
             pages.append((index, page, xrefs))
 
+        if metadata_only:
+            return ScanResult(
+                hits=[], text_chars=text_chars, media_count=media_count, page_count=page_count
+            )
+
+        # 第一段：主线程串行取字节，攒到字节预算为止；预算之后改回堆一张解一张，
+        # 避免一页几十张扫描大图把内存撑爆
+        payloads: list[tuple[str, bytes]] = []
+        overflow_hits: list = []
+        collected = 0
+        overflow = False
         for index, _page, xrefs in pages:
             page_label = f"第 {index + 1} 页"
             for xref in xrefs:
@@ -289,16 +402,33 @@ def scan_pdf(path: str, max_pages: Optional[int] = None) -> ScanResult:
                     payload = doc.extract_image(xref).get("image") or b""
                 except Exception:
                     continue
-                for hit in decode_bytes(payload):
-                    hit.source = page_label
-                    hits.append(hit)
+                if not payload:
+                    continue
+                if overflow or collected + len(payload) > _MAX_COLLECT_BYTES:
+                    overflow = True
+                    for hit in decode_bytes(payload):
+                        hit.source = page_label
+                        overflow_hits.append(hit)
+                    continue
+                collected += len(payload)
+                payloads.append((page_label, payload))
 
+        # 第二段：此时手里只有 bytes，没有 PyMuPDF 对象，可以安全并行
+        pooled = workers if workers is not None else worker_count(len(payloads), concurrent_hint)
+        hits.extend(_decode_payloads(payloads, pooled))
+        hits.extend(overflow_hits)
+
+        # 第三段：整页渲染必须在主线程完成，然后并行解码；只有小文档才付这个代价
         if page_count <= _RENDER_MAX_PAGES and media_count <= _RENDER_MAX_MEDIA:
+            rendered: list[tuple[str, object]] = []
             for index, page, _xrefs in pages:
-                page_label = f"第 {index + 1} 页"
-                for hit in decode_array(_page_pixmap_array(page)):
-                    hit.source = page_label
-                    hits.append(hit)
+                array = _page_pixmap_array(page)
+                if array is not None:
+                    rendered.append((f"第 {index + 1} 页", array))
+            render_workers = (
+                workers if workers is not None else worker_count(len(rendered), concurrent_hint)
+            )
+            hits.extend(_decode_arrays(rendered, render_workers))
     finally:
         try:
             doc.close()
@@ -330,35 +460,69 @@ def _xml_text_chars(raw: bytes) -> int:
     return len(re.sub(r"\s+", "", _TAG_RE.sub("", text)))
 
 
-def scan_office(path: str, ext: str) -> ScanResult:
-    """把 OOXML 当 zip 读，只解 media 目录下的位图，正文长度按 XML 粗估。"""
+def scan_office(
+    path: str,
+    ext: str,
+    metadata_only: bool = False,
+    workers: Optional[int] = None,
+    concurrent_hint: int = 8,
+) -> ScanResult:
+    """把 OOXML 当 zip 读，只解 media 目录下的位图，正文长度按 XML 粗估。
+
+    zipfile 的读接口不是线程安全的，所以读字节全在主线程，只把解码并行。
+    metadata_only=True 时只数媒体与正文，不读图也不解码。
+    """
     suffix = (ext or Path(path).suffix).lower().lstrip(".")
     prefix = _OFFICE_MEDIA_PREFIX.get(suffix)
     if not prefix:
         return ScanResult()
 
-    hits: list[Hit] = []
+    hits: list = []
     media_count = 0
     text_chars = 0
     try:
         with zipfile.ZipFile(path) as archive:
+            payloads: list[tuple[str, bytes]] = []
+            overflow_hits: list = []
+            collected = 0
+            overflow = False
             for member in archive.namelist():
-                if member.startswith(prefix) and not member.endswith("/") and _is_image_member(member):
-                    media_count += 1
-                    try:
-                        payload = archive.read(member)
-                    except Exception:
-                        continue
+                if not (
+                    member.startswith(prefix)
+                    and not member.endswith("/")
+                    and _is_image_member(member)
+                ):
+                    continue
+                media_count += 1
+                if metadata_only:
+                    continue
+                try:
+                    payload = archive.read(member)
+                except Exception:
+                    continue
+                label = member.rsplit("/", 1)[-1]
+                if overflow or collected + len(payload) > _MAX_COLLECT_BYTES:
+                    overflow = True
                     for hit in decode_bytes(payload):
-                        hit.source = member.rsplit("/", 1)[-1]
-                        hits.append(hit)
+                        hit.source = label
+                        overflow_hits.append(hit)
+                    continue
+                collected += len(payload)
+                payloads.append((label, payload))
 
+            # 正文长度要读 XML，量与解码无关，保持串行
             for member in archive.namelist():
                 if _office_text_member(suffix, member):
                     try:
                         text_chars += _xml_text_chars(archive.read(member))
                     except Exception:
                         continue
+
+            if not metadata_only:
+                pooled = (
+                    workers if workers is not None else worker_count(len(payloads), concurrent_hint)
+                )
+                hits = _decode_payloads(payloads, pooled) + overflow_hits
     except (zipfile.BadZipFile, OSError):
         return ScanResult()
 
