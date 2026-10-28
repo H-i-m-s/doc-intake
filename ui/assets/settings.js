@@ -93,6 +93,11 @@ const FIELDS = {
     hint: "提取结果里的图片 / 视频 / 音频是否一并落到本地。",
     type: "boolean",
   },
+  barcodeScan: {
+    title: "解析媒体中的二维码与条码",
+    hint: "提取结果里出现二维码/条码时，把内容标注在该媒体下方；需要 zxing-cpp，缺库时只提示不报错。",
+    type: "boolean",
+  },
   saveJson: {
     title: "默认保存结构化 JSON",
     hint: "除了 Markdown 之外，同时落一份结构化 .json。",
@@ -226,6 +231,7 @@ const BASIC_KEYS = [
   "paddleTokens",
   "defaultLanguage",
   "includeMedia",
+  "barcodeScan",
   "saveJson",
   "autoSave",
   "savePath",

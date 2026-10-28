@@ -6,7 +6,7 @@
   "entry": "index.js",
   "icon": "assets/icon.png",
   "minAppVersion": "0.978.0",
-  "description": "文档/图片内容提取。PDF（MinerU/PaddleOCR/本地）、图片 OCR、Office（DOC/DOCX/PPT/PPTX/XLS/XLSX/XLSM/HTML）转结构化 Markdown，含公式转 LaTeX、EMF 转 PNG、媒体提取。",
+  "description": "文档/图片内容提取。PDF（MinerU/PaddleOCR/本地）、图片 OCR、Office（DOC/DOCX/PPT/PPTX/XLS/XLSX/XLSM/HTML）转结构化 Markdown，含公式转 LaTeX、EMF 转 PNG、媒体提取。也可解析二维码与条码",
   "capabilities": [
     "app/process.spawn",
     "app/tools.expose-to-model",
@@ -201,6 +201,12 @@
           "includeMedia": {
             "type": "boolean",
             "title": "默认提取媒体（图片/视频/音频）",
+            "default": true
+          },
+          "barcodeScan": {
+            "type": "boolean",
+            "title": "解析媒体中的二维码与条码",
+            "description": "提取结果里出现二维码/条码时，把内容标注在该媒体下方；未安装 zxing-cpp 时自动跳过",
             "default": true
           },
           "mineruFlashMaxMB": {

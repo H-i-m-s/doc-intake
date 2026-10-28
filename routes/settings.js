@@ -73,6 +73,7 @@ const SPEC = {
   maxRemoteImagesPerHtml: { type: "number", default: 100 },
   defaultLanguage: { type: "string", default: "zh" },
   includeMedia: { type: "boolean", default: true },
+  barcodeScan: { type: "boolean", default: true },
   mineruFlashMaxMB: { type: "number", default: 10 },
   mineruFlashMaxPages: { type: "number", default: 20 },
   mineruPrecisionMaxMB: { type: "number", default: 200 },
@@ -145,6 +146,15 @@ const DEP_CATALOG = [
     purpose: "HTML → Markdown 转换；缺失则 HTML 解析不可用",
     level: "optional",
     pip: "html-to-markdown>=0.5.0",
+  },
+  {
+    id: "zxing-cpp",
+    module: "zxingcpp",
+    dists: ["zxing-cpp"],
+    name: "zxing-cpp",
+    purpose: "解析图片与文档中的二维码、Data Matrix 与一维条码（需 Python 3.10+）",
+    level: "optional",
+    pip: "zxing-cpp>=3.1.1",
   },
   {
     id: "pywin32",

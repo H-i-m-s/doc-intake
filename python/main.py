@@ -22,6 +22,7 @@ from extractors._utils import markdown_media_path
 from logger import configure_logging, get_logger, log
 from pdf_splitter import PdfMemoryChunk, iter_pdf_memory_chunks, pdf_page_count
 from auth_ledger import drain as _drain_auth_failures
+import barcode_scan
 
 
 @contextmanager
@@ -122,6 +123,89 @@ def determine_output_dir(args, settings) -> Optional[str]:
         return settings.get("savePath") or default_save_path()
 
     return None
+
+
+# 「只有码、没有正文」的判定门槛。全都往保守里取：宁可多走一次正常提取，
+# 也不要把一份真文档误判成一张二维码，让用户拿不到正文。
+# ratio 是码的四角点面积占整图的比例，实测分布：文档页里嵌的码 0.002~0.081，
+# 扫描页中间放一个大码 0.139~0.337，码几乎占满画面 0.62~0.96。取 0.30 是唯一能把
+# 前两档排掉、又不漏掉「整页就一个码」的分界。
+_BARCODE_ONLY_MAX_TEXT_CHARS = 20
+_BARCODE_ONLY_MAX_PAGES = 3
+_BARCODE_ONLY_MAX_MEDIA = 3
+_BARCODE_ONLY_MIN_RATIO = 0.30
+
+
+def _scan_source_for_barcodes(source: str, file_type: str, max_pages: Optional[int] = None):
+    """按文件类型挑一个扫描入口；不支持的格式返回 None（等于「没结论」）。"""
+    try:
+        if file_type == "pdf":
+            return barcode_scan.scan_pdf(source, max_pages=max_pages)
+        if file_type == "image":
+            return barcode_scan.scan_image_file(source)
+        if file_type in ("docx", "pptx", "xlsx", "xlsm"):
+            return barcode_scan.scan_office(source, Path(source).suffix)
+    except Exception:
+        return None
+    return None
+
+
+def _barcode_only_markdown(codes: list[dict]) -> str:
+    lines = [
+        "# 仅含二维码/条码（未保存到本地）",
+        "",
+        "该文件里没有可提取的正文，内容只有码，未保存到本地。",
+        "",
+    ]
+    for code in codes:
+        label = code.get("format_label") or "条码"
+        if not code.get("text"):
+            lines.append(f"- {label}：无法解码（{code.get('error') or '未知错误'}）")
+            continue
+        body = barcode_scan.code_lines(code["text"])
+        if len(body) == 1:
+            lines.append(f"- {label}：{body[0]}")
+        else:
+            lines.append(f"- {label}：")
+            lines.extend(body)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _barcode_only_result(args, settings: dict, file_type: str, output_dir: Optional[str]):
+    """文件只有码、没有正文时直接给结果，不进后端链。返回 None 表示不短路。
+
+    为什么要这条短路：一页纯二维码的扫描件送进云端 OCR，花掉一次调用后拿回来的只有
+    「图片占位 + 空正文」，而码内容本地几十毫秒就能解出来。
+    但只在完全没要求落盘时走：用户要文件时，媒体必须由正常提取流程落下来。
+    """
+    if output_dir is not None:
+        return None
+    if not settings.get("barcodeScan", True):
+        return None
+    if not barcode_scan.is_available():
+        return None
+
+    scan = _scan_source_for_barcodes(args.source, file_type, _BARCODE_ONLY_MAX_PAGES)
+    if scan is None:
+        return None
+    if scan.text_chars > _BARCODE_ONLY_MAX_TEXT_CHARS:
+        return None
+    if scan.page_count > _BARCODE_ONLY_MAX_PAGES or scan.media_count > _BARCODE_ONLY_MAX_MEDIA:
+        return None
+    if not any(hit.readable and hit.ratio >= _BARCODE_ONLY_MIN_RATIO for hit in scan.hits):
+        return None
+
+    codes = barcode_scan.dedupe(scan.hits)
+    result = ExtractionResult()
+    result.name = args.source
+    result.markdown = _barcode_only_markdown(codes)
+    result.metadata = {
+        "format": file_type,
+        "reader": "barcode-only",
+        "barcodeOnlyDocument": True,
+        "barcodeCodes": codes,
+    }
+    return format_result(result)
 
 
 # PDF 后端降级链留空时的自动档：先云端 MinerU，再 PaddleOCR，最后本地。
@@ -502,6 +586,10 @@ def format_result(result: ExtractionResult):
         "usedBackendInChain": meta.get("usedBackendInChain"),
         "authFailures": auth_failures,
     }
+    if meta.get("barcodeCodes"):
+        compact_meta["barcodeCodes"] = meta["barcodeCodes"]
+    if meta.get("barcodeOnlyDocument"):
+        compact_meta["barcodeOnlyDocument"] = True
     if result.md_path:
         compact_meta["mdPath"] = result.md_path
     if result.images_dir:
@@ -626,6 +714,11 @@ def _run(args) -> dict:
 
         return format_result(result)
 
+    # 只有码、没正文且不需要落盘：不碰 extractor、不调云端，直接给码内容。
+    barcode_only = _barcode_only_result(args, settings, file_type, output_dir)
+    if barcode_only is not None:
+        return barcode_only
+
     backend_chain = select_backend_chain(file_type, backend, settings)
     include_images = settings.get("includeMedia", settings.get("includeImages", True))
 
@@ -668,7 +761,7 @@ def _finalize_single_result(
     result.name = args.source
     if output_dir and result.markdown:
         try:
-            save_result(result, args.source, output_dir, settings.get("saveJson", False))
+            save_result(result, args.source, output_dir, settings.get("saveJson", False), settings)
         except Exception as exc:
             result.warnings.append(f"保存失败: {exc}")
             result.metadata["saveStatus"] = "failed"
@@ -786,7 +879,89 @@ def _extract_one_memory_chunk(
     return result
 
 
-def save_result(result: ExtractionResult, source: str, output_dir: str, save_json: bool = False):
+_BARCODE_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff", ".gif"}
+_BARCODE_MAX_IMAGES = 200
+# 注释是额外挂在正文上的东西，不能把返回体撞大；超了按媒体顺序截断。
+_BARCODE_ANNOTATION_BUDGET = 8 * 1024
+
+
+def _fit_annotation_budget(markdown: str, per_media: dict, budget: int) -> dict:
+    """按媒体顺序挑出能在预算内注完的那一批。
+
+    逐张试算而不是预估字节数：预估算法得和 annotate_markdown 的内部分支平行演进，
+    一旦对不上就会算出错误的截断点，而这种截断一年也碰不到一次。
+    """
+    base_bytes = len(markdown.encode("utf-8"))
+    allowed: dict = {}
+    used = 0
+    for name, hits in per_media.items():
+        trial = barcode_scan.annotate_markdown(markdown, {name: hits}, set())
+        cost = len(trial.encode("utf-8")) - base_bytes
+        if used + cost > budget:
+            break
+        used += cost
+        allowed[name] = hits
+    return allowed
+
+
+def _inject_barcode_annotations(result: ExtractionResult, markdown: str, settings: Optional[dict]) -> str:
+    """把已落盘媒体里的码内容注到 markdown 对应图片下面。
+
+    必须在媒体路径重写之后调：那里才把云端的 `images/xxx.png` 改成
+    `{stem}_media/xxx.png`，注释定位靠 basename，两边对不上就注不进去。
+    """
+    if not markdown:
+        return markdown
+    if not (settings or {}).get("barcodeScan", True):
+        return markdown
+
+    images = [
+        path for path in (result.images or [])
+        if Path(path).suffix.lower() in _BARCODE_MEDIA_SUFFIXES
+    ]
+    if not images:
+        return markdown
+
+    if not barcode_scan.is_available():
+        result.warnings.append("未安装 zxing-cpp，二维码解析已跳过")
+        return markdown
+
+    try:
+        return _annotate_media(result, markdown, images)
+    except Exception as exc:
+        # 标注是附加信息，不能因为它让整份结果保存失败
+        result.warnings.append(f"二维码解析失败: {exc}")
+        return markdown
+
+
+def _annotate_media(result: ExtractionResult, markdown: str, images: list[str]) -> str:
+    batch = images[:_BARCODE_MAX_IMAGES]
+    skipped = len(images) - len(batch)
+    if skipped > 0:
+        result.warnings.append(f"还有 {skipped} 张图未扫描条码")
+
+    per_media: dict[str, list] = {}
+    for path in batch:
+        hits = barcode_scan.scan_image_file(path).hits
+        if hits:
+            per_media[Path(path).name] = hits
+    if not per_media:
+        return markdown
+
+    annotated = barcode_scan.annotate_markdown(markdown, per_media, set())
+    if len(annotated.encode("utf-8")) - len(markdown.encode("utf-8")) > _BARCODE_ANNOTATION_BUDGET:
+        allowed = _fit_annotation_budget(markdown, per_media, _BARCODE_ANNOTATION_BUDGET)
+        annotated = barcode_scan.annotate_markdown(markdown, allowed, set())
+        result.warnings.append("条码注释超过 8 KiB，已按媒体顺序截断")
+
+    result.metadata = result.metadata or {}
+    result.metadata["barcodeCodes"] = barcode_scan.dedupe(
+        [hit for hits in per_media.values() for hit in hits]
+    )
+    return annotated
+
+
+def save_result(result: ExtractionResult, source: str, output_dir: str, save_json: bool = False, settings: Optional[dict] = None):
     """保存提取结果到文件"""
     logger = get_logger("file_saver")
 
@@ -841,6 +1016,7 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
     try:
         # base64 图片最后抹除，防止一坨 base64 进 markdown 让人看 / agent 渲染。
         final_markdown = _strip_data_url_images(final_markdown)
+        final_markdown = _inject_barcode_annotations(result, final_markdown, settings)
         md_bytes = final_markdown.encode("utf-8")
         # 运行时结果也必须使用保存后的 Markdown，避免 Agent 继续看到云端原始长文件名。
         result.markdown = final_markdown
@@ -863,6 +1039,7 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                     "usedBackends": meta.get("usedBackends"),
                     "warnings": result.warnings,
                     "usedBackendInChain": meta.get("usedBackendInChain"),
+                    "barcodeCodes": (result.metadata or {}).get("barcodeCodes"),
                 },
             }
             json_bytes = json.dumps(json_data, ensure_ascii=False, indent=2).encode("utf-8")

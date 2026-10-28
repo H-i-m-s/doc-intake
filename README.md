@@ -585,6 +585,23 @@ outputDir/
 - 视频：`<video controls src="文件名_media/video_001.mp4" title="alt"></video>`
 - 音频：`<audio controls src="文件名_media/audio_001.flac" title="alt"></audio>`
 
+### 二维码与条码解析
+
+设置项「解析媒体中的二维码与条码」（`barcodeScan`）默认开启。开启后，落盘时会把媒体里的码内容注到引用该媒体的那一行下面，正文结构不动：
+
+```markdown
+![image_001](report_media/image_001.png)
+> 二维码：https://example.com/a1b2
+```
+
+支持的码型：QR / Micro QR / rMQR / Data Matrix，以及 Code 128、Code 39、Code 93、EAN-13/8、UPC-A/E、ITF、Codabar、DataBar。一维码统一写成「条码 Code 128：内容」。
+
+多个不同内容用有序列表，同一内容在文档里第二次出现只写「同上」；内容含换行、反引号或超过 120 字符时改写成 ` ```text ` 围栏块，避免外部内容破坏 Markdown 结构。解不出来的码写作 `> 二维码：无法解码（ChecksumError）`——这时只有「存在但读不出」的信号，不会把解错的乱码当内容。
+
+依赖 `zxing-cpp`（需要 Python 3.10+ 才有预编译 wheel），在设置页「环境依赖管理」里安装。没装时整段跳过，只加一条 warning「未安装 zxing-cpp，二维码解析已跳过」，提取本身照常完成。
+
+免落盘短路：不传 `outputDir`、没开 `autoSave`、不是 `summaryOnly` 时，如果文件本身只有码没有正文（正文 ≤20 字符、页数 ≤3 且媒体 ≤3、至少一个可读码且占幅 ≥30%），会跳过整个后端链直接返回码内容，`metadata.barcodeOnlyDocument` 为 `true`，本地不落任何文件。30% 这个界限取自实测分布：文档页里嵌的码占 0.002～0.081，扫描页中间放一个大码占 0.139～0.337，码几乎占满画面 0.62～0.96。
+
 ---
 
 ## 使用示例

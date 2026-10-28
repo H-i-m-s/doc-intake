@@ -241,6 +241,9 @@ function toFileOutput(item) {
     usedBackendInChain: metadata.usedBackendInChain ?? null,
     usedBackend: metadata.usedBackend ?? null,
     usedBackends: metadata.usedBackends ?? [],
+    // 码内容属于提取结果，不是路径；空数组表示没扫到或不适用。
+    barcodeCodes: Array.isArray(metadata.barcodeCodes) ? metadata.barcodeCodes : [],
+    barcodeOnlyDocument: metadata.barcodeOnlyDocument === true,
     markdown: result.markdown ?? "",
   };
 }
@@ -282,6 +285,12 @@ function buildFileMetadata(file, settings = {}) {
     metadata.mediaCount = file.unresolvedMediaCount;
   }
   if (file.jsonPath) metadata.jsonPath = file.jsonPath;
+  if (Array.isArray(file.barcodeCodes) && file.barcodeCodes.length > 0) {
+    metadata.barcodeCodes = file.barcodeCodes;
+  }
+  if (file.barcodeOnlyDocument === true) {
+    metadata.barcodeOnlyDocument = true;
+  }
   return metadata;
 }
 

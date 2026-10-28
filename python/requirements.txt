@@ -15,6 +15,11 @@ mineru-open-sdk>=0.2.0
 # HTML → Markdown 转换（不装则 HTML 解析返回错误提示）
 html-to-markdown>=0.5.0
 
+# 二维码 / 条码解析（解析图片与文档里的 QR、Data Matrix 与常用一维码；
+# 不装则跳过码内容抽取，其余功能不受影响）。
+# 需要 Python 3.10+ 才有预编译 wheel，低了只能本地编译 C++ 扩展。
+zxing-cpp>=3.1.1
+
 # MathType 公式解析与渲染用的是仓库自带的 python/mathtype/，不需要第三方包
 
 # ===== Windows 专用（旧版 Office 格式需要）=====
