@@ -452,10 +452,13 @@ body { padding: 0 12px; }
 }
 .gs-chain-row:hover { background: color-mix(in srgb, var(--gs-ink) 8%, transparent); }
 /* 拖拽中：卡片从列表里浮起来、跟手走。质感靠影子和实底，不做形变
-   （不加 scale、不旋转、不用彩色）；transform 在这里不要过渡，否则跟手会拖一下 */
+   （不加 scale、不旋转、不用彩色）；transform 在这里不要过渡，否则跟手会拖一下
+   底色用页面底而不是卡片色：卡片色在主题里带通透感，拖起来会看到底下被让位的行穿过来 */
 .gs-chain-row--dragging {
-  background: var(--gs-surface);
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--gs-ink) 22%, transparent);
+  background: var(--gs-bg);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--gs-ink) 9%, transparent),
+    0 10px 24px color-mix(in srgb, var(--gs-ink) 26%, transparent);
   cursor: grabbing;
   will-change: transform;
   transition: background 0.15s ease;
