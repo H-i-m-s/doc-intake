@@ -1,7 +1,7 @@
 ---
 name: doc-intake
 description: >
-  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格或图片内容时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。注意：本 skill 只负责提取，Token 有效性检测已移出工具（在 App 设置页里做）。
+  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格、图片内容或图片/文档里的二维码、条形码（QR、Data Matrix、一维条码）时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。注意：本 skill 只负责提取，Token 有效性检测已移出工具（在 App 设置页里做）。
 compatibility: "需要 Python 环境（用户需在 App 设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
 metadata:
   default-enabled: true
@@ -18,6 +18,7 @@ metadata:
 - 用户发送或指定 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML、HTM 或图片文件。
 - 用户要求读取、查看、解析、提取、识别、OCR、转 Markdown、总结或分析文件内容。
 - 用户询问文档中的文字、表格、公式、图片、视频、音频或链接。
+- 用户询问图片或文档里的二维码、条码内容（这个码是什么、二维码指向哪个链接、扫一下这张图）。
 - 用户要求批量处理多个文件或一个文件夹。
 
 ### 验证 Token 不走工具
@@ -75,7 +76,9 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - 返回 `mediaDir` 或媒体列表时，用户的问题涉及图片、公式预览、视频或音频，就继续读取相关媒体；不要只看文字摘要。
 - 返回 `contentTruncated: true`、`contentOmitted: true` 或“中间内容已省略”时，只能基于实际返回部分回答，并明确说明内容不完整；需要完整分析时先读取 `mdPath`，没有路径则请求用户允许保存或缩小范围。
 - 返回里出现 `barcodeCodes` 时，如果用户问的就是图片/码的内容，直接用它回答，不要为了“再看一眼”重新调一次工具。
+- `barcodeCodes` 为空表示没扫到码，或者设置里关了「解析媒体中的二维码与条码」；不要据此断言文件里没有二维码。
 - 返回里有 `barcodeOnlyDocument: true` 时，说明这份文件只有码、没有正文，且没有保存到本地；只报码内容，不要说读到了正文，也不要声称已经落盘。
+- Markdown 里形如 `> 二维码：……`、`> 条码 Code 128：……` 的引用块是工具加的解析注记，不是文档原文；引用时不要当正文。
 - 批量结果中逐项查看成功/失败状态和 `warnings`，不要把部分成功说成全部成功。
 - 看到后端降级警告时，在回答中说明实际使用的后端；不要声称使用了用户未要求或未成功的后端。
 - 看到媒体引导文字时，按引导读取媒体后再回答涉及媒体的问题。
@@ -101,5 +104,6 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 ## 7. 禁止行为
 
 - 不要绕过 `doc_intake` 自行解析用户文档或图片二进制内容。
+- 不要自己想办法解码二维码（换 OCR、让用户手抄、凭图猜测）；`doc_intake` 已经解过了，`barcodeCodes` 为空就是没解出来。
 - 不要为了“看起来完整”补写工具没有返回的内容。
 - 不要在未读取保存文件或媒体文件前声称已经分析了它们。
