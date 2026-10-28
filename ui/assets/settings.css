@@ -446,12 +446,21 @@ body { padding: 0 12px; }
   padding: 5px 10px;
   border-radius: var(--gs-radius-sm);
   background: color-mix(in srgb, var(--gs-ink) 4%, transparent);
-  transition: background 0.15s ease, opacity 0.15s ease;
+  /* transform 带一点点回弹：让位的行不是瞬间跳过去，是滑过去再稳稳停住 */
+  transition: background 0.15s ease, transform 180ms cubic-bezier(0.34, 1.42, 0.64, 1);
   user-select: none;
 }
 .gs-chain-row:hover { background: color-mix(in srgb, var(--gs-ink) 6%, transparent); }
-/* 拖拽中：整行半透明，落点靠插入线说 */
-.gs-chain-row--dragging { opacity: 0.45; }
+/* 拖拽中：整行从列表里浮起来、跟手走。质感靠影子和底色，不做形变
+   （不加 scale、不旋转、不用彩色）；transform 在这里不要过渡，否则跟手会拖一下 */
+.gs-chain-row--dragging {
+  background: color-mix(in srgb, var(--gs-ink) 10%, transparent);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--gs-ink) 18%, transparent);
+  border-radius: var(--gs-radius-sm);
+  cursor: grabbing;
+  will-change: transform;
+  transition: background 0.15s ease;
+}
 
 /* 拖拽手柄：命中区比图标大一矩，光标给出可拖的暗示。
    touch-action: none 是必须的，否则指针拖到一半会被滚动手势抢走。 */
@@ -492,20 +501,6 @@ body { padding: 0 12px; }
 .gs-chain-note { flex: 0 0 auto; font-size: 12px; color: var(--gs-muted); }
 /* 地址没填：同一句话说重一点，但比普通备注更弱（只是提醒，不是错） */
 .gs-chain-note[data-kind="skip"] { color: color-mix(in srgb, var(--gs-muted) 72%, transparent); }
-
-/* 插入线：2px，取墨色混稀而不是语义色，不抢这一页的配色纪律 */
-.gs-chain-row--drop-before::before,
-.gs-chain-row--drop-after::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  height: 2px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--gs-ink) 55%, transparent);
-}
-.gs-chain-row--drop-before::before { top: -2px; }
-.gs-chain-row--drop-after::after { bottom: -2px; }
 
 .gs-chain-empty { font-size: 12px; line-height: 1.5; color: var(--gs-muted); }
 

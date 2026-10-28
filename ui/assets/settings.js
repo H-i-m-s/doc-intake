@@ -6,6 +6,7 @@
 import { hana } from "./sdk.js";
 import { createUpdateApi } from "./update-api.mjs";
 import { installUpdateNotice } from "./update-notice.mjs";
+import { chainShiftOffsets, chainDragTo } from "./chain-shift.mjs";
 
 const API = {
   config: "/config",
@@ -860,6 +861,8 @@ function buildControl(key) {
 const CHAIN_SEP = /[;,>\n]+/;
 // 位移超过这个像素数才真进拖拽态：点一下手柄或者手指轻微抖动都不应该挪行。
 const CHAIN_DRAG_SLOP = 4;
+// 行间距读不出来时的兜底值：跟 .gs-chain-list 的 gap 一致。
+const CHAIN_ROW_GAP = 2;
 // 同一时刻只允许一行在拖，状态放模块级：拖拽被多个入口清理时不会互相打架。
 let chainDrag = null;
 // 每个链控件一份「地址备注刷新」函数：地址字段一变就调它们重算备注。
@@ -904,41 +907,67 @@ function chainGripIcon() {
 
 // 指针落在哪一行之前：按行中线判，被拖的那行不参与比较。
 // 返回 null 表示落在列表末尾。
+// 让位中的行被 translateY 顶开过，rect 跟着搬走了；减掉自己顶出去的那段才是它没被动过的中线，
+// 否则落点判定会被自己的动画牵着走：越拖越偏，回头还得多拖一截才换位。
 function chainDropRef(list, row, clientY) {
+  const shifts = chainDrag?.shifts;
   for (const el of list.children) {
     if (el === row) continue;
     const rect = el.getBoundingClientRect();
-    if (clientY < rect.top + rect.height / 2) return el;
+    const top = rect.top - (shifts?.get(el) || 0);
+    if (clientY < top + rect.height / 2) return el;
   }
   return null;
 }
 
-// 插入线画在落点那一行的上边；落点在末尾时改画在最后一行的下边。
-function chainPaintDrop(list, row, ref) {
+// 让位全落在 transform 上：布局一个像素不动，列表高度不变，别的行才有稳定的原位可让。
+// 落点没变就直接返回，指针一路划过去不会白写 style。
+function chainLetWay(drag, ref) {
+  const { list, row, pitch, shifts } = drag;
+  const kids = [...list.children];
+  const { from, to } = chainDragTo(kids, row, ref);
+  if (to === drag.to) return;
+  drag.to = to;
+  const offsets = chainShiftOffsets(from, to, kids.length);
+  kids.forEach((el, index) => {
+    if (el === row) return;
+    const offset = offsets[index] * pitch;
+    if (offset === 0) {
+      // 轮不到它让：没动过就别写 style，动过就退回原位
+      if (!shifts.has(el)) return;
+      el.style.transform = "";
+      shifts.delete(el);
+      return;
+    }
+    el.style.transform = `translateY(${offset}px)`;
+    shifts.set(el, offset);
+  });
+}
+
+// 行上的 inline transform / zIndex 一律清空：拖拽痕迹只活在这两个属性上。
+function chainClearRowStyles(list) {
   for (const el of list.children) {
-    el.classList.remove("gs-chain-row--drop-before", "gs-chain-row--drop-after");
+    el.style.transform = "";
+    el.style.zIndex = "";
   }
-  if (ref) {
-    ref.classList.add("gs-chain-row--drop-before");
-    return;
-  }
-  let last = null;
-  for (const el of list.children) if (el !== row) last = el;
-  if (last) last.classList.add("gs-chain-row--drop-after");
+}
+
+function chainReleaseHandle(handle, pointerId) {
+  try {
+    if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+  } catch { /* 捕获早就没了，忽略 */ }
 }
 
 // 拖拽状态的唯一出口：pointerup / pointercancel / 捕获丢失 / 列表被重写都走这里。
+// 过渡不关：让位过的行会自己滑回去，而不是啪一下弹回。
 function endChainDrag() {
   if (!chainDrag) return;
   const { row, handle, pointerId, list } = chainDrag;
   chainDrag = null;
   row.classList.remove("gs-chain-row--dragging");
-  for (const el of list.children) {
-    el.classList.remove("gs-chain-row--drop-before", "gs-chain-row--drop-after");
-  }
-  try {
-    if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
-  } catch { /* 捕获早就没了，忽略 */ }
+  chainClearRowStyles(list);
+  for (const el of list.children) el.style.transition = "";
+  chainReleaseHandle(handle, pointerId);
 }
 
 // 用 pointer 事件而不是 HTML5 draggable：Electron 里的默认拖影难看且不可控。
@@ -947,6 +976,9 @@ function wireChainDrag(row, handle, list) {
   handle.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     endChainDrag();
+    // 行高和行间距拖拽全程不变：按下时量一次存着，之后每帧都用这个数，不去碰 getComputedStyle
+    const height = row.getBoundingClientRect().height;
+    const gap = parseFloat(getComputedStyle(list).rowGap);
     chainDrag = {
       row,
       handle,
@@ -956,6 +988,12 @@ function wireChainDrag(row, handle, list) {
       startY: event.clientY,
       active: false,
       ref: null,
+      // 当前落点索引：跟上一帧一样就不用重算让位
+      to: -1,
+      // 行距 = 行高 + 行间距：让位时整行挪一格就是挪这么远
+      pitch: height + (Number.isFinite(gap) ? gap : CHAIN_ROW_GAP),
+      // 每行当前被顶出去的位移，让位中顺便用来还原它没被动过的中线
+      shifts: new Map(),
     };
     // 捕获指针：拖出窗口也还能收到 move / up
     try { handle.setPointerCapture(event.pointerId); } catch { /* 不支持就算了 */ }
@@ -970,9 +1008,13 @@ function wireChainDrag(row, handle, list) {
         && Math.abs(event.clientX - drag.startX) < CHAIN_DRAG_SLOP) return;
       drag.active = true;
       row.classList.add("gs-chain-row--dragging");
+      // 浮到列表上层，这是它能在别的行上面滑过去的原因
+      row.style.zIndex = "5";
     }
+    // 被拖行只做位移，原位置一动不动：列表高度不变，其他行的自然位置也不变
+    row.style.transform = `translateY(${event.clientY - drag.startY}px)`;
     drag.ref = chainDropRef(list, row, event.clientY);
-    chainPaintDrop(list, row, drag.ref);
+    chainLetWay(drag, drag.ref);
   });
 
   const finish = (event, commit) => {
@@ -980,12 +1022,29 @@ function wireChainDrag(row, handle, list) {
     if (!drag || drag.pointerId !== event.pointerId || drag.row !== row) return;
     const moved = drag.active;
     const ref = drag.ref;
-    endChainDrag();
-    if (!commit || !moved) return;
-    // 落点就在原位时不动 DOM，也就不会平白报一条「有未保存的改动」
+    // 没越过阈值，或者落点就是原位：不重排、不报改动，只收拾干净。
+    // 落点等于原位时也走这里：不触发 onDraftChange，不白造一条未保存改动。
     const stays = ref === null ? row === list.lastElementChild : row.nextElementSibling === ref;
-    if (stays) return;
+    if (!commit || !moved || stays) {
+      endChainDrag();
+      return;
+    }
+    // 松手重排，顺序有讲究：
+    // 1 先把过渡全关掉：等下清 transform 那一下不能再播一遍动画
+    const rows = [...list.children];
+    for (const el of rows) el.style.transition = "none";
+    // 2 真的把 DOM 换到新位置
     list.insertBefore(row, ref);
+    // 3 清掉所有 inline 痕迹（transition 先留着 none）
+    chainDrag = null;
+    row.classList.remove("gs-chain-row--dragging");
+    chainClearRowStyles(list);
+    // 4 强制一次 reflow：让浏览器先认下「这行已经在最终布局里」
+    void list.offsetHeight;
+    // 5 过渡恢复成空串。重排后每行的视觉位置跟它被 transform 顶到的位置是同一个，
+    //   所以清 transform 的时候没有可动的东西，画面不跳；先关再开，也不会多播一遍
+    for (const el of rows) el.style.transition = "";
+    chainReleaseHandle(drag.handle, drag.pointerId);
     onDraftChange();
   };
 
