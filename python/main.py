@@ -264,40 +264,45 @@ def _append_barcode_section(markdown: str, codes: list[dict]) -> str:
 
 
 def _barcode_only_result(args, settings: dict, file_type: str, output_dir: Optional[str]):
-    """文件只有码、没有正文时直接给结果，不进后端链。返回 None 表示不短路。
+    """文件只有码、没有正文时直接给结果，不进后端链。
+
+    返回值是 (短路结果, 已扫到的 codes)。短路结果非 None 时就是最终回复；codes 不管
+    短路与否都交出去，提取完成后可以复用到正文末尾。以前判定失败就直接丢掉扫描结果，
+    图片这类不走预判的类型等于白扫一次，码也拿不到。
 
     为什么要这条短路：一页纯二维码的扫描件送进云端 OCR，花掉一次调用后拿回来的只有
     「图片占位 + 空正文」，而码内容本地几十毫秒就能解出来。
     但只在完全没要求落盘时走：用户要文件时，媒体必须由正常提取流程落下来。
     """
     if output_dir is not None:
-        return None
+        return None, None
     if not settings.get("barcodeScan", True):
-        return None
+        return None, None
     if not barcode_scan.is_available():
-        return None
+        return None, None
 
     scan = _scan_source_for_barcodes(args.source, file_type, _BARCODE_ONLY_MAX_PAGES)
     if scan is None:
-        return None
+        return None, None
+    hits = scan.hits or []
+    codes = barcode_scan.dedupe(hits) if hits else None
     if scan.text_chars > _BARCODE_ONLY_MAX_TEXT_CHARS:
-        return None
+        return None, codes
     if scan.page_count > _BARCODE_ONLY_MAX_PAGES or scan.media_count > _BARCODE_ONLY_MAX_MEDIA:
-        return None
-    if not any(hit.readable and hit.ratio >= _BARCODE_ONLY_MIN_RATIO for hit in scan.hits):
-        return None
+        return None, codes
+    if not any(hit.readable and hit.ratio >= _BARCODE_ONLY_MIN_RATIO for hit in hits):
+        return None, codes
 
-    codes = barcode_scan.dedupe(scan.hits)
     result = ExtractionResult()
     result.name = args.source
-    result.markdown = _barcode_only_markdown(codes)
+    result.markdown = _barcode_only_markdown(codes or [])
     result.metadata = {
         "format": file_type,
         "reader": "barcode-only",
         "barcodeOnlyDocument": True,
-        "barcodeCodes": codes,
+        "barcodeCodes": codes or [],
     }
-    return format_result(result)
+    return format_result(result), codes
 
 
 # PDF 后端降级链留空时的自动档：先云端 MinerU，再 PaddleOCR，最后本地。
@@ -813,8 +818,10 @@ def _run(args) -> dict:
     )
 
     # 只有码、没正文且不需要落盘：不碰 extractor、不调云端，直接给码内容。
+    # 判定不短路时，那次扫描的结果照样接住，提取完补到正文末尾，不再重扫。
+    probe_codes = None
     if not barcode_over_threshold:
-        barcode_only = _barcode_only_result(args, settings, file_type, output_dir)
+        barcode_only, probe_codes = _barcode_only_result(args, settings, file_type, output_dir)
         if barcode_only is not None:
             return barcode_only
 
@@ -847,7 +854,7 @@ def _run(args) -> dict:
             remaining_chunks=remaining_chunks,
         )
 
-    prefetched_codes = _take_barcode_prefetch(barcode_future, barcode_pool)
+    prefetched_codes = _take_barcode_prefetch(barcode_future, barcode_pool) or probe_codes
     return _finalize_single_result(
         result, args, output_dir, settings, start_time, prefetched_codes
     )
