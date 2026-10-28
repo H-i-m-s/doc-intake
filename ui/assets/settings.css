@@ -451,14 +451,17 @@ body { padding: 0 12px; }
   cursor: grab;
 }
 .gs-chain-row:hover { background: color-mix(in srgb, var(--gs-ink) 8%, transparent); }
-/* 拖拽中：卡片从列表里浮起来、跟手走。质感靠影子和实底，不做形变
-   （不加 scale、不旋转、不用彩色）；transform 在这里不要过渡，否则跟手会拖一下
-   底色用页面底而不是卡片色：卡片色在主题里带通透感，拖起来会看到底下被让位的行穿过来 */
+/* 拖拽中：卡片从列表里浮起来、跟手走。不做形变（不加 scale、不旋转），
+   浮起来的分量全交给磨砂玻璃：底色留一点透光，后面叠一层背景模糊。
+   不透明度压到 86%：再低会看到底下被让位的行穿过来，再高就不是玻璃了。 */
 .gs-chain-row--dragging {
-  background: var(--gs-bg);
+  background: color-mix(in srgb, var(--gs-bg) 86%, transparent);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  /* 影子收窄压淡：原来 24px 的扩散读起来像发光，改成贴着卡片的落影 */
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--gs-ink) 9%, transparent),
-    0 10px 24px color-mix(in srgb, var(--gs-ink) 26%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--gs-ink) 7%, transparent),
+    0 4px 14px color-mix(in srgb, var(--gs-ink) 14%, transparent);
   cursor: grabbing;
   will-change: transform;
   transition: background 0.15s ease;
