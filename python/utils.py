@@ -1,6 +1,7 @@
 """工具函数：图片归一化"""
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -151,3 +152,41 @@ def normalize_images(
             pass
 
     return saved_paths
+
+
+# markdown 图片语法与 HTML img 的 src。三个分组分别是前导、路径、收尾，
+# 收尾用 [^)]* 包住可能的 "title"，避免带标题时匹配不到。
+_IMAGE_REF_PATTERNS = (
+    re.compile(r"(!\[[^\]]*\]\(\s*)([^)\s]+)([^)]*\))"),
+    re.compile(r'(<img\b[^>]*?\bsrc\s*=\s*")([^"]+)(")', re.IGNORECASE),
+    re.compile(r"(<img\b[^>]*?\bsrc\s*=\s*')([^']+)(')", re.IGNORECASE),
+)
+
+
+def align_image_refs(markdown: str, path_map: Dict[str, str]) -> str:
+    """把 markdown 里的图片引用对齐到 path_map 的键形态。
+
+    后端产物里的引用可能是 ./images/a.png、images\\a.png 或裸文件名，
+    而映射键统一是 images/<文件名>。形态不一致时主流程的路径重写会落空，
+    图片虽然落盘但引用断链。这里只改能按文件名对上映射的引用，
+    对不上的（外链、data URL、页内锚点）原样保留。
+    """
+    if not markdown or not path_map:
+        return markdown
+
+    by_name = {Path(str(key).replace("\\", "/")).name: key for key in path_map}
+
+    def fix(raw: str) -> str:
+        ref = raw.strip()
+        if not ref or ref in path_map:
+            return raw
+        if ref.startswith(("http://", "https://", "data:", "#", "//")):
+            return raw
+        key = by_name.get(Path(ref.replace("\\", "/")).name)
+        return key if key else raw
+
+    for pattern in _IMAGE_REF_PATTERNS:
+        markdown = pattern.sub(
+            lambda m: m.group(1) + fix(m.group(2)) + m.group(3), markdown
+        )
+    return markdown

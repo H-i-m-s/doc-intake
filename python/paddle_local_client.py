@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from extractors.base import ExtractionResult
 from logger import get_logger
-from utils import normalize_images
+from utils import align_image_refs, normalize_images
 
 _PROBE_TIMEOUT = 10
 # OCR 在本地 CPU 上跑一页要几秒，整份文档给足时间。
@@ -226,10 +226,12 @@ class PaddleLocalClient:
 
             # 与 paddle_client 一致：逐页文本用空行分隔，页内换行保持原样。
             markdown = "\n\n".join(text for text in page_texts if text)
-            result.markdown = markdown
             result.images, image_path_map = self._save_media(
                 media_entries, output_dir, include_images, display_name or source
             )
+            # 本地产线给的 markdown 引用可能是 images/x.png，而映射键是 imgs/x.png，
+            # 形态不一致时上游重写会落空，这里先按文件名对齐。
+            result.markdown = align_image_refs(markdown, image_path_map)
             result.metadata = {
                 "format": "document",
                 "reader": "paddleocr-local",

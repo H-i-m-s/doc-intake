@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from extractors.base import ExtractionResult
 from logger import get_logger
-from utils import normalize_images
+from utils import align_image_refs, normalize_images
 
 # 探测结果按 endpoint 缓存：同一进程里连续解析多个文件不该每次都打一遍 /v1/health。
 _PROTOCOL_CACHE: dict[str, str] = {}
@@ -253,10 +253,11 @@ class MinerULocalClient:
                 markdown, media_entries = self._run_legacy(data, name, language, page_range, work_dir)
 
             result = ExtractionResult()
-            result.markdown = markdown
             result.images, image_path_map = self._save_media(
                 media_entries, output_dir, include_images, display_name or source
             )
+            # 服务端产出的引用形态不固定，先对齐到影像映射的键，再交给主流程重写。
+            result.markdown = align_image_refs(markdown, image_path_map)
             result.metadata = {
                 "format": "pdf",
                 "reader": "mineru-local",
