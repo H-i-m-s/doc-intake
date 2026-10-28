@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "doc-intake",
   "name": "Doc Intake",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "entry": "index.js",
   "icon": "assets/icon.png",
   "minAppVersion": "0.978.0",
@@ -54,14 +54,20 @@
           "defaultBackend": {
             "type": "string",
             "title": "默认解析后端",
-            "enum": ["auto", "mineru", "paddleocr", "local"],
+            "enum": ["auto", "mineru", "paddleocr", "mineru-local", "paddleocr-local", "local"],
             "default": "auto"
           },
           "pdfBackendChain": {
             "type": "string",
             "title": "PDF 后端降级链",
             "default": "",
-            "description": "留空 = 自动 mineru>paddleocr>local。也可显式填写，按顺序尝试，失败自动降级到下一档。用 > 或 ; 分隔，例如 mineru>paddleocr>local"
+            "description": "留空 = 自动 mineru>paddleocr>mineru-local>paddleocr-local>local。也可显式填写，按顺序尝试，失败自动降级到下一档。用 > 或 ; 分隔"
+          },
+          "imageBackendChain": {
+            "type": "string",
+            "title": "图片后端降级链",
+            "default": "",
+            "description": "留空 = 自动 paddleocr>paddleocr-local。用 > 或 ; 分隔，按顺序尝试"
           },
           "mineruCredentials": {
             "type": "string",
@@ -95,6 +101,31 @@
             "title": "PaddleOCR Token",
             "default": "",
             "description": "多个用分号分隔。获取地址：https://aistudio.baidu.com/account/accessToken"
+          },
+          "mineruLocalEndpoint": {
+            "type": "string",
+            "title": "MinerU 本地服务地址",
+            "default": "",
+            "description": "例如 http://127.0.0.1:8000，留空则不启用本地 MinerU"
+          },
+          "mineruLocalApiKey": {
+            "type": "string",
+            "title": "MinerU 本地 API Key",
+            "default": "",
+            "description": "服务端用 --api-key 启动时才需要，一般留空"
+          },
+          "mineruLocalTier": {
+            "type": "string",
+            "title": "MinerU 本地档位",
+            "enum": ["", "flash", "standard"],
+            "default": "",
+            "description": "留空按服务端默认"
+          },
+          "paddleLocalEndpoint": {
+            "type": "string",
+            "title": "PaddleOCR 本地服务地址",
+            "default": "",
+            "description": "PaddleX Serving 地址，例如 http://127.0.0.1:8080，留空则不启用本地 PaddleOCR"
           },
           "paddleUseDocOrientationClassify": {
             "type": "boolean",

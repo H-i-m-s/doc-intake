@@ -568,7 +568,7 @@ export const parameters = {
     },
     backend: {
       type: "string",
-      enum: ["auto", "mineru", "paddleocr", "local"],
+      enum: ["auto", "mineru", "paddleocr", "mineru-local", "paddleocr-local", "local"],
       description: "解析后端（可选，默认 auto）",
     },
     pageRange: {

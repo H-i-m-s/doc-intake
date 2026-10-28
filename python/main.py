@@ -305,8 +305,32 @@ def _barcode_only_result(args, settings: dict, file_type: str, output_dir: Optio
     return format_result(result), codes
 
 
-# PDF 后端降级链留空时的自动档：先云端 MinerU，再 PaddleOCR，最后本地。
-DEFAULT_PDF_BACKEND_CHAIN = ["mineru", "paddleocr", "local"]
+# PDF 后端降级链留空时的自动档：先云端 MinerU，再 PaddleOCR，再两个自建服务，最后本地。
+# 自建服务排在云端后面：填了地址才生效，没填的会在选链时被剔除。
+DEFAULT_PDF_BACKEND_CHAIN = [
+    "mineru",
+    "paddleocr",
+    "mineru-local",
+    "paddleocr-local",
+    "local",
+]
+
+# 图片链留空时的兜底：云端 PaddleOCR 优先，其次自建 PaddleX。
+DEFAULT_IMAGE_BACKEND_CHAIN = ["paddleocr", "paddleocr-local"]
+
+# 自建后端只有填了地址才算可用，键是后端 id，值是必须填的设置项。
+_LOCAL_BACKEND_REQUIREMENTS = {
+    "mineru-local": "mineruLocalEndpoint",
+    "paddleocr-local": "paddleLocalEndpoint",
+}
+
+
+def _backend_configured(backend: str, settings: dict) -> bool:
+    """本地后端只有在填了地址时才算可用。"""
+    required = _LOCAL_BACKEND_REQUIREMENTS.get(backend)
+    if not required:
+        return True
+    return bool(str(settings.get(required) or "").strip())
 
 
 def select_backend_chain(
@@ -317,25 +341,41 @@ def select_backend_chain(
     """根据文件类型从 settings 里读后端链。返回有序列表（首选 -> 兑底）。
 
     语义：
-    - 用户显式给 backend：链上就是 [explicit_backend]
-    - auto: 从 settings.pdfBackendChain / settings.imageBackendChain 读
+    - 用户显式给 backend：链上就是 [explicit_backend]；自建后端没填地址时报错，不静默剔除
+    - auto: 从 settings.pdfBackendChain / settings.imageBackendChain 读，剔除未配置的自建后端
     """
     logger = get_logger("backend_selector")
 
     if explicit_backend and explicit_backend != "auto":
+        if not _backend_configured(explicit_backend, settings):
+            required = _LOCAL_BACKEND_REQUIREMENTS[explicit_backend]
+            raise ValueError(
+                f"后端 {explicit_backend} 需要先在设置里填写「{required}」"
+            )
         return [explicit_backend]
 
     if file_type == "pdf":
-        chain = settings.get("pdfBackendChain") or list(DEFAULT_PDF_BACKEND_CHAIN)
+        chain = list(settings.get("pdfBackendChain") or DEFAULT_PDF_BACKEND_CHAIN)
     elif file_type == "image":
-        chain = ["paddleocr"]
+        chain = list(settings.get("imageBackendChain") or DEFAULT_IMAGE_BACKEND_CHAIN)
     elif file_type in ("docx", "doc", "pptx", "ppt", "xlsx", "xls", "xlsm", "html", "htm"):
         chain = ["local"]
     else:
         chain = ["local"]
 
-    logger.debug("后端链选定", file_type=file_type, chain=chain)
-    return chain
+    usable: list[str] = []
+    for backend in chain:
+        if _backend_configured(backend, settings):
+            usable.append(backend)
+            continue
+        logger.info(
+            "跳过未配置的本地后端",
+            backend=backend,
+            required_setting=_LOCAL_BACKEND_REQUIREMENTS[backend],
+        )
+
+    logger.debug("后端链选定", file_type=file_type, chain=usable)
+    return usable
 
 
 def extract_with_chain(
@@ -472,6 +512,9 @@ def _redact_runtime_secret(text: str, settings: dict) -> str:
             secrets.extend([item.get("accessKey", ""), item.get("secretKey", "")])
         elif isinstance(item, str):
             secrets.append(item)
+    local_key = settings.get("mineruLocalApiKey")
+    if isinstance(local_key, str):
+        secrets.append(local_key)
     for secret in secrets:
         if secret:
             value = value.replace(str(secret), "[REDACTED]")
@@ -541,6 +584,34 @@ def _extract_with_backend(
     elif backend == "paddleocr":
         from paddle_client import PaddleClient
         client = PaddleClient(settings)
+        return client.extract(
+            source=source,
+            output_dir=output_dir,
+            page_range=page_range,
+            language=language,
+            include_images=include_images,
+            keys=available_credentials,
+            pdf_bytes=pdf_bytes,
+            display_name=display_name,
+        )
+
+    elif backend == "mineru-local":
+        from mineru_local_client import MinerULocalClient
+        client = MinerULocalClient(settings)
+        return client.extract(
+            source=source,
+            output_dir=output_dir,
+            page_range=page_range,
+            language=language,
+            include_images=include_images,
+            credentials=available_credentials,
+            pdf_bytes=pdf_bytes,
+            display_name=display_name,
+        )
+
+    elif backend == "paddleocr-local":
+        from paddle_local_client import PaddleLocalClient
+        client = PaddleLocalClient(settings)
         return client.extract(
             source=source,
             output_dir=output_dir,

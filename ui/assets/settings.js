@@ -53,14 +53,21 @@ const FIELDS = {
     title: "默认解析后端",
     hint: "调用工具时未指定后端就按它走。一般保持「自动」。",
     type: "string",
-    labels: { auto: "自动", mineru: "MinerU", paddleocr: "PaddleOCR", local: "本地（PyMuPDF）" },
+    labels: { auto: "自动", mineru: "MinerU", paddleocr: "PaddleOCR", "mineru-local": "MinerU（本地）", "paddleocr-local": "PaddleOCR（本地）", local: "本地（PyMuPDF）" },
   },
   pdfBackendChain: {
     title: "PDF 后端降级链",
-    hint: "留空 = 自动（mineru > paddleocr > local）。也可显式写顺序，用 > 或 ; 分隔，按顺序尝试、失败自动降到下一档。",
+    hint: "留空 = 自动（mineru > paddleocr > mineru-local > paddleocr-local > local）。也可显式写顺序，用 > 或 ; 分隔，按顺序尝试、失败自动降到下一档。",
     type: "string",
     wide: true,
-    placeholder: "留空 = mineru>paddleocr>local",
+    placeholder: "留空 = mineru>paddleocr>mineru-local>paddleocr-local>local",
+  },
+  imageBackendChain: {
+    title: "图片后端降级链",
+    hint: "留空 = 自动（paddleocr > paddleocr-local）。也可显式写顺序，用 > 或 ; 分隔。",
+    type: "string",
+    wide: true,
+    placeholder: "留空 = paddleocr>paddleocr-local",
   },
   mineruCredentials: {
     title: "MinerU Token",
@@ -131,6 +138,26 @@ const FIELDS = {
   mineruFlashMaxPages: { title: "Flash 最大页数", type: "number", int: true },
   mineruPrecisionMaxMB: { title: "Precision 最大文件大小(MB)", hint: "有 Token 时走 Precision 模式。", type: "number", int: true },
   mineruPrecisionMaxPages: { title: "Precision 最大页数", type: "number", int: true },
+  mineruLocalEndpoint: {
+    title: "MinerU 本地服务地址",
+    hint: "例如 http://127.0.0.1:8000，留空则不启用本地 MinerU",
+    type: "string",
+    wide: true,
+    placeholder: "例如 http://127.0.0.1:8000",
+  },
+  mineruLocalApiKey: {
+    title: "MinerU 本地 API Key",
+    hint: "服务端用 --api-key 启动时才需要，一般留空",
+    type: "string",
+    wide: true,
+    placeholder: "留空 = 服务端未开鉴权",
+  },
+  mineruLocalTier: {
+    title: "MinerU 本地档位",
+    hint: "留空按服务端默认",
+    type: "string",
+    labels: { "": "跟随服务端", flash: "flash（快）", standard: "standard（准）" },
+  },
 
   // ---- PaddleOCR ----
   paddleUseDocOrientationClassify: { title: "文档方向分类", type: "boolean" },
@@ -139,6 +166,13 @@ const FIELDS = {
   paddleUseSealRecognition: { title: "印章识别", type: "boolean" },
   paddleUseTableRecognition: { title: "表格识别", type: "boolean" },
   paddleUseFormulaRecognition: { title: "公式识别", type: "boolean" },
+  paddleLocalEndpoint: {
+    title: "PaddleOCR 本地服务地址",
+    hint: "PaddleX Serving 地址，例如 http://127.0.0.1:8080，留空则不启用本地 PaddleOCR",
+    type: "string",
+    wide: true,
+    placeholder: "例如 http://127.0.0.1:8080",
+  },
 
   // ---- PDF 切割 ----
   autoSplitLargePDF: {
@@ -227,6 +261,7 @@ const BASIC_KEYS = [
   "pythonPath",
   "defaultBackend",
   "pdfBackendChain",
+  "imageBackendChain",
   "mineruCredentials",
   "paddleTokens",
   "defaultLanguage",
@@ -238,8 +273,8 @@ const BASIC_KEYS = [
 ];
 
 const ADVANCED_GROUPS = [
-  { title: "MinerU", keys: ["mineruModelVersion", "mineruEnableOCR", "mineruEnableFormula", "mineruEnableTable", "mineruFlashMaxMB", "mineruFlashMaxPages", "mineruPrecisionMaxMB", "mineruPrecisionMaxPages"] },
-  { title: "PaddleOCR", keys: ["paddleUseDocOrientationClassify", "paddleUseDocUnwarping", "paddleUseChartRecognition", "paddleUseSealRecognition", "paddleUseTableRecognition", "paddleUseFormulaRecognition"] },
+  { title: "MinerU", keys: ["mineruModelVersion", "mineruEnableOCR", "mineruEnableFormula", "mineruEnableTable", "mineruFlashMaxMB", "mineruFlashMaxPages", "mineruPrecisionMaxMB", "mineruPrecisionMaxPages", "mineruLocalEndpoint", "mineruLocalApiKey", "mineruLocalTier"] },
+  { title: "PaddleOCR", keys: ["paddleUseDocOrientationClassify", "paddleUseDocUnwarping", "paddleUseChartRecognition", "paddleUseSealRecognition", "paddleUseTableRecognition", "paddleUseFormulaRecognition", "paddleLocalEndpoint"] },
   { title: "PDF 切割", keys: ["autoSplitLargePDF", "splitChunkPages"] },
   { title: "图片分割", keys: ["splitImageThreshold", "splitImageTolerance", "splitImageBlankRatio", "splitImageMinBlank"] },
   { title: "并发与重试", keys: ["maxConcurrent", "maxConcurrentLocal", "maxRetries", "retryBaseDelayMs", "keyRetryOnFailure", "notifyKeyFailure"] },
