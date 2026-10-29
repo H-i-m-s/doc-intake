@@ -12,8 +12,8 @@ import { estimateTotalMs, fakePercent } from "./shared/progress.js";
 /** 卡片宽度固定，宿主卡片壳按这个值给列宽。 */
 export const CARD_WIDTH = 460;
 const POLL_INTERVAL_MS = 1000;
-const CONTEXT_RETRY_TIMES = 12;
-const CONTEXT_RETRY_MS = 150;
+const CONTEXT_RETRY_TIMES = 20;
+const CONTEXT_RETRY_MS = 200;
 const MAX_CONSECUTIVE_FAILURES = 5;
 /** 完成时补完最后一段的过渡留在一秒半以内：看得出是在走，不是跳过去。 */
 const FINAL_TRANSITION_MS = 1400;
@@ -333,6 +333,9 @@ function startCard() {
       renderNotice("宿主接口不可用");
       return;
     }
+    // 这一步不能省：ready() 是跟宿主的握手，不握手时 surface.getContext() 会一直
+    // 返回 null，卡片就只能停在「无法识别」。失败不阻塞渲染，主题还能先上。
+    try { hana.ready?.(); } catch { /* 老宿主没有这一步 */ }
     syncTheme();
     try { hana.theme?.subscribe?.(() => syncTheme()); } catch { /* 订阅不可用就只保留首帧 */ }
     reportSize();
