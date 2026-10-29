@@ -329,9 +329,13 @@ async function startAsyncJob({ sources, input, ctx, settings, enrichedInput }) {
   const text = [
     `已开始后台解析：${cardDescription(sources)}`,
     `任务 ID：${jobId}`,
+    // 三种情形分开说：建成了、有凭据但建失败、压根没有凭据。
+    // 混成一句会让排查时看不出到底卡在哪一步。
     taskId
       ? "完成后会把结果自动投回本会话，聊天流里已挂进度卡片。"
-      : "本次没拿到宿主调用凭据，结果只写进作业表（/job-status?id= 可查）。",
+      : callToken
+        ? "宿主任务没建成，结果只写进作业表（/job-status?id= 可查），不会自动回投。"
+        : "本次没拿到宿主调用凭据，结果只写进作业表（/job-status?id= 可查）。",
   ].join("\n");
 
   return {

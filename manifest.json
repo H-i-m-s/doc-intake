@@ -12,7 +12,8 @@
     "app/tools.expose-to-model",
     "app/ui.open-external",
     "app/resources.read",
-    "app/tasks.manage"
+    "app/tasks.manage",
+    "app/session.start-turn"
   ],
   "network": {
     "allowedHosts": [

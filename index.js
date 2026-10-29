@@ -33,10 +33,22 @@ export default defineApp(async (sdk) => {
       name: mod.name,
       description: mod.description,
       parameters: mod.parameters,
-      execute: async (invocation) => {
-        const raw = invocation && typeof invocation === "object" ? invocation : {};
+      execute: async (args, hostContext) => {
+        const raw = args && typeof args === "object" ? args : {};
         const { context: _context, ...input } = raw;
+        // 宿主有两种派发风格：sdk_tool 把调用上下文塞在参数对象里，pi_tool 走第二个参数。
+        // 两种都接，免得拿不到 callToken 时后台跑完的结果无处可投。
+        const toolContext = raw.context && typeof raw.context === "object"
+          ? raw.context
+          : (hostContext && typeof hostContext === "object" ? hostContext : {});
         const config = (await sdk.config.getAll()) || {};
+        await sdk.logger.info(
+          "tool context keys: "
+          + `${Object.keys(toolContext).sort().join(",") || "(empty)"}`
+          + ` | callToken=${toolContext.callToken ? "yes" : "no"}`
+          + ` | sessionPath=${toolContext.sessionPath ? "yes" : "no"}`
+          + ` | secondArg=${hostContext && typeof hostContext === "object" ? "yes" : "no"}`,
+        );
         const ctx = {
           config: { get: (key) => config[key] },
           // App 进程没有 --allow-net，出网只能借宿主代发的出口；它受 manifest
@@ -48,10 +60,10 @@ export default defineApp(async (sdk) => {
           // 只传用得到的字段，不把整个 invocation 丢给工具模块。
           sdk,
           invocation: {
-            callToken: raw.context?.callToken ?? null,
-            sessionId: raw.context?.sessionId ?? null,
-            sessionPath: raw.context?.sessionPath ?? null,
-            messageId: raw.context?.messageId ?? null,
+            callToken: toolContext.callToken ?? null,
+            sessionId: toolContext.sessionId ?? null,
+            sessionPath: toolContext.sessionPath ?? null,
+            messageId: toolContext.messageId ?? null,
           },
         };
         return await mod.execute(input, ctx);
