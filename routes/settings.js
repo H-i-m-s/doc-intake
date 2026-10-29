@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { validateMineruToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
 import { createUpdateCheck, normalizeIntervalMinutes } from "../lib/update-check.mjs";
+import { findJobByCardId, getJob } from "../lib/jobs.js";
 import {
   combinedFingerprint,
   evaluateTokenStatus,
@@ -489,6 +490,21 @@ function readAppVersion() {
 }
 
 export default function registerSettingsRoutes(app, ctx) {
+  // ---- 异步解析作业的进度查询 -------------------------------------------
+  // 进度卡（ui/card.html）每秒拉一次这个端点。作业只活在内存里，查不到就是 404，
+  // 不编一个空壳回去，否则卡片会拿着一张永远不动的假进度。
+  //
+  // id 两级：外部调用方手里是 jobId；卡片 iframe 里只拿得到宿主铸造的 cardInstanceId，
+  // 后者是从 jobId 单向哈希出来的，只能反查。两条都不中就还是 404，
+  // 让卡片能区分「记录没了」和「网络抖了一下」。
+  app.get("/job-status", (c) => {
+    const raw = c.req.query("id");
+    const key = raw ? String(raw) : "";
+    const job = key ? (getJob(key) ?? findJobByCardId(key)) : null;
+    if (!job) return c.json({ ok: false, error: "job not found" }, 404);
+    return c.json({ ok: true, job });
+  });
+
   app.get("/config", async (c) => {
     try {
       return c.json({ ok: true, config: await readConfig(ctx) });

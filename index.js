@@ -14,7 +14,6 @@
 
 import { defineApp } from "./sdk/app-contract/server-client.js";
 import * as toolDocIntake from "./tools/doc_intake.js";
-import { findJobByCardId, getJob } from "./lib/jobs.js";
 
 export const name = "doc-intake";
 
@@ -60,19 +59,6 @@ export default defineApp(async (sdk) => {
     });
   }
 
-  // 进度卡和外部调用方查作业快照的入口。作业只活在内存里，查不到就是 404，
-  // 不编一个空壳回去，否则卡片会拿着一张永远不动的假进度。
-  //
-  // id 两级：外部调用方手里是 jobId；卡片 iframe 里只拿得到宿主铸造的 cardInstanceId，
-  // 后者是从 jobId 单向哈希出来的，只能反查。两条都不中就还是 404，
-  // 让卡片能明确区分「记录没了」和「网络抖了一下」。
-  await sdk.routes.register((app) => {
-    app.get("/job-status", (c) => {
-      const id = c.req.query("id");
-      const key = id ? String(id) : "";
-      const job = key ? (getJob(key) ?? findJobByCardId(key)) : null;
-      if (!job) return c.json({ ok: false, error: "job not found" }, 404);
-      return c.json({ ok: true, job });
-    });
-  });
+  // 后端路由只能有一个来源：宿主扫描 routes/*.js，与 sdk.routes.register 互斥。
+  // 进度的 /job-status 因此在 routes/settings.js 里注册，这里不再另开一条。
 });
