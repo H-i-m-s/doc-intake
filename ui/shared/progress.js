@@ -7,16 +7,25 @@
 //
 // 本模块必须保持零依赖、不碰 DOM、不碰 Node API，卡片 iframe 和 App 主进程都要 import 它。
 
-/** 各后端单页耗时（秒）。数值来自实测的经验值，不是承诺。 */
+/** 各后端单页耗时（秒）。
+ *
+ * 这是从两次实测反推的：456 页 MinerU 云端约 550 秒（1.2 秒/页），
+ * 24 页约 17 秒（0.7 秒/页）。大文件慢在小分块上传与排队，小文件几乎没这部分开销，
+ * 所以不能直接用"总时长除以页数"。取 0.5 秒/页配一个很小的固定开销，
+ * 能让两种量级在完成时都落在九成以上，收尾只补最后几个点。
+ *
+ * 数值偏乐观是故意的：估长了，进度条会提前贴住上限干磨，看起来像卡死；
+ * 估短了只是完成时跳一下。两者相比前者更难受。
+ */
 export const PAGE_SECONDS = {
-  "mineru": 0.9,
-  "mineru-local": 1.2,
-  "paddleocr": 0.6,
-  "paddleocr-local": 1.0,
+  "mineru": 0.5,
+  "mineru-local": 1.0,
+  "paddleocr": 0.4,
+  "paddleocr-local": 0.8,
 };
 
 /** 固定开销：进程启动、上传、排队、落盘。不随页数增长，所以单独加一项。 */
-export const FIXED_OVERHEAD_MS = 8000;
+export const FIXED_OVERHEAD_MS = 2000;
 
 /** 假进度上限。留出的 4 个点表示「最后阶段」，由完成事件收尾。 */
 export const PROGRESS_CAP = 96;

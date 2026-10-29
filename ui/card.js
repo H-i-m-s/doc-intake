@@ -214,16 +214,21 @@ function startCard() {
     stateEl.textContent = vm.stateText;
     card.dataset.state = vm.state;
     setBar(vm.percent, vm.final);
-    ensureRows(vm.files.length);
-    vm.files.forEach((file, index) => {
-      const row = rows[index];
-      row.name.textContent = file.name;
-      row.name.title = file.name;
-      row.state.textContent = file.stateText;
-      row.seconds.textContent = file.secondsText;
-      row.error.textContent = file.error;
-      row.el.dataset.state = file.status;
-    });
+    // 单文件时标题就是文件名，再列一行同样的名字纯属重复。
+    // 只有多文件、或单文件失败（那行要装失败原因）才列出来。
+    const showRows = vm.files.length > 1 || vm.files.some((file) => file.error);
+    ensureRows(showRows ? vm.files.length : 0);
+    if (showRows) {
+      vm.files.forEach((file, index) => {
+        const row = rows[index];
+        row.name.textContent = file.name;
+        row.name.title = file.name;
+        row.state.textContent = file.stateText;
+        row.seconds.textContent = file.secondsText;
+        row.error.textContent = file.error;
+        row.el.dataset.state = file.status;
+      });
+    }
     reportSize();
   }
 
