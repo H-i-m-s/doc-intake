@@ -14,6 +14,7 @@
 
 import { defineApp } from "./sdk/app-contract/server-client.js";
 import * as toolDocIntake from "./tools/doc_intake.js";
+import { getJob } from "./lib/jobs.js";
 
 export const name = "doc-intake";
 
@@ -44,9 +45,29 @@ export default defineApp(async (sdk) => {
           network: sdk.network,
           storage: sdk.storage,
           logger: sdk.logger,
+          // 工具要自己建宿主任务、拿调用凭据，所以把这两样往下传；
+          // 只传用得到的字段，不把整个 invocation 丢给工具模块。
+          sdk,
+          invocation: {
+            callToken: raw.context?.callToken ?? null,
+            sessionId: raw.context?.sessionId ?? null,
+            sessionPath: raw.context?.sessionPath ?? null,
+            messageId: raw.context?.messageId ?? null,
+          },
         };
         return await mod.execute(input, ctx);
       },
     });
   }
+
+  // 进度卡和外部调用方查作业快照的入口。作业只活在内存里，查不到就是 404，
+  // 不编一个空壳回去，否则卡片会拿着一张永远不动的假进度。
+  await sdk.routes.register((app) => {
+    app.get("/job-status", (c) => {
+      const id = c.req.query("id");
+      const job = id ? getJob(String(id)) : null;
+      if (!job) return c.json({ ok: false, error: "job not found" }, 404);
+      return c.json({ ok: true, job });
+    });
+  });
 });

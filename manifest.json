@@ -11,7 +11,8 @@
     "app/process.spawn",
     "app/tools.expose-to-model",
     "app/ui.open-external",
-    "app/resources.read"
+    "app/resources.read",
+    "app/tasks.manage"
   ],
   "network": {
     "allowedHosts": [

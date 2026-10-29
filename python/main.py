@@ -40,6 +40,25 @@ def redirect_io_to_stderr() -> Iterator[None]:
         sys.stdout = original_stdout
 
 
+# 进度行的前缀。JS 侧按它把 stderr 切成「进度」和「日志」两类。
+_PROGRESS_PREFIX = "@@PROGRESS "
+
+
+def _emit_progress(**fields) -> None:
+    """把一次后端尝试的进度写进 stderr。
+
+    为什么走 stderr 而不是 stdout：stdout 是最终 JSON 的唯一通道，混进任何一行都会让
+    JS 侧解析失败；进度只是让进度卡知道「在试哪一档」，丢了不影响结果。
+    flush 不能省，否则行会攒在缓冲区里，直到进程结束才一起被读到，进度就失去意义。
+    """
+    try:
+        sys.stderr.write(_PROGRESS_PREFIX + json.dumps(fields, ensure_ascii=False) + "\n")
+        sys.stderr.flush()
+    except Exception:
+        # 进度是附加信息，写不出去也不能影响提取本身。
+        pass
+
+
 def detect_file_type(source: str) -> str:
     """检测文件类型"""
     # URL 默认当作 HTML 处理
@@ -391,11 +410,24 @@ def extract_with_chain(
     pdf_bytes: bytes | None = None,
     display_name: str | None = None,
     page_offset: int = 0,
+    pages: Optional[int] = None,
 ) -> ExtractionResult:
     """沿 backend_chain 逐档尝试，成功则返回。"""
     logger = get_logger("extractor")
     attempted: list[str] = []
     failed_atts: list[dict[str, str]] = []
+
+    # 进度打点的公共字段在这里收口：file 与 elapsedMs 每次都要带，调用点只写差异部分。
+    progress_started = time.monotonic()
+    progress_file = display_name or os.path.basename(source)
+
+    def _progress(**fields) -> None:
+        _emit_progress(
+            file=progress_file,
+            elapsedMs=int((time.monotonic() - progress_started) * 1000),
+            pages=pages,
+            **fields,
+        )
 
     if not backend_chain:
         result = ExtractionResult()
@@ -407,6 +439,7 @@ def extract_with_chain(
         attempted.append(current_backend)
         logger.info("尝试后端", source=_display_source(source), backend=current_backend)
         start_time = time.time()
+        _progress(stage="try", backend=current_backend, attempt=len(attempted))
 
         try:
             result = _extract_with_backend(
@@ -425,6 +458,12 @@ def extract_with_chain(
             duration = time.time() - start_time
 
             if _is_successful_result(result):
+                _progress(
+                    stage="ok",
+                    backend=current_backend,
+                    attempt=len(attempted),
+                    durationMs=int(duration * 1000),
+                )
                 logger.log_api_call(
                     api_name=current_backend,
                     success=True,
@@ -450,6 +489,13 @@ def extract_with_chain(
                 return result
 
             reason = result.markdown[:80] if result.markdown else "空结果"
+            _progress(
+                stage="fail",
+                backend=current_backend,
+                attempt=len(attempted),
+                durationMs=int(duration * 1000),
+                reason=reason[:120],
+            )
             logger.warning(
                 "后端返回空/错误结果", backend=current_backend, reason=reason
             )
@@ -459,6 +505,13 @@ def extract_with_chain(
         except Exception as e:
             duration = time.time() - start_time
             error_msg = _redact_runtime_secret(str(e), settings)
+            _progress(
+                stage="fail",
+                backend=current_backend,
+                attempt=len(attempted),
+                durationMs=int(duration * 1000),
+                reason=error_msg[:120],
+            )
             logger.log_api_call(
                 api_name=current_backend,
                 success=False,
@@ -911,6 +964,8 @@ def _run(args) -> dict:
             language=settings.get("defaultLanguage", "zh"),
             include_images=include_images,
             available_credentials=available_credentials,
+            # 进度卡要按页数估总耗时。拿不到就给 None，那边按 1 页兜底。
+            pages=_progress_page_count(args.source, file_type),
         )
     else:
         first_chunk, remaining_chunks = chunk_state
@@ -929,6 +984,16 @@ def _run(args) -> dict:
     return _finalize_single_result(
         result, args, output_dir, settings, start_time, prefetched_codes
     )
+
+
+def _progress_page_count(source: str, file_type: str) -> Optional[int]:
+    """进度估算用的页数。只对本地 PDF 有意义，其余一律给 None。"""
+    if file_type != "pdf" or source.startswith(("http://", "https://")):
+        return None
+    try:
+        return pdf_page_count(source)
+    except Exception:
+        return None
 
 
 def _finalize_single_result(
@@ -1055,6 +1120,8 @@ def _extract_one_memory_chunk(
         pdf_bytes=chunk.data,
         display_name=source_name,
         page_offset=chunk.start_page - 1,
+        # 分块各报各的页数：用整份文档的页数会让每一块的进度都显得慢得离谱。
+        pages=chunk.end_page - chunk.start_page + 1,
     )
     if output_dir:
         result.markdown = _rewrite_media_paths(

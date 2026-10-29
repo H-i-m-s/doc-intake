@@ -1,4 +1,5 @@
 import { extractDocument } from "../lib/service.js";
+import { createJob, finishJob, getJob, pruneJobs, updateFile, updateJob } from "../lib/jobs.js";
 import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
 import { getSettings, DEFAULT_PDF_BACKEND_CHAIN } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
@@ -14,10 +15,16 @@ import {
   writeStatus,
 } from "../lib/token-status.js";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, extname, isAbsolute, join, normalize, parse, resolve } from "node:path";
 
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
+
+/** 进度卡在宿主里显示的名字，与 manifest 的 id 一起构成卡片身份。 */
+const CARD_TITLE = "文档解析";
+/** 宿主任务回执里附全文的阈值（字符数）。超过就只给摘要和落盘路径。 */
+const INLINE_MARKDOWN_LIMIT = 8000;
 
 // v2 App 的 JS 进程跑在 Node Permission Model 下，裸 fs 读许可根以外的路径会被拒。
 // 路径展开（目录枚举、存在性、后缀过滤）交给被 spawn 的 Python 子进程完成；
@@ -164,6 +171,193 @@ async function processFiles(sources, input, ctx, settings) {
       error: item.reason instanceof Error ? item.reason : new Error(String(item.reason)),
     };
   });
+}
+
+// ── 异步作业：云端后端可能跑几分钟，宿主 RPC 只有 30 秒 ────────────────────
+//
+// 分叉点就在后端类别：只要有一个文件走云端，整批就转后台，因为同一个工具调用里
+// 同步等一个云端文件也照样超时。全是本地后端时保持原样同步返回。
+
+function cardInstanceIdFor(jobId) {
+  // 与宿主投影层同一个格式（^a_[0-9a-f]{20}$）。给它一个确定值，会话重新投影时
+  // 才认得出是同一张卡，否则每次重载都会多出一张新卡。
+  const hex = createHash("sha256").update(`doc-intake:${jobId}`).digest("hex").slice(0, 20);
+  return `a_${hex}`;
+}
+
+function jobLabel(sources) {
+  if (sources.length === 1) return `解析 ${basename(sources[0])}`;
+  return `解析 ${sources.length} 个文件`;
+}
+
+function cardDescription(sources) {
+  return sources.length === 1 ? basename(sources[0]) : `${sources.length} 个文件`;
+}
+
+/** 进度行按文件名回指到作业里的那一行。同名文件按「还没结束的第一个」认。 */
+function resolveJobFileIndex(files, name) {
+  if (!name) return -1;
+  let fallback = -1;
+  for (let index = 0; index < files.length; index += 1) {
+    if (files[index].name !== name) continue;
+    if (fallback < 0) fallback = index;
+    if (files[index].status === "pending" || files[index].status === "running") return index;
+  }
+  return fallback;
+}
+
+function makeJobProgressHandler(jobId) {
+  return (event) => {
+    if (!event || typeof event !== "object") return;
+    const snapshot = getJob(jobId);
+    if (!snapshot) return;
+    const index = resolveJobFileIndex(snapshot.files, event.file);
+    if (index < 0) return;
+    const file = snapshot.files[index];
+    const patch = { status: "running" };
+    if (typeof event.backend === "string" && event.backend) {
+      patch.backend = event.backend;
+      // 降级链会反复经过同一个后端，记过的就不再追加，否则列表会长成一串重复。
+      if (!file.triedBackends.includes(event.backend)) {
+        patch.triedBackends = [...file.triedBackends, event.backend];
+      }
+    }
+    if (typeof event.stage === "string") patch.stage = event.stage;
+    if (Number.isFinite(event.attempt)) patch.attempt = event.attempt;
+    if (Number.isFinite(event.pages)) patch.pages = event.pages;
+    if (Number.isFinite(event.durationMs)) patch.durationMs = event.durationMs;
+    updateFile(jobId, index, patch);
+  };
+}
+
+function jobSummaryLine(file) {
+  const name = basename(String(file.name ?? "")) || String(file.name ?? "");
+  if (file.status !== "success") {
+    return `❌ ${name}：${file.error ?? file.warnings?.[0] ?? "解析失败"}`;
+  }
+  const parts = [`✅ ${name}`];
+  if (file.usedBackend) parts.push(`后端 ${file.usedBackend}`);
+  if (file.mdPath) parts.push(`已保存：${file.mdPath}`);
+  return parts.join(" · ");
+}
+
+function buildJobReport(filesOut) {
+  const successCount = filesOut.filter((file) => file.status === "success").length;
+  const lines = [
+    `文档解析完成：${successCount}/${filesOut.length} 个文件成功`,
+    "",
+    ...filesOut.map(jobSummaryLine),
+  ];
+  // 全文只在总量不大时附上，否则一条宿主任务消息会被正文撑爆；mdPath 已经能拿到全文。
+  const totalChars = filesOut.reduce((sum, file) => sum + String(file.markdown ?? "").length, 0);
+  if (totalChars > 0 && totalChars <= INLINE_MARKDOWN_LIMIT) {
+    const body = filesOut.length === 1
+      ? String(filesOut[0].markdown ?? "")
+      : filesOut
+        .map((file) => `## ${basename(String(file.name ?? ""))}\n\n${file.markdown ?? ""}`)
+        .join("\n\n");
+    lines.push("", "---", "", body);
+  }
+  return lines.join("\n");
+}
+
+async function runJobInBackground({ jobId, sources, input, ctx, settings, enrichedInput, sdk, taskId }) {
+  const jobCtx = { ...ctx, onProgress: makeJobProgressHandler(jobId) };
+  let results;
+  try {
+    results = await processFiles(sources, enrichedInput, jobCtx, settings);
+  } catch (error) {
+    // processFiles 内部已经 allSettled，这里兜的是更外层的意外（比如信号量配置炸了）。
+    const failure = error instanceof Error ? error : new Error(String(error));
+    results = sources.map((source) => ({ ok: false, source, error: failure }));
+  }
+
+  results.forEach((item, index) => {
+    const ok = item.ok === true;
+    updateFile(jobId, index, {
+      status: ok ? "done" : "failed",
+      stage: ok ? "ok" : "fail",
+      error: ok ? null : (item.error?.message ?? "未知错误"),
+    });
+  });
+
+  const filesOut = results.map(toFileOutput);
+  const firstError = filesOut.find((file) => file.status !== "success")?.error ?? null;
+  const state = firstError ? "failed" : "done";
+  const text = buildJobReport(filesOut);
+  finishJob(jobId, { state, error: firstError });
+
+  if (taskId) {
+    try {
+      if (state === "done") {
+        await sdk.tasks.complete(taskId, { text });
+      } else {
+        await sdk.tasks.fail(taskId, text);
+      }
+    } catch (error) {
+      await ctx?.logger?.error?.(`宿主任务回执失败：${error?.message || error}`);
+    }
+  }
+  pruneJobs();
+}
+
+async function startAsyncJob({ sources, input, ctx, settings, enrichedInput }) {
+  const jobId = createJob({
+    files: sources.map((source) => ({ source, name: basename(source) })),
+  });
+  const sdk = ctx?.sdk ?? null;
+  const callToken = ctx?.invocation?.callToken ?? null;
+
+  // 宿主任务必须在这次 execute 里建好并在返回前拿到 taskId：callToken 只在本次
+  // 调用窗口内有效，等后台跑完再 create 就再也建不出来，结果只能闷在作业表里。
+  let taskId = null;
+  if (callToken && typeof sdk?.tasks?.create === "function") {
+    try {
+      const task = await sdk.tasks.create({
+        callToken,
+        label: jobLabel(sources),
+        delivery: "next-step",
+      });
+      taskId = task?.taskId ?? null;
+    } catch (error) {
+      await ctx?.logger?.error?.(`创建宿主任务失败，本次只跑后台：${error?.message || error}`);
+    }
+  }
+
+  // 不 await：execute 要立刻返回。挂 catch 是因为没有其他人在等它的拒绝。
+  runJobInBackground({ jobId, sources, input, ctx, settings, enrichedInput, sdk, taskId })
+    .catch((error) => {
+      finishJob(jobId, { state: "failed", error: error?.message || String(error) });
+      void ctx?.logger?.error?.(`后台解析作业异常：${error?.message || error}`);
+    });
+
+  const text = [
+    `已开始后台解析：${cardDescription(sources)}`,
+    `任务 ID：${jobId}`,
+    taskId
+      ? "完成后会把结果自动投回本会话，聊天流里已挂进度卡片。"
+      : "本次没拿到宿主调用凭据，结果只写进作业表（/job-status?id= 可查）。",
+  ].join("\n");
+
+  return {
+    content: [{ type: "text", text }],
+    details: {
+      bridgedTool: { name, server: "doc-intake" },
+      card: {
+        pluginId: "doc-intake",
+        cardId: `di-${jobId}`,
+        cardInstanceId: cardInstanceIdFor(jobId),
+        route: "/card.html",
+        title: CARD_TITLE,
+        description: cardDescription(sources),
+        aspectRatio: "8:1",
+        cardForm: "flush",
+        preferredWidthPx: 460,
+        titlebar: null,
+      },
+      job: getJob(jobId),
+    },
+  };
 }
 
 function toFileOutput(item) {
@@ -620,6 +814,14 @@ export async function execute(input = {}, ctx) {
       _localConcurrency: settings.maxConcurrentLocal ?? 8,
       _legacyConversionConcurrency: settings.legacyConversionConcurrency ?? 1,
     };
+
+    // 只要有一个文件走云端，整批就转后台：同一个 RPC 里同步等一个云端文件也照样超时。
+    // 全本地（含 legacy 转换）输入走下面原样的同步路径。
+    const kinds = sources.map((source) => entryBackendKind(source, input, settings));
+    if (kinds.some((kind) => kind === "api")) {
+      return await startAsyncJob({ sources, input, ctx, settings, enrichedInput });
+    }
+
     const results = await processFiles(sources, enrichedInput, ctx, settings);
     const out = buildResult(sources, results, settings, {
       summaryOnly: input.summaryOnly === true,
