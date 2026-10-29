@@ -1,0 +1,168 @@
+/* ui/card.css — 文档解析进度卡（聊天流内嵌）
+   --------------------------------------------------------------------------
+   取色纪律与设置页（ui/assets/settings.css）同一套：
+   · 主题变量优先取宿主注入的 --hana-*，取不到就用本文件自带的值；
+     深浅两套都写全，宿主不注入时靠 body.t-dark 切换，两种情况下层级一致。
+   · accent 只出现在一处：进度条填充。
+   · 不画渐变、不铺彩色块、不加图标；失败与完成只靠同一个语义色的文字与条子。
+   · 外层容器不画背景和圆角 —— 宿主卡片壳已经给了，再画一层就会有双边框。
+   -------------------------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+:root {
+  --di-ink: var(--hana-text, var(--text, #2f2a24));
+  --di-sub: var(--hana-text-light, var(--text-light, #6f6659));
+  --di-muted: var(--hana-text-muted, var(--text-muted, #8d8274));
+  /* 取不到宿主 accent 时用一个中性蓝：进度条是唯一需要「有颜色」的元素，
+     没有强调色也得有一条第几眼能看出在走的条子。 */
+  --di-accent: var(--hana-accent, var(--accent, #4a6fa5));
+  --di-ok: var(--hana-green, var(--green, #4f8a63));
+  --di-warn: var(--hana-danger, var(--danger, #b06a5e));
+}
+
+body.t-dark {
+  --di-ink: var(--hana-text, #e6e2da);
+  --di-sub: var(--hana-text-light, #b6aea2);
+  --di-muted: var(--hana-text-muted, #8f877c);
+  --di-accent: var(--hana-accent, #7794c2);
+  --di-ok: var(--hana-green, #6e9c7f);
+  --di-warn: var(--hana-danger, #c07d72);
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 460px;
+  /* 卡片宽度固定，内容一律不许把它撑开：溢出在卡片里表现为一条被截断的字，
+     而不是换行导致的整卡变高。 */
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  color: var(--di-ink);
+  font-family: var(--hana-font-ui, var(--font-ui, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif));
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  /* 秒数每秒变一次，等宽数字是这条卡不抖的前提。 */
+  font-variant-numeric: tabular-nums;
+}
+
+.di-card {
+  width: 460px;
+  max-width: 100%;
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---------- 头：文件 / 耗时 / 总状态 ---------- */
+.di-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.di-card__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.di-card__meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--di-muted);
+}
+
+.di-card__elapsed,
+.di-card__state { white-space: nowrap; }
+
+.di-card__state { color: var(--di-sub); }
+.di-card[data-state="done"] .di-card__state { color: var(--di-ok); }
+.di-card[data-state="failed"] .di-card__state { color: var(--di-warn); }
+
+/* ---------- 总进度条 ---------- */
+.di-card__bar {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  /* 轨道从 currentColor 混出来：深浅两套主题都不用另配一个灰度值。 */
+  color: var(--di-ink);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.di-card__bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: var(--di-accent);
+  /* 每秒的推进用小步过渡，看起来是在走；最后那一段由 .is-final 拉长到 1.4 秒。 */
+  transition: width 320ms linear, background-color 240ms linear;
+}
+
+.di-card.is-final .di-card__bar-fill { transition-duration: 1400ms, 240ms; }
+
+.di-card[data-state="done"] .di-card__bar-fill { background: var(--di-ok); }
+.di-card[data-state="failed"] .di-card__bar-fill { background: var(--di-warn); }
+.di-card[data-state="stale"] .di-card__bar-fill { background: var(--di-muted); }
+
+/* ---------- 文件行 ---------- */
+.di-card__files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.di-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  color: var(--di-sub);
+}
+
+.di-file__name {
+  font-size: 13px;
+  color: var(--di-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.di-file__tail {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--di-muted);
+  white-space: nowrap;
+}
+
+.di-file[data-state="done"] .di-file__state { color: var(--di-ok); }
+.di-file[data-state="failed"] .di-file__state { color: var(--di-warn); }
+
+/* 失败原因整行铺满，超长就省略：卡片高度不能因为一句错误信息而变。 */
+.di-file__error {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--di-warn);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.di-file__error:empty { display: none; }

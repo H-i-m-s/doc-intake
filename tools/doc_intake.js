@@ -1,5 +1,5 @@
 import { extractDocument } from "../lib/service.js";
-import { createJob, finishJob, getJob, pruneJobs, updateFile, updateJob } from "../lib/jobs.js";
+import { cardInstanceIdFor, createJob, finishJob, getJob, pruneJobs, updateFile, updateJob } from "../lib/jobs.js";
 import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
 import { getSettings, DEFAULT_PDF_BACKEND_CHAIN } from "../lib/settings.js";
 import { Semaphore } from "../lib/semaphore.js";
@@ -15,7 +15,6 @@ import {
   writeStatus,
 } from "../lib/token-status.js";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, extname, isAbsolute, join, normalize, parse, resolve } from "node:path";
 
@@ -177,13 +176,9 @@ async function processFiles(sources, input, ctx, settings) {
 //
 // 分叉点就在后端类别：只要有一个文件走云端，整批就转后台，因为同一个工具调用里
 // 同步等一个云端文件也照样超时。全是本地后端时保持原样同步返回。
-
-function cardInstanceIdFor(jobId) {
-  // 与宿主投影层同一个格式（^a_[0-9a-f]{20}$）。给它一个确定值，会话重新投影时
-  // 才认得出是同一张卡，否则每次重载都会多出一张新卡。
-  const hex = createHash("sha256").update(`doc-intake:${jobId}`).digest("hex").slice(0, 20);
-  return `a_${hex}`;
-}
+//
+// 卡片身份的推导（cardInstanceIdFor）与反查都在 lib/jobs.js：卡片 iframe 里只有
+// cardInstanceId，生成与反查必须同一个公式，分两处写迟早会对不上。
 
 function jobLabel(sources) {
   if (sources.length === 1) return `解析 ${basename(sources[0])}`;
