@@ -556,7 +556,7 @@ body { padding: 0 12px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 8px 0 0;
+  margin: 12px 0 4px;
   font-size: 12.5px;
   font-weight: 650;
   color: var(--gs-sub);
@@ -568,6 +568,9 @@ body { padding: 0 12px; }
   height: 1px;
   background: var(--gs-line);
 }
+/* 标题右侧那条延长线已经画了这一组的上界，紧跟其后的第一个字段不再画顶线。
+   不去掉的话两条线相距不到一行，看起来像一条写坏的双下划线。 */
+.gs-group__title + .gs-field { border-top: 0; }
 
 /* ---------- 徽标（与 git-save-load 同一纪律：ok 绿 / off 灰，不用 accent） ---------- */
 .gs-badge {
