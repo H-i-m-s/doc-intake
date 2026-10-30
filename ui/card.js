@@ -374,16 +374,16 @@ function startCard() {
    *
    * 这里只保证形状合法（单调、不越界），不管好看。时长定得太短时，五次曲线为了
    * 在几十毫秒内走完剩下的点，峰值速度会飏到平均值的两倍以上，看起来就是「啪」一下满了。
-   * 所以起点时长按剩余量给：每百分点 90ms，下限 620ms，上限 1600ms。
-   * 剩余得少就短一点，但不会再短到看不清中间过程。
+   * 所以起点时长按剩余量给：每百分点 130ms，下限 560ms，上限 2200ms。
+   * 下限压得比每点还短，是因为收尾时只剩一两个点，再给几百毫秒反而拖沓。
    */
   function pickFillMs(p0, v0, a0) {
     const remaining = Math.max(0, 100 - p0);
-    const floor = Math.min(1600, Math.max(620, remaining * 90));
-    for (let ms = Math.round(floor / 40) * 40; ms <= 2400; ms += 40) {
+    const floor = Math.min(2200, Math.max(560, remaining * 130));
+    for (let ms = Math.round(floor / 40) * 40; ms <= 3000; ms += 40) {
       if (fillShapeOk(p0, v0, a0, ms)) return ms;
     }
-    return 2400;
+    return 3000;
   }
 
   /**
