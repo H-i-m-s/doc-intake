@@ -46,6 +46,36 @@ export function formatElapsed(ms) {
   return `已等待 ${formatDuration(ms)}`;
 }
 
+/**
+ * 后端 id → 界面上的中文名。
+ * id 是 Python 侧的事实，卡片只负责翻译：同一份 id 在设置页、日志、卡片上都指同一个后端。
+ */
+export const BACKEND_LABEL = {
+  mineru: "MinerU",
+  paddleocr: "PaddleOCR",
+  "mineru-local": "MinerU（本地）",
+  "paddleocr-local": "PaddleOCR（本地）",
+  local: "本地解析",
+};
+
+/**
+ * 未知 id 原样返回，不编中文名：编出来就是把「不知道是什么」说成「知道」，
+ * 而原始 id 至少能让人拿着去对日志。空值返回空串，那一行整个不出现。
+ */
+export function backendLabel(id) {
+  const key = typeof id === "string" ? id.trim() : "";
+  if (!key) return "";
+  return Object.hasOwn(BACKEND_LABEL, key) ? BACKEND_LABEL[key] : key;
+}
+
+/** 取路径最后一段。快照里的 name 已是文件名，但只有 source 时得自己切一刀。 */
+export function baseNameOf(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return "";
+  const parts = text.split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : text;
+}
+
 export function clampPercent(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -78,8 +108,17 @@ export function buildViewModel(snapshot, now) {
   const files = rawFiles.map((file) => {
     const status = isKnownFileStatus(file?.status) ? file.status : "pending";
     const elapsed = fileElapsedMs(file, nowMs);
-    const backend = typeof file?.backend === "string" && file.backend ? file.backend : "mineru";
+    const reportedBackend = typeof file?.backend === "string" ? file.backend.trim() : "";
+    const backend = reportedBackend || "mineru";
     const total = estimateTotalMs(file?.pages, backend);
+    const mdPath = typeof file?.mdPath === "string" && file.mdPath ? file.mdPath : "";
+    const pagesValue = Number(file?.pages);
+    const pages = Number.isFinite(pagesValue) && pagesValue > 0 ? Math.round(pagesValue) : null;
+    const reportedMs = Number(file?.durationMs);
+    // 完成后的耗时用后端报的真实值；还在跑就按自己的起点算。两者都是毫秒，同一把尺子。
+    const durationMs = status === "done" && Number.isFinite(reportedMs) && reportedMs > 0
+      ? reportedMs
+      : elapsed;
     let percent;
     let velocity = 0;
     let acceleration = 0;
@@ -106,7 +145,16 @@ export function buildViewModel(snapshot, now) {
       velocity,
       acceleration,
       // 已落盘的 Markdown 路径。没保存就没值，「打开文件夹」也就不会出现。
-      mdPath: typeof file?.mdPath === "string" && file.mdPath ? file.mdPath : "",
+      mdPath,
+      // 以下只供展开后的键值表：标题用 name，表格第一行要的是纯文件名。
+      fileName: baseNameOf(file?.name) || baseNameOf(file?.source) || "未命名文件",
+      pathText: mdPath || "未保存到本地",
+      pages,
+      pagesText: pages === null ? "" : `${pages} 页`,
+      // backend 是快照里的原始 id，翻译不在这里做；backendText 才是给人看的。
+      backend: reportedBackend,
+      backendText: backendLabel(reportedBackend),
+      durationText: formatDuration(durationMs),
     };
   });
 
@@ -129,6 +177,9 @@ export function buildViewModel(snapshot, now) {
 
   return {
     title,
+    // 详情表的「任务」一栏。作业快照里带 jobId；从 cardInstanceId 查回来的那条没有，
+    // 由卡片用自己手里的查询键兜住。
+    jobId: typeof job.jobId === "string" ? job.jobId : "",
     stateText,
     state: state === "done" || state === "failed" ? state : "running",
     elapsedText: formatElapsed(elapsedMs),
@@ -165,14 +216,19 @@ async function resolveHana() {
 
 function startCard() {
   const card = document.getElementById("di-card");
+  const headEl = document.getElementById("di-fold");
+  const chevronEl = document.getElementById("di-chevron");
   const titleEl = document.getElementById("di-title");
   const percentEl = document.getElementById("di-percent");
   const elapsedEl = document.getElementById("di-elapsed");
   const stateEl = document.getElementById("di-state");
   const revealEl = document.getElementById("di-reveal");
   const fillEl = document.getElementById("di-fill");
-  const filesEl = document.getElementById("di-files");
-  if (!card || !fillEl || !filesEl) return;
+  const foldEl = document.getElementById("di-fold-zone");
+  const detailEl = document.getElementById("di-detail");
+  const jobRowEl = document.getElementById("di-detail-job");
+  const jobValueEl = document.getElementById("di-detail-job-value");
+  if (!card || !fillEl || !foldEl || !detailEl) return;
 
   let hana = null;
   // /job-status 的查询键：URL 带来的 jobId，或宿主注入的 cardInstanceId。
@@ -182,7 +238,8 @@ function startCard() {
   let terminal = false;
   let busy = false;
   let failures = 0;
-  const rows = [];
+  /** 每个文件一组详情行，按文件下标对齐；组的结构建一次就不再动。 */
+  const groups = [];
 
   function syncTheme() {
     let snap = null;
@@ -198,8 +255,14 @@ function startCard() {
   }
 
   // 两条都发：SDK 那条在设置窗里生效，聊天流挂载位实测只认 hana.card-resize。
-  function reportSize() {
-    const height = Math.ceil(card.offsetHeight || 0);
+  // 参数是本次想报的高度，不传就量卡片。折叠区展开时卡片还长在路上，量到的只是半截，
+  // 所以那时由调用方把终值算好递进来。resize 事件会把 Event 对象当参数递进来，
+  // 它不是数字，会落到「量卡片」那一路。
+  function reportSize(overrideHeight) {
+    const target = Number(overrideHeight);
+    const height = Number.isFinite(target) && target > 0
+      ? Math.ceil(target)
+      : Math.ceil(card.offsetHeight || 0);
     if (!(height > 0)) return;
     try { hana?.ui?.resize?.({ height, width: CARD_WIDTH }); } catch { /* 老宿主没有这路 */ }
     try { window.parent?.postMessage({ type: "hana.card-resize", height }, "*"); } catch { /* 同上 */ }
@@ -245,9 +308,11 @@ function startCard() {
     lastTextAt = now;
     percentEl.textContent = `${lastPercent.toFixed(1)}%`;
     elapsedEl.textContent = vm.elapsedText;
+    // 详情表里每个文件的耗时跟百分比同一档节流：它也是按秒变的数，
+    // 每帧写一遍只是白白的布局开销。
     vm.files.forEach((file, index) => {
-      const row = rows[index];
-      if (row) row.seconds.textContent = file.secondsText;
+      const group = groups[index];
+      if (group) group.duration.value.textContent = file.durationText;
     });
   }
 
@@ -378,26 +443,127 @@ function startCard() {
     }
   }
 
-  function ensureRows(count) {
-    while (rows.length > count) rows.pop().el.remove();
-    while (rows.length < count) {
-      const el = document.createElement("div");
-      el.className = "di-file";
-      const name = document.createElement("span");
-      name.className = "di-file__name";
-      const tail = document.createElement("span");
-      tail.className = "di-file__tail";
-      const state = document.createElement("span");
-      state.className = "di-file__state";
-      const seconds = document.createElement("span");
-      seconds.className = "di-file__seconds";
-      tail.append(state, seconds);
-      const error = document.createElement("span");
-      error.className = "di-file__error";
-      el.append(name, tail, error);
-      filesEl.append(el);
-      rows.push({ el, name, state, seconds, error });
+  // ── 折叠区 ────────────────────────────────────────────────────────────
+  // 展开态是一张键值表，不是一组卡片：每个文件一组行，组间只给一条极淡的分隔线。
+  // 收起默认发生，且用高度过渡而不是 display:none —— 硬切时看不出下面还有东西。
+
+  const FOLD_MS = 220;
+  /** 与 card.css 里 .di-card__fold.is-open 的 margin-top 同一个数。 */
+  const FOLD_GAP = 9;
+  let expanded = false;
+  let lastFoldH = -1;
+
+  function makeRow(label, extraClass) {
+    const el = document.createElement("div");
+    el.className = "di-kv";
+    if (extraClass) el.classList.add(extraClass);
+    const k = document.createElement("span");
+    k.className = "di-kv__k";
+    k.textContent = label;
+    const value = document.createElement("span");
+    value.className = "di-kv__v";
+    el.append(k, value);
+    return { el, value };
+  }
+
+  /**
+   * 一个文件的六行。页数与后端两行是否在场要随快照变，所以先建好、用 hidden 开关，
+   * 不每次重建：节点稳定，animate() 里缓存的耗时引用才一直有效。
+   */
+  function makeGroup() {
+    const el = document.createElement("div");
+    el.className = "di-detail__group";
+    const row = (label, extraClass) => {
+      const made = makeRow(label, extraClass);
+      el.append(made.el);
+      return made;
+    };
+    return {
+      el,
+      name: row("文件"),
+      path: row("路径"),
+      pages: row("页数"),
+      backend: row("后端"),
+      duration: row("耗时"),
+      status: row("状态", "di-kv--status"),
+    };
+  }
+
+  function ensureGroups(count) {
+    while (groups.length > count) groups.pop().el.remove();
+    while (groups.length < count) {
+      const group = makeGroup();
+      // 「任务」是作业级的一行，位置固定在最后：文件组一律插在它之前。
+      detailEl.insertBefore(group.el, jobRowEl && jobRowEl.parentNode === detailEl ? jobRowEl : null);
+      groups.push(group);
     }
+  }
+
+  function setOptional(row, text) {
+    const has = typeof text === "string" && text.length > 0;
+    row.el.hidden = !has;
+    row.value.textContent = has ? text : "";
+    row.value.title = has ? text : "";
+  }
+
+  function renderDetail(vm) {
+    ensureGroups(vm.files.length);
+    vm.files.forEach((file, index) => {
+      const group = groups[index];
+      group.el.dataset.state = file.status;
+      group.name.value.textContent = file.fileName;
+      group.name.value.title = file.fileName;
+      // 路径一行不换行，起长就尾端省略；完整路径留在 title 里。
+      group.path.value.textContent = file.pathText;
+      group.path.value.title = file.mdPath;
+      setOptional(group.pages, file.pagesText);
+      setOptional(group.backend, file.backendText);
+      group.duration.value.textContent = file.durationText;
+      // 失败时把原因接在同一行后面，不另起一行：列表的行数不能因为一句话而变。
+      group.status.value.textContent = file.error
+        ? `${file.stateText}：${file.error}`
+        : file.stateText;
+      group.status.value.title = file.error;
+      group.status.el.dataset.state = file.status;
+    });
+    const jobText = vm.jobId || jobKey;
+    if (jobRowEl && jobValueEl) {
+      jobRowEl.hidden = !jobText;
+      jobValueEl.textContent = jobText;
+      jobValueEl.title = jobText;
+    }
+  }
+
+  /** 把撑开后的目标高度写进 CSS 变量，max-height 从这里读。返回该高度。 */
+  function applyFoldHeight() {
+    const height = Math.ceil(detailEl.getBoundingClientRect().height || 0);
+    foldEl.style.setProperty("--di-fold-h", `${height}px`);
+    lastFoldH = height;
+    return height;
+  }
+
+  /**
+   * 卡片里除折叠区以外的高度。展开那一刻折叠区正在从 0 长上去，
+   * 直接量卡片量到的是半截；减掉它此刻占的那一段再加重算才准。
+   */
+  function cardBaseHeight() {
+    return (card.offsetHeight || 0) - (foldEl.getBoundingClientRect().height || 0);
+  }
+
+  function setExpanded(next) {
+    const want = !!next;
+    if (want === expanded) return;
+    expanded = want;
+    foldEl.classList.toggle("is-open", expanded);
+    foldEl.setAttribute("aria-hidden", expanded ? "false" : "true");
+    headEl?.setAttribute("aria-expanded", expanded ? "true" : "false");
+    if (chevronEl) chevronEl.textContent = expanded ? "▾" : "▸";
+    const height = applyFoldHeight();
+    // 展开：先把撑开后的终值报上去。过渡要跑 220ms，等它跑完再报，宿主会晚一拍才撑高，
+    // 那段时间详情区被 iframe 的底边裁掉。
+    // 收起：先报小高度会让内容在动画中途被裁，所以只靠下面那一次。
+    if (expanded) reportSize(cardBaseHeight() + FOLD_GAP + height);
+    setTimeout(reportSize, FOLD_MS + 20);
   }
 
   function renderView(vm) {
@@ -407,28 +573,21 @@ function startCard() {
     // 这里写过一次就会和动画抢：轮询一秒一次，每次都把带小数的值盖成整数，
     // 看起来就是数字每秒抽一下、位数突然短一位。
     stateEl.textContent = vm.stateText;
+    stateEl.dataset.state = vm.state;
     card.dataset.state = vm.state;
-    // 单文件时标题就是文件名，再列一行同样的名字纯属重复。
-    // 只有多文件、或单文件失败（那行要装失败原因）才列出来。
-    const showRows = vm.files.length > 1 || vm.files.some((file) => file.error);
-    ensureRows(showRows ? vm.files.length : 0);
-    if (showRows) {
-      vm.files.forEach((file, index) => {
-        const row = rows[index];
-        row.name.textContent = file.name;
-        row.name.title = file.name;
-        row.state.textContent = file.stateText;
-        row.seconds.textContent = file.secondsText;
-        row.error.textContent = file.error;
-        row.el.dataset.state = file.status;
-      });
-    }
+    renderDetail(vm);
+    // 详情内容可能把折叠区撑高或压矮，高度变量每轮重算一次。
+    const previousH = lastFoldH;
+    const height = applyFoldHeight();
+    // 已经展开的时候高度变了，得等过渡跑完再报一次终值。
+    if (expanded && height !== previousH) setTimeout(reportSize, FOLD_MS + 20);
     reportSize();
   }
 
   // 记录没了 / 通道断了：只换状态文字和条子颜色，进度停在此刻，不假装还在走。
   function renderNotice(text) {
     stateEl.textContent = text;
+    stateEl.dataset.state = "stale";
     card.dataset.state = "stale";
     reportSize();
   }
@@ -562,9 +721,15 @@ function startCard() {
     try { hana.ready?.(); } catch { /* 老宿主没有这一步 */ }
     syncTheme();
     try { hana.theme?.subscribe?.(() => syncTheme()); } catch { /* 订阅不可用就只保留首帧 */ }
-    // 只绑一次。这个按钮一直在 DOM 里，只靠 hidden 切换，不会随重渲染重建；
-    // 若是每帧重绑，监听器会越叠越多，点一下就开好几个资源管理器。
-    revealEl?.addEventListener("click", () => { reveal(); });
+    // 只绑一次。这两个按钮一直在 DOM 里，不随轮询重建；
+    // 若是每次渲染重绑，监听器会越叠越多。
+    headEl?.addEventListener("click", () => { setExpanded(!expanded); });
+    revealEl?.addEventListener("click", (event) => {
+      // 「打开文件夹」在第三行，和箭头不在同一层，眼下冒不到折叠监听上；
+      // 这里仍然拦一次：以后把折叠监听提到卡片根节点时，点它不会连带收起。
+      event.stopPropagation();
+      reveal();
+    });
     reportSize();
     // URL 优先：它是卡片自己就能读到的东西，不依赖宿主什么时候把身份注进来。
     // 存量卡片的 route 里没有 job，才去等宿主注入 cardInstanceId。

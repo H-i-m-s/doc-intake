@@ -3,7 +3,7 @@
    取色纪律与设置页（ui/assets/settings.css）同一套：
    · 主题变量优先取宿主注入的 --hana-*，取不到就用本文件自带的值；
      深浅两套都写全，宿主不注入时靠 body.t-dark 切换，两种情况下层级一致。
-   · accent 只出现在一处：进度条填充。
+   · accent 只出现在一处：进度条填充。徽标、折叠区、按钮都用 ink 混出来的灰。
    · 不画渐变、不铺彩色块、不加图标；失败与完成只靠同一个语义色的文字与条子。
    · 外层容器不画背景和圆角 —— 宿主卡片壳已经给了，再画一层就会有双边框。
    -------------------------------------------------------------------------- */
@@ -50,22 +50,54 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 行距不用 gap：折叠区收起时高度必须是 0，而 flex 的 gap 会给一个零高度子项
+   照样留出间距。改成每一行自带上边距，折叠区收起时整体归零。 */
 .di-card {
   width: 460px;
   max-width: 100%;
   padding: 11px 15px 13px;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 0;
 }
 
-/* ---------- 头：文件名 / 百分比 ---------- */
+/* ---------- 头：箭头 / 文件名 / 徽标 / 百分比 ---------- */
+/* 整行是按钮：点箭头、点文件名都能折叠，命中面积大。按钮默认样式全部清掉，
+   留下的是排版本身。 */
 .di-card__head {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
 }
+
+.di-card__head:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--di-ink) 34%, transparent);
+  outline-offset: 3px;
+}
+
+/* 箭头占位固定：▸ 与 ▾ 字宽不同，不钉死会让文件名跟着左右挪一格。 */
+.di-card__chevron {
+  flex: 0 0 auto;
+  width: 10px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--di-muted);
+  transition: color 160ms linear;
+}
+
+.di-card__head:hover .di-card__chevron { color: var(--di-ink); }
 
 .di-card__title {
   flex: 1 1 auto;
@@ -76,6 +108,37 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 状态徽标：淡底 + 同色字，底色从语义色混出来，不另配一套浅色常量。
+   解析中用 ink 的中性灰而不是 accent —— 这一档没有「出错」也没有「成了」，
+   给颜色只会跟进度条抢注意力。 */
+.di-card__state {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: var(--di-sub);
+  background: color-mix(in srgb, var(--di-ink) 9%, transparent);
+  transition: color 240ms linear, background-color 240ms linear;
+}
+
+.di-card__state[data-state="done"] {
+  color: var(--di-ok);
+  background: color-mix(in srgb, var(--di-ok) 13%, transparent);
+}
+
+.di-card__state[data-state="failed"] {
+  color: var(--di-warn);
+  background: color-mix(in srgb, var(--di-warn) 13%, transparent);
+}
+
+.di-card__state[data-state="stale"] {
+  color: var(--di-muted);
+  background: color-mix(in srgb, var(--di-muted) 13%, transparent);
 }
 
 /* 百分比是这张卡上唯一被加粗的数字。
@@ -106,6 +169,7 @@ body {
 .di-card__bar {
   position: relative;
   height: 6px;
+  margin-top: 9px;
   border-radius: 999px;
   overflow: hidden;
   /* 轨道从 currentColor 混出来：深浅两套主题都不用另配一个灰度值。 */
@@ -170,24 +234,18 @@ body {
   .di-card[data-state="running"] .di-card__bar-fill::after { animation: none; opacity: 0; }
 }
 
-/* ---------- 脚：秒数与总状态 ---------- */
+/* ---------- 脚：已等待与「打开文件夹」 ---------- */
 .di-card__foot {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
+  margin-top: 9px;
   font-size: 11.5px;
   color: var(--di-muted);
 }
 
-.di-card__elapsed,
-.di-card__state { white-space: nowrap; }
-
-.di-card__tail {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
+.di-card__elapsed { white-space: nowrap; }
 
 /* 「打开文件夹」：完成态才出现。做成胶囊而不是主按钮，
    它是辅助动作，不该比百分比更抢眼。 */
@@ -216,53 +274,91 @@ body {
 
 .di-card__reveal[hidden] { display: none; }
 
-.di-card__state { color: var(--di-sub); }
-.di-card[data-state="done"] .di-card__state { color: var(--di-ok); }
-.di-card[data-state="failed"] .di-card__state { color: var(--di-warn); }
+/* ---------- 折叠区：键值详情表 ---------- */
+/* 收起用 max-height:0 而不是 display:none：硬切看不到「下面还有东西」，
+   也做不出高度过渡。展开的高度由 JS 写进 --di-fold-h，多留 1px 免得
+   小数舍入把最后一行切掉一条边。 */
+.di-card__fold {
+  overflow: hidden;
+  /* 显式给 0：折叠区是 flex 子项，自动最小尺寸在部分引擎上会跟 max-height 拧着，
+     钉死这一项才能保证收起时高度真是 0。 */
+  min-height: 0;
+  max-height: 0;
+  margin-top: 0;
+  transition: max-height 220ms ease-out, margin-top 220ms ease-out;
+}
 
-/* ---------- 文件行 ---------- */
-.di-card__files {
+.di-card__fold.is-open {
+  max-height: calc(var(--di-fold-h, 0px) + 1px);
+  margin-top: 9px;
+}
+
+/* 比卡片深一层：从 ink 混出来的淡淡一层，深浅主题都成立，不用另配颜色。 */
+.di-card__detail {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--di-ink) 6%, transparent);
 }
 
-.di-file {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: 10px;
-  row-gap: 2px;
-  color: var(--di-sub);
-}
-
-.di-file__name {
-  font-size: 13px;
-  color: var(--di-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.di-file__tail {
+/* 单行：标签定宽，值占满剩下的一行并省略。
+   值不换行是硬要求 —— 一条长路径折成三行，卡片高度就随内容乱跳。 */
+.di-kv {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  font-size: 12px;
+  gap: 10px;
+  min-width: 0;
+}
+
+.di-kv__k {
+  flex: 0 0 auto;
+  width: 2.6em;
+  font-size: 11.5px;
   color: var(--di-muted);
   white-space: nowrap;
 }
 
-.di-file[data-state="done"] .di-file__state { color: var(--di-ok); }
-.di-file[data-state="failed"] .di-file__state { color: var(--di-warn); }
-
-/* 失败原因整行铺满，超长就省略：卡片高度不能因为一句错误信息而变。 */
-.di-file__error {
-  grid-column: 1 / -1;
+.di-kv__v {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 12px;
-  color: var(--di-warn);
+  color: var(--di-sub);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.di-file__error:empty { display: none; }
+/* 任务号是拿来对着日志抄的，等宽小一号才不容易看错字符。 */
+.di-kv__v--mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Segoe UI", monospace;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
+/* 多文件时每个文件一组，组间一条极淡的分隔线；不给每组各画一张卡，
+   那样一层套一层，展开区会变成一摞盒子。 */
+.di-detail__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.di-detail__group + .di-detail__group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--di-ink) 10%, transparent);
+}
+
+/* 状态那一行跟着作业状态换色，展开区里唯一的彩色，方便一眼扫到失败。 */
+.di-kv--status[data-state="done"] .di-kv__v { color: var(--di-ok); }
+.di-kv--status[data-state="failed"] .di-kv__v { color: var(--di-warn); }
+
+.di-kv[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .di-card__fold { transition: none; }
+  .di-card__chevron { transition: none; }
+}

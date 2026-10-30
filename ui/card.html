@@ -8,25 +8,34 @@
 </head>
 <body>
   <!-- 底色与圆角由宿主的卡片壳提供，这一层只排内容。
-       三行结构：文件名 + 百分比 / 进度条 / 秒数与状态。百分比单独立一行右上角，
-       是为了让「走了多少」和「还要多久」分开读，不用在一行里找数字。 -->
+       折叠态三行：箭头 + 文件名 + 徽标 + 百分比 / 进度条 / 已等待 + 打开文件夹。
+       展开态在进度条下面多一块键值表，收在同一行一行的节奏里。
+       头一行做成 button：整块都能点，键盘 Enter / 空格也认得，不用另写键位处理。 -->
   <div class="di-card" id="di-card" data-state="running">
-    <div class="di-card__head">
+    <button class="di-card__head" id="di-fold" type="button" aria-expanded="false" aria-controls="di-fold-zone">
+      <span class="di-card__chevron" id="di-chevron" aria-hidden="true">▸</span>
       <span class="di-card__title" id="di-title">文档解析</span>
+      <span class="di-card__state" id="di-state" data-state="running">解析中</span>
       <span class="di-card__percent" id="di-percent">0.0%</span>
-    </div>
+    </button>
     <div class="di-card__bar">
       <div class="di-card__bar-fill" id="di-fill"></div>
     </div>
     <div class="di-card__foot">
       <span class="di-card__elapsed" id="di-elapsed">已等待 0 秒</span>
-      <span class="di-card__tail">
-        <span class="di-card__state" id="di-state">解析中</span>
-        <!-- 只有真落了盘才出现。没保存到本地时没有可开的位置。 -->
-        <button class="di-card__reveal" id="di-reveal" type="button" hidden>打开文件夹</button>
-      </span>
+      <!-- 只有真落了盘才出现。没保存到本地时没有可开的位置。 -->
+      <button class="di-card__reveal" id="di-reveal" type="button" hidden>打开文件夹</button>
     </div>
-    <div class="di-card__files" id="di-files"></div>
+    <!-- 折叠区：收起时高度为 0（不是 display:none），展开靠 max-height 过渡撑开。
+         内容由 card.js 按文件逐个填，任务号那一行是静态的，排在所有文件之后。 -->
+    <div class="di-card__fold" id="di-fold-zone" aria-hidden="true">
+      <div class="di-card__detail" id="di-detail">
+        <div class="di-kv di-kv--job" id="di-detail-job" hidden>
+          <span class="di-kv__k">任务</span>
+          <span class="di-kv__v di-kv__v--mono" id="di-detail-job-value"></span>
+        </div>
+      </div>
+    </div>
   </div>
   <script type="module" src="./card.js"></script>
 </body>
