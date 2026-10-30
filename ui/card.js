@@ -15,6 +15,8 @@ const POLL_INTERVAL_MS = 1000;
 const CONTEXT_RETRY_TIMES = 20;
 const CONTEXT_RETRY_MS = 200;
 const MAX_CONSECUTIVE_FAILURES = 5;
+/** 百分比数字的刷新间隔。每帧刷会疯跳，太快看不清；100ms 足够跟上条子。 */
+const TEXT_INTERVAL_MS = 100;
 
 const FILE_STATE_TEXT = {
   pending: "等待中",
@@ -179,10 +181,11 @@ function startCard() {
     try { window.parent?.postMessage({ type: "hana.card-resize", height }, "*"); } catch { /* 同上 */ }
   }
 
-  // 上一次写进宽度的百分比。完成时要用它算「还剩多少」，决定补全给多久。
+  // 最近一次轮询拿到的快照。百分比不靠它推进，靠下面那个每帧的时钟。
+  let latest = null;
+  let animId = 0;
   let lastPercent = 0;
-  // 本次完成过渡实际用了多少毫秒，过渡结束后补量高度要用。
-  let lastFinalMs = 0;
+  let lastTextAt = 0;
 
   /**
    * 补全时长按剩余量定。
@@ -196,15 +199,64 @@ function startCard() {
     return Math.min(900, Math.max(160, Math.round(value * 34)));
   }
 
-  function setBar(percent, final) {
-    const target = clampPercent(percent);
-    lastFinalMs = final ? fillDurationFor(100 - lastPercent) : 0;
-    card.classList.toggle("is-final", Boolean(final));
-    // 完成那段时长只能由 JS 写：它取决于当时剩余多少，写死在 CSS 里就不成立了。
-    // 两个值分别对 width 和 background-color，清空则回落 CSS 里的平时值。
-    fillEl.style.transitionDuration = lastFinalMs > 0 ? `${lastFinalMs}ms, 240ms` : "";
-    fillEl.style.width = `${target.toFixed(2)}%`;
-    lastPercent = target;
+  function stopAnimation() {
+    if (animId) {
+      cancelAnimationFrame(animId);
+      animId = 0;
+    }
+  }
+
+  /**
+   * 每帧推进。百分比是「已经跑了多久」的函数，本地就能连续算，不必等轮询；
+   * 轮询只负责作业状态（还在跑、还是已结束）。
+   *
+   * 原来是一秒拉一次、每次用 320ms 过渡走过去再停 680ms，看着就是一跳一跳。
+   */
+  function animate() {
+    if (terminal) {
+      animId = 0;
+      return;
+    }
+    animId = requestAnimationFrame(animate);
+    if (!latest) return;
+    const now = Date.now();
+    const vm = buildViewModel(latest, now);
+    lastPercent = clampPercent(vm.percent);
+    fillEl.style.width = `${lastPercent.toFixed(2)}%`;
+    // 数字没必要跟条子一样每帧刷，100ms 一刷；值本身连续，看起来是小位数在稳定爬。
+    if (now - lastTextAt < TEXT_INTERVAL_MS) return;
+    lastTextAt = now;
+    percentEl.textContent = `${lastPercent.toFixed(1)}%`;
+    elapsedEl.textContent = vm.elapsedText;
+    vm.files.forEach((file, index) => {
+      const row = rows[index];
+      if (row) row.seconds.textContent = file.secondsText;
+    });
+  }
+
+  /**
+   * 终态：停掉时钟，最后一次按剩余量补完。失败则停在原地，不假装还能到 100。
+   */
+  function settle(vm) {
+    terminal = true;
+    clearTimer();
+    stopAnimation();
+    if (!vm.final) {
+      percentEl.textContent = `${lastPercent.toFixed(1)}%`;
+      reportSize();
+      return;
+    }
+    const ms = fillDurationFor(100 - lastPercent);
+    card.classList.add("is-final");
+    fillEl.style.transitionDuration = `${ms}ms, 240ms`;
+    // 下一帧再写目标值：过渡设置和宽度在同一帧里改，浏览器可能合并成一次样式计算，
+    // 过渡就不生效了。
+    requestAnimationFrame(() => {
+      fillEl.style.width = "100%";
+      percentEl.textContent = "100.0%";
+      lastPercent = 100;
+    });
+    setTimeout(reportSize, ms + 40);
   }
 
   function ensureRows(count) {
@@ -238,7 +290,7 @@ function startCard() {
     elapsedEl.textContent = vm.elapsedText;
     stateEl.textContent = vm.stateText;
     card.dataset.state = vm.state;
-    setBar(vm.percent, vm.final);
+    // 宽度、百分比、秒数不在这里写：它们由 animate() 每帧推。
     // 单文件时标题就是文件名，再列一行同样的名字纯属重复。
     // 只有多文件、或单文件失败（那行要装失败原因）才列出来。
     const showRows = vm.files.length > 1 || vm.files.some((file) => file.error);
@@ -320,13 +372,11 @@ function startCard() {
       stopWith("解析记录已失效");
       return;
     }
+    latest = job;
     const vm = buildViewModel(job, Date.now());
     renderView(vm);
     if (vm.state === "done" || vm.state === "failed") {
-      // 终态停轮询；完成那段过渡走完后再补一次高度，避免它被过渡撑高的一瞬间没报上去。
-      terminal = true;
-      clearTimer();
-      if (vm.final) setTimeout(reportSize, lastFinalMs);
+      settle(vm);
       return;
     }
     schedule();
@@ -374,6 +424,8 @@ function startCard() {
       renderNotice("无法识别这张卡片对应的任务");
       return;
     }
+    // 先开时钟再拉首帧：晚几百毫秒开始，条子就会先在 0% 上停一段。
+    animate();
     await tick();
   })();
 }

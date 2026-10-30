@@ -118,8 +118,11 @@ body {
     color-mix(in srgb, var(--di-accent) 76%, transparent) 0%,
     var(--di-accent) 100%
   );
-  /* 每秒的推进用小步过渡，看起来是在走；最后那一段由 .is-final 拉长到 1.4 秒。 */
-  transition: width 320ms linear, background-color 240ms linear;
+  /* 宽度每帧由 JS 直接写，不走过渡：两边都参与就会互相打架，
+     表现出来就是一顿一顿的。过渡只留给完成那一下，时长由 JS 写进 inline。 */
+  transition-property: width, background-color;
+  transition-duration: 0ms, 240ms;
+  transition-timing-function: linear, linear;
 }
 
 /* 脉冲：一条高光带在已填充的区域里反复扫过。
