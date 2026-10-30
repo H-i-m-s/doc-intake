@@ -557,7 +557,7 @@ function startCard() {
     foldEl.classList.toggle("is-open", expanded);
     foldEl.setAttribute("aria-hidden", expanded ? "false" : "true");
     headEl?.setAttribute("aria-expanded", expanded ? "true" : "false");
-    if (chevronEl) chevronEl.textContent = expanded ? "▾" : "▸";
+    if (chevronEl) chevronEl.classList.toggle("is-open", expanded);
     const height = applyFoldHeight();
     // 展开：先把撑开后的终值报上去。过渡要跑 220ms，等它跑完再报，宿主会晚一拍才撑高，
     // 那段时间详情区被 iframe 的底边裁掉。

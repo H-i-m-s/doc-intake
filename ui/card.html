@@ -13,7 +13,12 @@
        头一行做成 button：整块都能点，键盘 Enter / 空格也认得，不用另写键位处理。 -->
   <div class="di-card" id="di-card" data-state="running">
     <button class="di-card__head" id="di-fold" type="button" aria-expanded="false" aria-controls="di-fold-zone">
-      <span class="di-card__chevron" id="di-chevron" aria-hidden="true">▸</span>
+      <!-- 用 SVG 而不是 ▸ ▾ 字符：符号字在不同字体里大小、基线、粗细都不一样，
+           跟着主题字体变样子；线条是固定的，旋转也才顺。 -->
+      <svg class="di-card__chevron" id="di-chevron" viewBox="0 0 12 12" aria-hidden="true">
+        <path d="M4.4 2.6 L7.8 6 L4.4 9.4" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
       <span class="di-card__title" id="di-title">文档解析</span>
       <span class="di-card__state" id="di-state" data-state="running">解析中</span>
       <span class="di-card__percent" id="di-percent">0.0%</span>

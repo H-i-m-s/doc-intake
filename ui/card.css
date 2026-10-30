@@ -87,15 +87,18 @@ body {
   outline-offset: 3px;
 }
 
-/* 箭头占位固定：▸ 与 ▾ 字宽不同，不钉死会让文件名跟着左右挪一格。 */
+/* 箭头：一根细线条，收起时指向右，展开时转 90 度朝下。
+   箭头占位固定，旋转不会改变尺寸，所以文件名不会跟着挪。 */
 .di-card__chevron {
   flex: 0 0 auto;
-  width: 10px;
-  font-size: 11px;
-  line-height: 1;
-  color: var(--di-muted);
-  transition: color 160ms linear;
+  width: 12px;
+  height: 12px;
+  display: block;
+  color: var(--di-sub);
+  transition: transform 220ms ease-out, color 160ms linear;
 }
+
+.di-card__chevron.is-open { transform: rotate(90deg); }
 
 .di-card__head:hover .di-card__chevron { color: var(--di-ink); }
 
@@ -111,24 +114,24 @@ body {
 }
 
 /* 状态徽标：淡底 + 同色字，底色从语义色混出来，不另配一套浅色常量。
-   解析中用 ink 的中性灰而不是 accent —— 这一档没有「出错」也没有「成了」，
-   给颜色只会跟进度条抢注意力。 */
+   解析中用 accent：卡上已经不止进度条一处需要颜色了，不给颜色这一档
+   就和旁边那堆灰字混成一片，一眼看不出这张卡在做什么。 */
 .di-card__state {
   flex: 0 0 auto;
-  padding: 1px 7px;
+  padding: 1px 8px;
   border-radius: 999px;
   font-size: 11.5px;
   font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
-  color: var(--di-sub);
-  background: color-mix(in srgb, var(--di-ink) 9%, transparent);
+  color: var(--di-accent);
+  background: color-mix(in srgb, var(--di-accent) 16%, transparent);
   transition: color 240ms linear, background-color 240ms linear;
 }
 
 .di-card__state[data-state="done"] {
   color: var(--di-ok);
-  background: color-mix(in srgb, var(--di-ok) 13%, transparent);
+  background: color-mix(in srgb, var(--di-ok) 18%, transparent);
 }
 
 .di-card__state[data-state="failed"] {
@@ -174,7 +177,8 @@ body {
   overflow: hidden;
   /* 轨道从 currentColor 混出来：深浅两套主题都不用另配一个灰度值。 */
   color: var(--di-ink);
-  background: color-mix(in srgb, currentColor 11%, transparent);
+  /* 轨道压淡一点，把注意力让给填充。 */
+  background: color-mix(in srgb, currentColor 9%, transparent);
 }
 
 .di-card__bar-fill {
@@ -248,17 +252,17 @@ body {
 .di-card__elapsed { white-space: nowrap; }
 
 /* 「打开文件夹」：完成态才出现。做成胶囊而不是主按钮，
-   它是辅助动作，不该比百分比更抢眼。 */
+   它是辅助动作，不该比百分比更抢眼，但也不能淡到看不见。 */
 .di-card__reveal {
   appearance: none;
   margin: 0;
-  padding: 2px 9px;
+  padding: 2px 10px;
   border: 0;
   border-radius: 999px;
   font: inherit;
   font-size: 11.5px;
-  color: var(--di-sub);
-  background: color-mix(in srgb, var(--di-ink) 8%, transparent);
+  color: color-mix(in srgb, var(--di-ink) 74%, transparent);
+  background: color-mix(in srgb, var(--di-ink) 10%, transparent);
   cursor: pointer;
   transition: background-color 160ms linear, color 160ms linear;
 }
@@ -293,18 +297,20 @@ body {
   margin-top: 9px;
 }
 
-/* 比卡片深一层：从 ink 混出来的淡淡一层，深浅主题都成立，不用另配颜色。 */
+/* 比卡片深一层：从 ink 混出来的淡淡一层，深浅主题都成立，不用另配颜色。
+   再加一道内描边，让这一块和上面的文字层分得开，不像一块渗开的脏底。 */
 .di-card__detail {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--di-ink) 6%, transparent);
+  background: color-mix(in srgb, var(--di-ink) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--di-ink) 7%, transparent);
 }
 
 /* 单行：标签定宽，值占满剩下的一行并省略。
-   值不换行是硬要求 —— 一条长路径折成三行，卡片高度就随内容乱跳。 */
+   值不换行是硬要求：一条长路径折成三行，卡片高度就随内容乱跳。 */
 .di-kv {
   display: flex;
   align-items: baseline;
@@ -312,11 +318,12 @@ body {
   min-width: 0;
 }
 
+/* 标签压到中间灰，值提到最亮：一列键一列值，先分得出哪边是名、哪边是内容。 */
 .di-kv__k {
   flex: 0 0 auto;
   width: 2.6em;
   font-size: 11.5px;
-  color: var(--di-muted);
+  color: var(--di-sub);
   white-space: nowrap;
 }
 
@@ -324,7 +331,7 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 12px;
-  color: var(--di-sub);
+  color: var(--di-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -347,9 +354,9 @@ body {
 }
 
 .di-detail__group + .di-detail__group {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--di-ink) 10%, transparent);
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--di-ink) 12%, transparent);
 }
 
 /* 状态那一行跟着作业状态换色，展开区里唯一的彩色，方便一眼扫到失败。 */
