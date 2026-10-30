@@ -149,7 +149,12 @@ body {
   55%, 100% { transform: translateX(100%); }
 }
 
-.di-card.is-final .di-card__bar-fill { transition-duration: 1400ms, 240ms; }
+/* 完成那一段：时长不写在这里。剩余多就多给点时间、剩得少就立刻收，
+   这个量只能等运行时算，由 card.js 写 inline transitionDuration。
+   这里只管曲线：起步接近峰值速度、全程只减速不加速，easeOutExpo 一类。 */
+.di-card.is-final .di-card__bar-fill {
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1), linear;
+}
 
 .di-card[data-state="done"] .di-card__bar-fill { background: var(--di-ok); }
 .di-card[data-state="failed"] .di-card__bar-fill { background: var(--di-warn); }

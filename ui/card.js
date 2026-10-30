@@ -15,8 +15,6 @@ const POLL_INTERVAL_MS = 1000;
 const CONTEXT_RETRY_TIMES = 20;
 const CONTEXT_RETRY_MS = 200;
 const MAX_CONSECUTIVE_FAILURES = 5;
-/** 完成时补完最后一段的过渡留在一秒半以内：看得出是在走，不是跳过去。 */
-const FINAL_TRANSITION_MS = 1400;
 
 const FILE_STATE_TEXT = {
   pending: "等待中",
@@ -181,9 +179,32 @@ function startCard() {
     try { window.parent?.postMessage({ type: "hana.card-resize", height }, "*"); } catch { /* 同上 */ }
   }
 
+  // 上一次写进宽度的百分比。完成时要用它算「还剩多少」，决定补全给多久。
+  let lastPercent = 0;
+  // 本次完成过渡实际用了多少毫秒，过渡结束后补量高度要用。
+  let lastFinalMs = 0;
+
+  /**
+   * 补全时长按剩余量定。
+   *
+   * 写死成固定值不行：只剩 1% 时条子会在原地磨一秒多，只剩三成时又显得太快。
+   * 每百分点 34ms，下限 160ms 让最后一下看得见，上限 900ms 防止剩余量很大时拖太久。
+   */
+  function fillDurationFor(remaining) {
+    const value = Number(remaining);
+    if (!Number.isFinite(value) || value <= 0) return 160;
+    return Math.min(900, Math.max(160, Math.round(value * 34)));
+  }
+
   function setBar(percent, final) {
+    const target = clampPercent(percent);
+    lastFinalMs = final ? fillDurationFor(100 - lastPercent) : 0;
     card.classList.toggle("is-final", Boolean(final));
-    fillEl.style.width = `${clampPercent(percent).toFixed(2)}%`;
+    // 完成那段时长只能由 JS 写：它取决于当时剩余多少，写死在 CSS 里就不成立了。
+    // 两个值分别对 width 和 background-color，清空则回落 CSS 里的平时值。
+    fillEl.style.transitionDuration = lastFinalMs > 0 ? `${lastFinalMs}ms, 240ms` : "";
+    fillEl.style.width = `${target.toFixed(2)}%`;
+    lastPercent = target;
   }
 
   function ensureRows(count) {
@@ -305,7 +326,7 @@ function startCard() {
       // 终态停轮询；完成那段过渡走完后再补一次高度，避免它被过渡撑高的一瞬间没报上去。
       terminal = true;
       clearTimer();
-      if (vm.final) setTimeout(reportSize, FINAL_TRANSITION_MS);
+      if (vm.final) setTimeout(reportSize, lastFinalMs);
       return;
     }
     schedule();
