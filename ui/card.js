@@ -392,13 +392,11 @@ function startCard() {
   function renderView(vm) {
     titleEl.textContent = vm.title;
     titleEl.title = vm.title;
-    // 向上取整：停住不动的 0% 比停在 1% 更像死掉。进度本身是估的，取整不进位反而会
-    // 让长文件在头十来秒一直挂着 0%。
-    percentEl.textContent = `${Math.ceil(clampPercent(vm.percent) - 1e-9)}%`;
-    elapsedEl.textContent = vm.elapsedText;
+    // 百分比和秒数一律不在这里写：它们由 animate() 每帧推。
+    // 这里写过一次就会和动画抢：轮询一秒一次，每次都把带小数的值盖成整数，
+    // 看起来就是数字每秒抽一下、位数突然短一位。
     stateEl.textContent = vm.stateText;
     card.dataset.state = vm.state;
-    // 宽度、百分比、秒数不在这里写：它们由 animate() 每帧推。
     // 单文件时标题就是文件名，再列一行同样的名字纯属重复。
     // 只有多文件、或单文件失败（那行要装失败原因）才列出来。
     const showRows = vm.files.length > 1 || vm.files.some((file) => file.error);
