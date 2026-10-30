@@ -180,6 +180,39 @@ body {
 .di-card__elapsed,
 .di-card__state { white-space: nowrap; }
 
+.di-card__tail {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+/* 「打开文件夹」：完成态才出现。做成胶囊而不是主按钮，
+   它是辅助动作，不该比百分比更抢眼。 */
+.di-card__reveal {
+  appearance: none;
+  margin: 0;
+  padding: 2px 9px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--di-sub);
+  background: color-mix(in srgb, var(--di-ink) 8%, transparent);
+  cursor: pointer;
+  transition: background-color 160ms linear, color 160ms linear;
+}
+
+.di-card__reveal:hover {
+  color: var(--di-ink);
+  background: color-mix(in srgb, var(--di-ink) 15%, transparent);
+}
+
+.di-card__reveal:active {
+  background: color-mix(in srgb, var(--di-ink) 22%, transparent);
+}
+
+.di-card__reveal[hidden] { display: none; }
+
 .di-card__state { color: var(--di-sub); }
 .di-card[data-state="done"] .di-card__state { color: var(--di-ok); }
 .di-card[data-state="failed"] .di-card__state { color: var(--di-warn); }

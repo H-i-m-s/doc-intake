@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { validateMineruToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
 import { createUpdateCheck, normalizeIntervalMinutes } from "../lib/update-check.mjs";
-import { findJobByCardId, getJob } from "../lib/jobs.js";
+import { findJobByCardId, getJob, hasSavedPath } from "../lib/jobs.js";
 import {
   combinedFingerprint,
   evaluateTokenStatus,
@@ -503,6 +503,26 @@ export default function registerSettingsRoutes(app, ctx) {
     const job = key ? (getJob(key) ?? findJobByCardId(key)) : null;
     if (!job) return c.json({ ok: false, error: "job not found" }, 404);
     return c.json({ ok: true, job });
+  });
+
+  // ---- 打开文件所在位置 -----------------------------------------------------
+  // 卡片完成态那个按钮点这里。直接在 App 进程起 explorer，不走宿主平台 API：
+  // 宿主那边只能开 URL，定位到文件这一层它没有对应能力。
+  // 只接作业表里真实写过的 .md：这个端点能起进程，不能变成任意路径都能开的通道。
+  app.post("/reveal", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const target = typeof body?.path === "string" ? body.path.trim() : "";
+    if (!target || !hasSavedPath(target)) {
+      return c.json({ ok: false, error: "只能打开本次解析保存下来的文件" }, 400);
+    }
+    try {
+      // explorer 的 /select 语法要把逗号和路径写在同一个参数里，路径本身不额外加引号。
+      const child = spawn("explorer.exe", ["/select,", target], { detached: true, stdio: "ignore" });
+      child.unref();
+      return c.json({ ok: true, path: target });
+    } catch (error) {
+      return c.json({ ok: false, error: `打开失败：${error?.message || error}` }, 500);
+    }
   });
 
   app.get("/config", async (c) => {

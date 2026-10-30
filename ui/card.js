@@ -96,6 +96,8 @@ export function buildViewModel(snapshot, now) {
         ? (typeof file?.error === "string" && file.error.trim() ? file.error.trim() : "解析失败")
         : "",
       percent,
+      // 已落盘的 Markdown 路径。没保存就没值，「打开文件夹」也就不会出现。
+      mdPath: typeof file?.mdPath === "string" && file.mdPath ? file.mdPath : "",
     };
   });
 
@@ -148,6 +150,7 @@ function startCard() {
   const percentEl = document.getElementById("di-percent");
   const elapsedEl = document.getElementById("di-elapsed");
   const stateEl = document.getElementById("di-state");
+  const revealEl = document.getElementById("di-reveal");
   const fillEl = document.getElementById("di-fill");
   const filesEl = document.getElementById("di-files");
   if (!card || !fillEl || !filesEl) return;
@@ -186,6 +189,8 @@ function startCard() {
   let animId = 0;
   let lastPercent = 0;
   let lastTextAt = 0;
+  // 完成且落了盘才有值，undefined 就代表没东西可开。
+  let savedPath = "";
 
   /**
    * 补全时长按剩余量定。
@@ -249,14 +254,43 @@ function startCard() {
     const ms = fillDurationFor(100 - lastPercent);
     card.classList.add("is-final");
     fillEl.style.transitionDuration = `${ms}ms, 240ms`;
+    // 落盘了才给「打开文件夹」。多文件作业里只开第一个成功的：
+    // 默认都落在同一个输出目录，开哪一个文件夹结果一样。
+    const saved = vm.files.find((file) => file.status === "done" && file.mdPath);
+    if (saved && revealEl) {
+      savedPath = saved.mdPath;
+      revealEl.hidden = false;
+    }
     // 下一帧再写目标值：过渡设置和宽度在同一帧里改，浏览器可能合并成一次样式计算，
     // 过渡就不生效了。
     requestAnimationFrame(() => {
       fillEl.style.width = "100%";
       percentEl.textContent = "100.0%";
       lastPercent = 100;
+      reportSize();
     });
     setTimeout(reportSize, ms + 40);
+  }
+
+  /**
+   * 在系统文件管理器里定位到那个文件。
+   * 实际动手的是 App 进程（explorer /select），这里只发一包请求；
+   * 卡片 iframe 自己没有起进程的能力，也不该有。
+   */
+  async function reveal() {
+    if (!savedPath) return;
+    try {
+      const res = await hana.api.fetch("/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: savedPath }),
+      });
+      const body = await res.json().catch(() => null);
+      // 失败就在按钮上留一句原因，不开弹窗：卡片里没有对话框，也不该有。
+      if (body && body.ok === false) revealEl.title = body.error || "打开失败";
+    } catch {
+      revealEl.title = "打开失败";
+    }
   }
 
   function ensureRows(count) {
@@ -418,6 +452,9 @@ function startCard() {
     try { hana.ready?.(); } catch { /* 老宿主没有这一步 */ }
     syncTheme();
     try { hana.theme?.subscribe?.(() => syncTheme()); } catch { /* 订阅不可用就只保留首帧 */ }
+    // 只绑一次。这个按钮一直在 DOM 里，只靠 hidden 切换，不会随重渲染重建；
+    // 若是每帧重绑，监听器会越叠越多，点一下就开好几个资源管理器。
+    revealEl?.addEventListener("click", () => { reveal(); });
     reportSize();
     cardInstanceId = await resolveCardInstanceId();
     if (!cardInstanceId) {

@@ -269,10 +269,13 @@ async function runJobInBackground({ jobId, sources, input, ctx, settings, enrich
 
   results.forEach((item, index) => {
     const ok = item.ok === true;
+    // 卡片的「打开文件夹」靠这个路径。只取落盘后的 mdPath，没保存就没有可开的文件。
+    const saved = ok ? toFileOutput(item) : null;
     updateFile(jobId, index, {
       status: ok ? "done" : "failed",
       stage: ok ? "ok" : "fail",
       error: ok ? null : (item.error?.message ?? "未知错误"),
+      mdPath: saved?.mdPath ?? null,
     });
   });
 

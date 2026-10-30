@@ -20,7 +20,11 @@
     </div>
     <div class="di-card__foot">
       <span class="di-card__elapsed" id="di-elapsed">已等待 0 秒</span>
-      <span class="di-card__state" id="di-state">解析中</span>
+      <span class="di-card__tail">
+        <span class="di-card__state" id="di-state">解析中</span>
+        <!-- 只有真落了盘才出现。没保存到本地时没有可开的位置。 -->
+        <button class="di-card__reveal" id="di-reveal" type="button" hidden>打开文件夹</button>
+      </span>
     </div>
     <div class="di-card__files" id="di-files"></div>
   </div>
