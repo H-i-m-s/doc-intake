@@ -369,11 +369,21 @@ function startCard() {
    * 选补满的时长：从 260ms 起试，不满足单调就放大。
    * 起点速度越小，这一段需要的时长越长；上限 2000ms 只为兜极端情况。
    */
+  /**
+   * 补满那段要多久。
+   *
+   * 这里只保证形状合法（单调、不越界），不管好看。时长定得太短时，五次曲线为了
+   * 在几十毫秒内走完剩下的点，峰值速度会飏到平均值的两倍以上，看起来就是「啪」一下满了。
+   * 所以起点时长按剩余量给：每百分点 90ms，下限 620ms，上限 1600ms。
+   * 剩余得少就短一点，但不会再短到看不清中间过程。
+   */
   function pickFillMs(p0, v0, a0) {
-    for (let ms = 260; ms <= 2000; ms += 40) {
+    const remaining = Math.max(0, 100 - p0);
+    const floor = Math.min(1600, Math.max(620, remaining * 90));
+    for (let ms = Math.round(floor / 40) * 40; ms <= 2400; ms += 40) {
       if (fillShapeOk(p0, v0, a0, ms)) return ms;
     }
-    return 2000;
+    return 2400;
   }
 
   /**
