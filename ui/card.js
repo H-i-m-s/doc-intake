@@ -7,7 +7,7 @@
 // 进度：数字全部来自 ui/shared/progress.js 的同一条曲线，卡片不重算公式。
 // 条子走到 100% 只有两种情况：文件真的 done，或整个作业 state 变成 done。
 
-import { estimateTotalMs, fakePercent } from "./shared/progress.js";
+import { estimateTotalMs, fakeAcceleration, fakePercent, fakeVelocity } from "./shared/progress.js";
 
 /** 卡片宽度固定，宿主卡片壳按这个值给列宽。 */
 export const CARD_WIDTH = 460;
@@ -77,15 +77,21 @@ export function buildViewModel(snapshot, now) {
   const files = rawFiles.map((file) => {
     const status = isKnownFileStatus(file?.status) ? file.status : "pending";
     const elapsed = fileElapsedMs(file, nowMs);
+    const backend = typeof file?.backend === "string" && file.backend ? file.backend : "mineru";
+    const total = estimateTotalMs(file?.pages, backend);
     let percent;
+    let velocity = 0;
+    let acceleration = 0;
     if (status === "done") {
-      // 真完成了才给 100：曲线本身停在 96，那 4 个点就是留给这个事件的。
+      // 真完成了才给 100：曲线本身停在 99，那 1 个点就是留给这个事件的。
       percent = 100;
     } else {
       // backend 还没回报时按 mineru 估：它是 PDF 的默认档，量级最接近，
       // 差的只是起步那几秒，比起把进度条停住更接近用户看到的事实。
-      const backend = typeof file?.backend === "string" && file.backend ? file.backend : "mineru";
-      percent = clampPercent(fakePercent(elapsed, estimateTotalMs(file?.pages, backend)));
+      percent = clampPercent(fakePercent(elapsed, total));
+      // 速度和加速度也一并带出去：完成那一段要从「此刻的速度」接着跑。
+      velocity = fakeVelocity(elapsed, total);
+      acceleration = fakeAcceleration(elapsed, total);
     }
     return {
       name: typeof file?.name === "string" && file.name ? file.name : "未命名文件",
@@ -96,6 +102,8 @@ export function buildViewModel(snapshot, now) {
         ? (typeof file?.error === "string" && file.error.trim() ? file.error.trim() : "解析失败")
         : "",
       percent,
+      velocity,
+      acceleration,
       // 已落盘的 Markdown 路径。没保存就没值，「打开文件夹」也就不会出现。
       mdPath: typeof file?.mdPath === "string" && file.mdPath ? file.mdPath : "",
     };
@@ -103,6 +111,13 @@ export function buildViewModel(snapshot, now) {
 
   const average = files.length
     ? files.reduce((sum, file) => sum + file.percent, 0) / files.length
+    : 0;
+  // 速度和加速度同样取平均：总百分比是各文件百分比的算术平均，它的导数也就是导数们的平均。
+  const velocity = files.length
+    ? files.reduce((sum, file) => sum + file.velocity, 0) / files.length
+    : 0;
+  const acceleration = files.length
+    ? files.reduce((sum, file) => sum + file.acceleration, 0) / files.length
     : 0;
   // 失败态保留当前进度：作业没有「完成」这回事，把条子推满等于报假消息。
   const percent = state === "done" ? 100 : clampPercent(average);
@@ -117,6 +132,9 @@ export function buildViewModel(snapshot, now) {
     state: state === "done" || state === "failed" ? state : "running",
     elapsedText: formatElapsed(elapsedMs),
     percent,
+    // 完成那一段的起手条件：位置、速度、加速度。
+    velocity,
+    acceleration,
     files,
     // 只有真完成才走收尾过渡；失败停在原地，不给任何「快好了」的暗示。
     final: state === "done",
@@ -192,18 +210,6 @@ function startCard() {
   // 完成且落了盘才有值，undefined 就代表没东西可开。
   let savedPath = "";
 
-  /**
-   * 补全时长按剩余量定。
-   *
-   * 写死成固定值不行：只剩 1% 时条子会在原地磨一秒多，只剩三成时又显得太快。
-   * 每百分点 34ms，下限 160ms 让最后一下看得见，上限 900ms 防止剩余量很大时拖太久。
-   */
-  function fillDurationFor(remaining) {
-    const value = Number(remaining);
-    if (!Number.isFinite(value) || value <= 0) return 160;
-    return Math.min(900, Math.max(160, Math.round(value * 34)));
-  }
-
   function stopAnimation() {
     if (animId) {
       cancelAnimationFrame(animId);
@@ -240,20 +246,91 @@ function startCard() {
   }
 
   /**
-   * 终态：停掉时钟，最后一次按剩余量补完。失败则停在原地，不假装还能到 100。
+   * 五次 Hermite。六个边界条件：起点的位置、速度、加速度，终点的位置、速度、加速度。
+   * 终点那三项（100、0、0）是定死的，所以只用得上前三个基函数。
+   *
+   * 为什么是五次而不是三次：三次只能锁住位置和速度，加速度在接缝处会跳，
+   * 而人眼挑得出来的正是那一跳。五次把加速度也锁上。
+   * s 在 [0,1] 上，v0 与 a0 要先乘上 T 和 T² 换算成「点」。
+   */
+  function hermite5(s, p0, v0, a0, p1) {
+    const s2 = s * s;
+    const s3 = s2 * s;
+    const s4 = s3 * s;
+    const s5 = s4 * s;
+    const h0 = 1 - 10 * s3 + 15 * s4 - 6 * s5;
+    const h1 = s - 6 * s3 + 8 * s4 - 3 * s5;
+    const h2 = (s2 - 3 * s3 + 3 * s4 - s5) / 2;
+    const h3 = 10 * s3 - 15 * s4 + 6 * s5;
+    return h0 * p0 + h1 * v0 + h2 * a0 + h3 * p1;
+  }
+
+  /** 这一段曲线必须单调、不越 100，否则会看到条子冲出去再退回来。 */
+  function fillShapeOk(p0, v0, a0, ms) {
+    let prev = p0;
+    for (let i = 1; i <= 48; i += 1) {
+      const p = hermite5(i / 48, p0, ms * v0, ms * ms * a0, 100);
+      if (!Number.isFinite(p)) return false;
+      if (p < prev - 1e-6) return false;
+      if (p > 100 + 1e-6) return false;
+      prev = p;
+    }
+    return true;
+  }
+
+  /**
+   * 选补满的时长：从 260ms 起试，不满足单调就放大。
+   * 起点速度越小，这一段需要的时长越长；上限 2000ms 只为兜极端情况。
+   */
+  function pickFillMs(p0, v0, a0) {
+    for (let ms = 260; ms <= 2000; ms += 40) {
+      if (fillShapeOk(p0, v0, a0, ms)) return ms;
+    }
+    return 2000;
+  }
+
+  /**
+   * 补满那一下：从这里接着跑，不是从这里重新开始。
+   *
+   * 起点取当前百分比、当前速度、当前加速度，终点位置 100、速度 0、加速度 0。
+   * 于是接缝处位置、速度、加速度三样都连续，肉眼看不到切换；
+   * 速度在中间会自己提上去再收住，不需要另外硬拉一段过渡。
+   */
+  function fillToFull(from, v0, a0) {
+    if (!(100 - from > 1e-6)) {
+      fillEl.style.width = "100%";
+      percentEl.textContent = "100.0%";
+      lastPercent = 100;
+      reportSize();
+      return;
+    }
+    const ms = pickFillMs(from, v0, a0);
+    const startedAt = performance.now();
+    const frame = (now) => {
+      const s = Math.min(1, Math.max(0, (now - startedAt) / ms));
+      const clamped = Math.min(100, Math.max(from, hermite5(s, from, ms * v0, ms * ms * a0, 100)));
+      lastPercent = clamped;
+      fillEl.style.width = `${clamped.toFixed(2)}%`;
+      percentEl.textContent = `${clamped.toFixed(1)}%`;
+      if (s < 1) {
+        requestAnimationFrame(frame);
+        return;
+      }
+      fillEl.style.width = "100%";
+      percentEl.textContent = "100.0%";
+      lastPercent = 100;
+      reportSize();
+    };
+    requestAnimationFrame(frame);
+  }
+
+  /**
+   * 终态：停掉时钟，按 C² 连续的五次曲线补完。失败则停在原地，不假装还能到 100。
    */
   function settle(vm) {
     terminal = true;
     clearTimer();
     stopAnimation();
-    if (!vm.final) {
-      percentEl.textContent = `${lastPercent.toFixed(1)}%`;
-      reportSize();
-      return;
-    }
-    const ms = fillDurationFor(100 - lastPercent);
-    card.classList.add("is-final");
-    fillEl.style.transitionDuration = `${ms}ms, 240ms`;
     // 落盘了才给「打开文件夹」。多文件作业里只开第一个成功的：
     // 默认都落在同一个输出目录，开哪一个文件夹结果一样。
     const saved = vm.files.find((file) => file.status === "done" && file.mdPath);
@@ -261,15 +338,12 @@ function startCard() {
       savedPath = saved.mdPath;
       revealEl.hidden = false;
     }
-    // 下一帧再写目标值：过渡设置和宽度在同一帧里改，浏览器可能合并成一次样式计算，
-    // 过渡就不生效了。
-    requestAnimationFrame(() => {
-      fillEl.style.width = "100%";
-      percentEl.textContent = "100.0%";
-      lastPercent = 100;
+    if (!vm.final) {
+      percentEl.textContent = `${lastPercent.toFixed(1)}%`;
       reportSize();
-    });
-    setTimeout(reportSize, ms + 40);
+      return;
+    }
+    fillToFull(lastPercent, vm.velocity, vm.acceleration);
   }
 
   /**

@@ -59,3 +59,35 @@ export function fakePercent(elapsedMs, totalMs) {
   if (!Number.isFinite(raw)) return 0;
   return Math.min(PROGRESS_CAP, Math.max(0, raw));
 }
+
+/**
+ * 曲线的瞬时速度（百分点 / 毫秒）。
+ *
+ * 完成那一段要从「此刻的速度」接着跑，不能凭空起步；起步就对不上时，
+ * 条子会在完成那一瞬抽一下。导出它就是为了把这个接缝做平滑。
+ */
+export function fakeVelocity(elapsedMs, totalMs) {
+  const total = Number(totalMs);
+  if (!(total > 0)) return 0;
+  const elapsed = Number(elapsedMs);
+  const safeElapsed = Number.isFinite(elapsed) && elapsed > 0 ? elapsed : 0;
+  const lambda = PROGRESS_K / total;
+  const value = PROGRESS_CAP * lambda * Math.exp(-lambda * safeElapsed);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * 曲线的瞬时加速度（百分点 / 毫秒²）。始终为负：这条曲线只会越来越慢。
+ *
+ * 三个量（位置、速度、加速度）都接上了，接缝在肉眼上才是真的看不出来。
+ * 只接位置和速度不够——加速度在那一瞬跳一下，依然会被眼睛挑出来。
+ */
+export function fakeAcceleration(elapsedMs, totalMs) {
+  const total = Number(totalMs);
+  if (!(total > 0)) return 0;
+  const elapsed = Number(elapsedMs);
+  const safeElapsed = Number.isFinite(elapsed) && elapsed > 0 ? elapsed : 0;
+  const lambda = PROGRESS_K / total;
+  const value = -PROGRESS_CAP * lambda * lambda * Math.exp(-lambda * safeElapsed);
+  return Number.isFinite(value) ? value : 0;
+}

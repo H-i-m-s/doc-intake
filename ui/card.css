@@ -152,13 +152,9 @@ body {
   55%, 100% { transform: translateX(100%); }
 }
 
-/* 完成那一段：时长不写在这里。剩余多就多给点时间、剩得少就立刻收，
-   这个量只能等运行时算，由 card.js 写 inline transitionDuration。
-   这里只管曲线：起步接近峰值速度、全程只减速不加速，easeOutExpo 一类。 */
-.di-card.is-final .di-card__bar-fill {
-  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1), linear;
-}
-
+/* 宽度全程由 JS 每帧写，没有 CSS 过渡参与。
+   完成那一段是五次 Hermite，时长和形状都说在 card.js 里，
+   这里再挂一条过渡只会和它打架。 */
 .di-card[data-state="done"] .di-card__bar-fill { background: var(--di-ok); }
 .di-card[data-state="failed"] .di-card__bar-fill { background: var(--di-warn); }
 .di-card[data-state="stale"] .di-card__bar-fill { background: var(--di-muted); }
