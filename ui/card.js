@@ -212,6 +212,9 @@ function startCard() {
   let lastTextAt = 0;
   // 完成且落了盘才有值，undefined 就代表没东西可开。
   let savedPath = "";
+  // 已经进过终态。切回来时靠它决定是「补渲染终态」还是「重新开始跑」。
+  let finalised = false;
+  let finalPercent = 0;
 
   function stopAnimation() {
     if (animId) {
@@ -300,7 +303,10 @@ function startCard() {
    * 速度在中间会自己提上去再收住，不需要另外硬拉一段过渡。
    */
   function fillToFull(from, v0, a0) {
-    if (!(100 - from > 1e-6)) {
+    // 三种情况不做动画，直接把结果给出来：
+    // 卡片不可见（浏览器挂起 rAF，一帧都不会跑）、已经到顶、或者压根没有可接续的速度
+    // （卡片晚于作业完成才挂载，这时候从零补满没有任何意义）。
+    if (isHidden() || !(100 - from > 1e-6) || !(v0 > 0)) {
       fillEl.style.width = "100%";
       percentEl.textContent = "100.0%";
       lastPercent = 100;
@@ -332,6 +338,8 @@ function startCard() {
    */
   function settle(vm) {
     terminal = true;
+    finalised = true;
+    finalPercent = vm.final ? 100 : lastPercent;
     clearTimer();
     stopAnimation();
     // 落盘了才给「打开文件夹」。多文件作业里只开第一个成功的：
@@ -521,12 +529,23 @@ function startCard() {
 
   if (typeof document !== "undefined") {
     document.addEventListener("visibilitychange", () => {
-      // 后台标签页不拉：刷出来的画面没人看，只会让宿主的定时器越压越低频。
-      if (terminal) return;
       if (isHidden()) {
-        clearTimer();
+        // 后台不拉：刷出来的画面没人看，只会让宿主的定时器越压越低频。
+        if (!terminal) clearTimer();
         return;
       }
+      // 已经进过终态：卡片在隐藏期间 rAF 是挂起的，很可能整个补满动画一帧都没跑。
+      // 这里直接按终值补一次，否则切回来会看到一张写着「已完成」但条子在 0% 的卡。
+      if (finalised) {
+        if (lastPercent < finalPercent - 1e-6) {
+          lastPercent = finalPercent;
+          fillEl.style.width = `${finalPercent.toFixed(2)}%`;
+          percentEl.textContent = `${finalPercent.toFixed(1)}%`;
+        }
+        reportSize();
+        return;
+      }
+      animate();
       tick();
     });
     window.addEventListener("resize", reportSize);
