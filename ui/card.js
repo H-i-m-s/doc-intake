@@ -145,6 +145,7 @@ async function resolveHana() {
 function startCard() {
   const card = document.getElementById("di-card");
   const titleEl = document.getElementById("di-title");
+  const percentEl = document.getElementById("di-percent");
   const elapsedEl = document.getElementById("di-elapsed");
   const stateEl = document.getElementById("di-state");
   const fillEl = document.getElementById("di-fill");
@@ -210,6 +211,9 @@ function startCard() {
   function renderView(vm) {
     titleEl.textContent = vm.title;
     titleEl.title = vm.title;
+    // 向上取整：停住不动的 0% 比停在 1% 更像死掉。进度本身是估的，取整不进位反而会
+    // 让长文件在头十来秒一直挂着 0%。
+    percentEl.textContent = `${Math.ceil(clampPercent(vm.percent) - 1e-9)}%`;
     elapsedEl.textContent = vm.elapsedText;
     stateEl.textContent = vm.stateText;
     card.dataset.state = vm.state;

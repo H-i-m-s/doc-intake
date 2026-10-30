@@ -53,17 +53,17 @@ body {
 .di-card {
   width: 460px;
   max-width: 100%;
-  padding: 10px 14px 12px;
+  padding: 11px 15px 13px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
 }
 
-/* ---------- 头：文件 / 耗时 / 总状态 ---------- */
+/* ---------- 头：文件名 / 百分比 ---------- */
 .di-card__head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -78,12 +78,94 @@ body {
   text-overflow: ellipsis;
 }
 
-.di-card__meta {
+/* 百分比是这张卡上唯一被加粗的数字。min-width 固定住三位数的宽度，
+   从 9% 跳到 10% 时标题不会被推着往左让位。 */
+.di-card__percent {
   flex: 0 0 auto;
+  min-width: 3.1em;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--di-ink);
+  transition: color 240ms linear;
+}
+
+.di-card[data-state="done"] .di-card__percent { color: var(--di-ok); }
+.di-card[data-state="failed"] .di-card__percent { color: var(--di-warn); }
+.di-card[data-state="stale"] .di-card__percent { color: var(--di-muted); }
+
+/* ---------- 总进度条 ---------- */
+.di-card__bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  /* 轨道从 currentColor 混出来：深浅两套主题都不用另配一个灰度值。 */
+  color: var(--di-ink);
+  background: color-mix(in srgb, currentColor 11%, transparent);
+}
+
+.di-card__bar-fill {
+  position: relative;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  /* 左端压一点饱和、右端用满色，填充区自身有个方向感，不像一块平涂。 */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--di-accent) 76%, transparent) 0%,
+    var(--di-accent) 100%
+  );
+  /* 每秒的推进用小步过渡，看起来是在走；最后那一段由 .is-final 拉长到 1.4 秒。 */
+  transition: width 320ms linear, background-color 240ms linear;
+}
+
+/* 脉冲：一条高光带在已填充的区域里反复扫过。
+   只在 running 态跑。停下来的条子还在动就是在骗人，所以完成、失败、断连都停掉。 */
+.di-card__bar-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 14%,
+    color-mix(in srgb, #fff 42%, transparent) 46%,
+    transparent 78%
+  );
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+.di-card[data-state="running"] .di-card__bar-fill::after {
+  opacity: 1;
+  animation: di-sweep 2000ms cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes di-sweep {
+  0% { transform: translateX(-100%); }
+  /* 55% 之后停在原地，留一段安静的间隔再扫下一次，比匀速循环更像呼吸。 */
+  55%, 100% { transform: translateX(100%); }
+}
+
+.di-card.is-final .di-card__bar-fill { transition-duration: 1400ms, 240ms; }
+
+.di-card[data-state="done"] .di-card__bar-fill { background: var(--di-ok); }
+.di-card[data-state="failed"] .di-card__bar-fill { background: var(--di-warn); }
+.di-card[data-state="stale"] .di-card__bar-fill { background: var(--di-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .di-card[data-state="running"] .di-card__bar-fill::after { animation: none; opacity: 0; }
+}
+
+/* ---------- 脚：秒数与总状态 ---------- */
+.di-card__foot {
   display: flex;
   align-items: baseline;
+  justify-content: space-between;
   gap: 10px;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--di-muted);
 }
 
@@ -93,32 +175,6 @@ body {
 .di-card__state { color: var(--di-sub); }
 .di-card[data-state="done"] .di-card__state { color: var(--di-ok); }
 .di-card[data-state="failed"] .di-card__state { color: var(--di-warn); }
-
-/* ---------- 总进度条 ---------- */
-.di-card__bar {
-  position: relative;
-  height: 3px;
-  border-radius: 2px;
-  overflow: hidden;
-  /* 轨道从 currentColor 混出来：深浅两套主题都不用另配一个灰度值。 */
-  color: var(--di-ink);
-  background: color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.di-card__bar-fill {
-  height: 100%;
-  width: 0;
-  border-radius: 2px;
-  background: var(--di-accent);
-  /* 每秒的推进用小步过渡，看起来是在走；最后那一段由 .is-final 拉长到 1.4 秒。 */
-  transition: width 320ms linear, background-color 240ms linear;
-}
-
-.di-card.is-final .di-card__bar-fill { transition-duration: 1400ms, 240ms; }
-
-.di-card[data-state="done"] .di-card__bar-fill { background: var(--di-ok); }
-.di-card[data-state="failed"] .di-card__bar-fill { background: var(--di-warn); }
-.di-card[data-state="stale"] .di-card__bar-fill { background: var(--di-muted); }
 
 /* ---------- 文件行 ---------- */
 .di-card__files {

@@ -7,17 +7,20 @@
   <link rel="stylesheet" href="./card.css" />
 </head>
 <body>
-  <!-- 底色与圆角由宿主的卡片壳提供，这一层只排内容。 -->
+  <!-- 底色与圆角由宿主的卡片壳提供，这一层只排内容。
+       三行结构：文件名 + 百分比 / 进度条 / 秒数与状态。百分比单独立一行右上角，
+       是为了让「走了多少」和「还要多久」分开读，不用在一行里找数字。 -->
   <div class="di-card" id="di-card" data-state="running">
     <div class="di-card__head">
       <span class="di-card__title" id="di-title">文档解析</span>
-      <span class="di-card__meta">
-        <span class="di-card__elapsed" id="di-elapsed">已等待 0 秒</span>
-        <span class="di-card__state" id="di-state">解析中</span>
-      </span>
+      <span class="di-card__percent" id="di-percent">0%</span>
     </div>
     <div class="di-card__bar">
       <div class="di-card__bar-fill" id="di-fill"></div>
+    </div>
+    <div class="di-card__foot">
+      <span class="di-card__elapsed" id="di-elapsed">已等待 0 秒</span>
+      <span class="di-card__state" id="di-state">解析中</span>
     </div>
     <div class="di-card__files" id="di-files"></div>
   </div>
