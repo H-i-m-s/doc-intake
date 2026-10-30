@@ -268,6 +268,22 @@ function startCard() {
     try { window.parent?.postMessage({ type: "hana.card-resize", height }, "*"); } catch { /* 同上 */ }
   }
 
+  // 高度逐帧跟随。只在上报的两个时刻发值，宿主收到的就是两个离散高度，
+  // 表现是一下撑开；折叠区的 max-height 过渡跑了 220ms，这期间卡片每帧都在长，
+  // 拿 ResizeObserver 把这些帧全报上去，宿主的卡片高度就跟得上了。
+  // 观察的是自己的根节点（宽度固定、高度由内容定），不受宿主 iframe 高度影响，不会绕回来。
+  if (typeof ResizeObserver !== "undefined") {
+    try {
+      let observedH = 0;
+      new ResizeObserver(() => {
+        const height = Math.ceil(card.offsetHeight || 0);
+        if (!(height > 0) || height === observedH) return;
+        observedH = height;
+        reportSize(height);
+      }).observe(card);
+    } catch { /* 观察失败不影响主流程，还是靠那几次主动上报 */ }
+  }
+
   // 最近一次轮询拿到的快照。百分比不靠它推进，靠下面那个每帧的时钟。
   let latest = null;
   let animId = 0;
@@ -448,8 +464,6 @@ function startCard() {
   // 收起默认发生，且用高度过渡而不是 display:none —— 硬切时看不出下面还有东西。
 
   const FOLD_MS = 220;
-  /** 与 card.css 里 .di-card__fold.is-open 的 margin-top 同一个数。 */
-  const FOLD_GAP = 9;
   let expanded = false;
   let lastFoldH = -1;
 
@@ -534,20 +548,16 @@ function startCard() {
     }
   }
 
-  /** 把撑开后的目标高度写进 CSS 变量，max-height 从这里读。返回该高度。 */
+  /**
+   * 只把撑开后的目标高度写进 CSS 变量，max-height 从这里读。返回该高度。
+   * 不再拿它去预报表高：高度怎么变交给 ResizeObserver 逐帧跟，
+   * 预报表高会让宿主先跳到终值，反倒比不报更硬。
+   */
   function applyFoldHeight() {
     const height = Math.ceil(detailEl.getBoundingClientRect().height || 0);
     foldEl.style.setProperty("--di-fold-h", `${height}px`);
     lastFoldH = height;
     return height;
-  }
-
-  /**
-   * 卡片里除折叠区以外的高度。展开那一刻折叠区正在从 0 长上去，
-   * 直接量卡片量到的是半截；减掉它此刻占的那一段再加重算才准。
-   */
-  function cardBaseHeight() {
-    return (card.offsetHeight || 0) - (foldEl.getBoundingClientRect().height || 0);
   }
 
   function setExpanded(next) {
@@ -558,11 +568,9 @@ function startCard() {
     foldEl.setAttribute("aria-hidden", expanded ? "false" : "true");
     headEl?.setAttribute("aria-expanded", expanded ? "true" : "false");
     if (chevronEl) chevronEl.classList.toggle("is-open", expanded);
-    const height = applyFoldHeight();
-    // 展开：先把撑开后的终值报上去。过渡要跑 220ms，等它跑完再报，宿主会晚一拍才撑高，
-    // 那段时间详情区被 iframe 的底边裁掉。
-    // 收起：先报小高度会让内容在动画中途被裁，所以只靠下面那一次。
-    if (expanded) reportSize(cardBaseHeight() + FOLD_GAP + height);
+    applyFoldHeight();
+    // 过渡跑完再兜一次。中途每一帧由 ResizeObserver 负责报，这里只防过渡因
+    // 标签页不可见之类的原因没跑满时，尺寸停在半路。
     setTimeout(reportSize, FOLD_MS + 20);
   }
 
