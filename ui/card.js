@@ -427,7 +427,9 @@ function startCard() {
       const clamped = Math.min(100, Math.max(from, hermite5(s, from, ms * v0, ms * ms * a0, 100)));
       lastPercent = clamped;
       fillEl.style.width = `${clamped.toFixed(2)}%`;
-      percentEl.textContent = `${clamped.toFixed(1)}%`;
+      // 没跑完之前不给 100.0：toFixed(1) 会把 99.96 舍成 100.0，
+      // 数字先到顶再等条子，看上去像提前结束了。
+      percentEl.textContent = `${(s < 1 ? Math.min(99.9, clamped) : 100).toFixed(1)}%`;
       if (s < 1) {
         requestAnimationFrame(frame);
         return;
