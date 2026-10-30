@@ -349,7 +349,9 @@ async function startAsyncJob({ sources, input, ctx, settings, enrichedInput }) {
         pluginId: "doc-intake",
         cardId: `di-${jobId}`,
         cardInstanceId: cardInstanceIdFor(jobId),
-        route: "/card.html",
+        // jobId 必须写进 route：宿主重新挂载卡片时不保证及时注入 cardInstanceId，
+        // 卡片自己读 URL 就能拿到作业身份，不必跟宿主的注入时序赌气。
+        route: `/card.html?job=${encodeURIComponent(jobId)}`,
         title: CARD_TITLE,
         description: cardDescription(sources),
         aspectRatio: "8:1",

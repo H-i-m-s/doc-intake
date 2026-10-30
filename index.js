@@ -13,6 +13,7 @@
 // 真实撞到的鉴权拒绝记下来，以及把已有结论转成一句提醒带回去。
 
 import { defineApp } from "./sdk/app-contract/server-client.js";
+import { configureJobsStore, loadJobs } from "./lib/jobs.js";
 import * as toolDocIntake from "./tools/doc_intake.js";
 
 export const name = "doc-intake";
@@ -20,12 +21,21 @@ export const name = "doc-intake";
 const TOOL_MODULES = [toolDocIntake];
 
 export default defineApp(async (sdk) => {
+  // 作业表要落盘：进度卡是聊天流里的一条历史，用户切走会话再回来时，
+  // 记录只在内存里就等于卡片回来时查不到任务（App 进程不保证还活着）。
+  // 目录只能用宿主给的 dataDir，App 自己猜路径在宿主换存储布局后会静默写丢。
+  const jobsStore = configureJobsStore({ dataDir: sdk.dataDir, logger: sdk.logger });
+  // 读回上一个进程留下的记录；读坏了退成空表，返回值就是真正收下的条数。
+  const restoredJobs = loadJobs();
+
   // 启动日志带上两个能力探测结果：Token 健康状态要用存储落盘、偶尔借宿主网络出口探一次，
   // 这两样缺任何一样都会静默退化成"不提示"，所以把它写在启动行里，以后看日志一眼就能排除。
+  // 作业表存在哪儿同理：持久化没开，卡片在重启后失效，也是只能从日志里看出来的事。
   await sdk.logger.info(
     "doc-intake v2 loaded"
     + ` | token-status storage=${typeof sdk?.storage?.global?.set === "function" ? "on" : "MISSING"}`
-    + ` net=${typeof sdk?.network?.fetch === "function" ? "on" : "MISSING"}`,
+    + ` net=${typeof sdk?.network?.fetch === "function" ? "on" : "MISSING"}`
+    + ` | jobs-store=${jobsStore.enabled ? "on" : "MISSING"} restored=${restoredJobs}`,
   );
 
   for (const mod of TOOL_MODULES) {

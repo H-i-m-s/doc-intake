@@ -1,8 +1,9 @@
 // ui/card.js — 聊天流里的文档解析进度卡片
 //
-// 身份：卡片 iframe 里唯一拿得到的是宿主铸造的 cardInstanceId；jobId 既不可见也不可逆，
-// 所以「这张卡对应哪个作业」由服务端反查（lib/jobs.js 的 findJobByCardId），
-// 卡片自己只按秒拿快照。查不到就是查不到，卡片不做任何猜测。
+// 身份：卡片挂载时 route 里带着 job（details.card.route 拼出来的），这是首选来源；
+// 宿主重新挂载 iframe 时不保证及时注入 cardInstanceId，只等注入就会等成「无法识别」。
+// URL 里没有 job 的存量卡片才回退到宿主铸造的 cardInstanceId，服务端两种键都认
+// （lib/jobs.js 的 getJob / findJobByCardId）。查不到就是查不到，卡片不做任何猜测。
 //
 // 进度：数字全部来自 ui/shared/progress.js 的同一条曲线，卡片不重算公式。
 // 条子走到 100% 只有两种情况：文件真的 done，或整个作业 state 变成 done。
@@ -174,7 +175,9 @@ function startCard() {
   if (!card || !fillEl || !filesEl) return;
 
   let hana = null;
-  let cardInstanceId = "";
+  // /job-status 的查询键：URL 带来的 jobId，或宿主注入的 cardInstanceId。
+  // 后端两种都认，卡片只负责挑一个能拿到的填进来。
+  let jobKey = "";
   let timer = null;
   let terminal = false;
   let busy = false;
@@ -446,7 +449,7 @@ function startCard() {
   }
 
   async function readSnapshot() {
-    const res = await hana.api.fetch(`/job-status?id=${encodeURIComponent(cardInstanceId)}`);
+    const res = await hana.api.fetch(`/job-status?id=${encodeURIComponent(jobKey)}`);
     // 404 是确定的结论（App 重启过，或作业过了保留期），不是抖动，不必再等。
     if (res && res.ok === false) return null;
     const body = await res.json();
@@ -486,6 +489,22 @@ function startCard() {
       return;
     }
     schedule();
+  }
+
+  /**
+   * 卡片 route 里带的作业 id。
+   * 宿主把 details.card.route 当 iframe 的 src，query 会原样带到页面里，
+   * 所以这条身份不需要等任何人注入；切回会话时优先走它。
+   */
+  function readJobIdFromLocation() {
+    try {
+      const search = globalThis.location?.search ?? "";
+      if (!search) return "";
+      const id = new URLSearchParams(search).get("job");
+      return typeof id === "string" ? id.trim() : "";
+    } catch {
+      return "";
+    }
   }
 
   async function resolveCardInstanceId() {
@@ -528,8 +547,10 @@ function startCard() {
     // 若是每帧重绑，监听器会越叠越多，点一下就开好几个资源管理器。
     revealEl?.addEventListener("click", () => { reveal(); });
     reportSize();
-    cardInstanceId = await resolveCardInstanceId();
-    if (!cardInstanceId) {
+    // URL 优先：它是卡片自己就能读到的东西，不依赖宿主什么时候把身份注进来。
+    // 存量卡片的 route 里没有 job，才去等宿主注入 cardInstanceId。
+    jobKey = readJobIdFromLocation() || (await resolveCardInstanceId());
+    if (!jobKey) {
       renderNotice("无法识别这张卡片对应的任务");
       return;
     }
