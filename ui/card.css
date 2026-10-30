@@ -78,16 +78,23 @@ body {
   text-overflow: ellipsis;
 }
 
-/* 百分比是这张卡上唯一被加粗的数字。min-width 固定住三位数的宽度，
-   从 9% 跳到 10% 时标题不会被推着往左让位。 */
+/* 百分比是这张卡上唯一被加粗的数字。
+   宽度写死而不是只给 min-width：从 99.9% 进位到 100.0% 时多出一位，
+   只给 min-width 的话容器会被撑宽，看着就是闪。
+   字体也换成等宽：界面字体里的数字不一定真的同宽（tnum 不支持的字体就退化成比例宽度），
+   59.9 变 60.0 时整串会挪一两个像素，快到像有一帧缺字。
+   等宽字体下每个字符占的位置固定，怎么变都不动。 */
 .di-card__percent {
   flex: 0 0 auto;
-  min-width: 3.1em;
+  width: 3.9em;
   text-align: right;
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Segoe UI", monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
   color: var(--di-ink);
+  white-space: nowrap;
   transition: color 240ms linear;
 }
 
