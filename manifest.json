@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "doc-intake",
   "name": "Doc Intake",
-  "version": "3.4.0",
+  "version": "3.2.5",
   "entry": "index.js",
   "icon": "assets/icon.png",
   "minAppVersion": "0.978.0",
