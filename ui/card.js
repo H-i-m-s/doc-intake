@@ -294,6 +294,11 @@ function startCard() {
   // 已经进过终态。切回来时靠它决定是「补渲染终态」还是「重新开始跑」。
   let finalised = false;
   let finalPercent = 0;
+  // 时钟停下那一刻的速度与加速度。
+  // 不能到 settle 里再去问快照：已完成那条分支根本不算这两个量，给回来的是 0，
+  // 拿 0 当接缝速度等于让条子从静止重新起步，会抽一下。
+  let lastVelocity = 0;
+  let lastAcceleration = 0;
 
   function stopAnimation() {
     if (animId) {
@@ -318,6 +323,8 @@ function startCard() {
     const now = Date.now();
     const vm = buildViewModel(latest, now);
     lastPercent = clampPercent(vm.percent);
+    lastVelocity = vm.velocity;
+    lastAcceleration = vm.acceleration;
     fillEl.style.width = `${lastPercent.toFixed(2)}%`;
     // 数字没必要跟条子一样每帧刷，100ms 一刷；值本身连续，看起来是小位数在稳定爬。
     if (now - lastTextAt < TEXT_INTERVAL_MS) return;
@@ -395,9 +402,14 @@ function startCard() {
    */
   function fillToFull(from, v0, a0) {
     // 三种情况不做动画，直接把结果给出来：
-    // 卡片不可见（浏览器挂起 rAF，一帧都不会跑）、已经到顶、或者压根没有可接续的速度
+    // 卡片不可见（浏览器挂起 rAF，一帧都不会跑）、已经到顶、或者压根没跑过
     // （卡片晚于作业完成才挂载，这时候从零补满没有任何意义）。
-    if (isHidden() || !(100 - from > 1e-6) || !(v0 > 0)) {
+    // 只看起点位置，不看速度：速度为 0 时曲线会退化成平滑起步，仍然走得完，
+    // 而拿「速度是不是 0」当条件的话，完成那一帧快照里的速度本来就是 0，
+    // 每次都会从这退出去，时长白算。
+    if (isHidden() || !(100 - from > 1e-6) || !(from > 0)) {
+      card.dataset.fillMs = "0";
+      card.dataset.fillFrom = from.toFixed(2);
       fillEl.style.width = "100%";
       percentEl.textContent = "100.0%";
       lastPercent = 100;
@@ -405,6 +417,10 @@ function startCard() {
       return;
     }
     const ms = pickFillMs(from, v0, a0);
+    // 把实际用的时长写在卡片上。补满到底是 1200ms 还是被早退分支吞了，
+    // 光看代码看不出来，留个可读的量做验收。
+    card.dataset.fillMs = String(ms);
+    card.dataset.fillFrom = from.toFixed(2);
     const startedAt = performance.now();
     const frame = (now) => {
       const s = Math.min(1, Math.max(0, (now - startedAt) / ms));
@@ -445,7 +461,9 @@ function startCard() {
       reportSize();
       return;
     }
-    fillToFull(lastPercent, vm.velocity, vm.acceleration);
+    // 接缝速度用时钟停下那一刻存下的，不用快照里的：vm 是已完成状态，
+    // 那条分支不会算速度和加速度，拿到的是 0。
+    fillToFull(lastPercent, lastVelocity, lastAcceleration);
   }
 
   /**
