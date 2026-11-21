@@ -130,15 +130,29 @@ function readVar(style, names) {
   return "";
 }
 
-/** 主题样式表开头的注释里有名字与一句描述，列表里用得上。 */
+/** 主题样式表开头的注释里有名字与一句描述，列表里用得上。
+ *  两种表头都要认：宿主内置是「Hana Theme: 青夜」，衣橱导出是「衣橱导出 · 名字 · 日期」。 */
 function parseThemeHeader(css) {
   const header = /^\s*\/\*([\s\S]*?)\*\//.exec(String(css || ""));
   if (!header) return { name: "", description: "" };
-  const lines = header[1].split(/\r?\n/).map((line) => line.replace(/^\s*\*?\s?/, "").trim()).filter(Boolean);
-  const nameLine = lines.find((line) => /Hana Theme/i.test(line)) || "";
-  const name = nameLine.replace(/^.*?Hana Theme\s*[:：]\s*/i, "").trim();
-  const description = lines.find((line) => line && line !== nameLine) || "";
-  return { name, description };
+  const body = header[1].replace(/^\s*\*?\s?/gm, "").trim();
+  const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+  const hanaLine = lines.find((line) => /Hana Theme\s*[:：]/i.test(line));
+  if (hanaLine) {
+    const name = hanaLine.replace(/^.*?Hana Theme\s*[:：]\s*/i, "").trim();
+    const description = lines.find((line) => line && line !== hanaLine) || "";
+    return { name, description };
+  }
+
+  // 衣橱导出的皮肤：/* 衣橱导出 · <名字> · [appearance ·] <日期> */
+  const wardrobe = /^衣橱导出\s*[·:：]\s*(.+)$/.exec(lines[0] || "");
+  if (wardrobe) {
+    const name = wardrobe[1].split("·")[0].trim();
+    return { name, description: "衣橱导出的皮肤" };
+  }
+
+  return { name: "", description: lines[0] || "" };
 }
 
 /** 从一段主题 CSS 文本里抠出所有角色。 */
