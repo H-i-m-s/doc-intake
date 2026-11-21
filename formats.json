@@ -28,6 +28,7 @@
   "ebook": {
     ".epub": "epub",
     ".fb2": "fb2",
-    ".fbz": "fb2"
+    ".fbz": "fb2",
+    ".cbz": "cbz"
   }
 }
