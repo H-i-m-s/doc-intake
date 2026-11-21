@@ -12,10 +12,12 @@
 
 * { box-sizing: border-box; }
 
-:root {
-  --di-ink: var(--hana-text, var(--text, #2f2a24));
-  --di-sub: var(--hana-text-light, var(--text-light, #6f6659));
-  --di-muted: var(--hana-text-muted, var(--text-muted, #8d8274));
+/* 令牌挂在 body 上，不挂 :root：宿主注入的主题变量若有落在 body 上的，
+   写在 :root 的 var() 就取不到它（自定义属性只往下继承）。 */
+body {
+  --di-ink: var(--hana-text, var(--text, #1f2226));
+  --di-sub: var(--hana-text-light, var(--text-light, #4d545c));
+  --di-muted: var(--hana-text-muted, var(--text-muted, #78818b));
   --di-accent: var(--hana-accent, var(--accent, #4a6fa5));
   --di-ok: var(--hana-green, var(--green, #4f8a63));
   --di-warn: var(--hana-danger, var(--danger, #b06a5e));
@@ -32,9 +34,9 @@
 }
 
 body.t-dark {
-  --di-ink: var(--hana-text, #e6e2da);
-  --di-sub: var(--hana-text-light, #b6aea2);
-  --di-muted: var(--hana-text-muted, #8f877c);
+  --di-ink: var(--hana-text, #f2f4f7);
+  --di-sub: var(--hana-text-light, #c3cad3);
+  --di-muted: var(--hana-text-muted, #919aa4);
   --di-accent: var(--hana-accent, #7794c2);
   --di-ok: var(--hana-green, #6e9c7f);
   --di-warn: var(--hana-danger, #c07d72);
@@ -476,7 +478,7 @@ body.t-dark .di-input { color-scheme: dark; }
   width: 13px;
   height: 13px;
   margin: 0;
-  accent-color: var(--di-sub);
+  accent-color: var(--di-accent);
   cursor: pointer;
 }
 
