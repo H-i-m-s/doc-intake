@@ -11,5 +11,15 @@ export function listSpeechRecognitionProviders(ctx) {
         capability: "speech_recognition",
     });
 }
+/**
+ * Synthesize speech that reads the given text aloud. Returns asynchronously:
+ * the result carries task handles and frozen per-segment metadata, and the
+ * finished audio is delivered as a SessionFile (session scope) or read back
+ * through `ctx.media` (app scope) — not returned inline. This is text-to-speech
+ * only, never transcription, music, or sound effects.
+ */
+export function generateSpeech(ctx, payload) {
+    return ctx.bus.request("media:generate-speech", payload);
+}
 export const APP_MEDIA_BULK_CLEANUP_PARTIAL = "APP_MEDIA_BULK_CLEANUP_PARTIAL";
 //# sourceMappingURL=media.js.map

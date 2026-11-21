@@ -3,8 +3,8 @@
  * by `node scripts/sync-app-sdk.mjs`. Do not edit by hand; edit the source
  * and re-run the sync script instead.
  */
-import type { AppTranscribeAudioRequestV2, AppTranscribeAudioResultV2, AppMediaProviderSelectionV2 } from "./media.js";
-export type { AppTranscribeAudioRequestV2, AppTranscribeAudioResultV2 } from "./media.js";
+import type { AppTranscribeAudioRequestV2, AppTranscribeAudioResultV2, AppMediaProviderSelectionV2, AppSpeechGenerationRequestV2, AppSpeechGenerationResultV2 } from "./media.js";
+export type { AppTranscribeAudioRequestV2, AppTranscribeAudioResultV2, AppSpeechGenerationRequestV2, AppSpeechGenerationResultV2 } from "./media.js";
 /**
  * Typed request/reply pairs for the published v2 App bus surface.
  *
@@ -19,6 +19,7 @@ import type { AppProviderCredentialsRequestV2, AppProviderCredentialsResultV2, A
 import type { AppSessionCompactRequestV2, AppSessionCompactResultV2, AppSessionContextRequestV2, AppSessionContextResultV2, AppSessionEntriesRequestV2, AppSessionEntriesResultV2, AppSessionForkRequestV2, AppSessionForkResultV2, AppSessionLifecycleRequestV2, AppSessionLifecycleResultV2, AppSessionListRequestV2, AppSessionListResultV2, AppSessionRefV2, AppSessionSetActiveToolsRequestV2, AppSessionToolSelectionReceiptV2, AppSessionToolSelectionRequestV2 } from "./sessions.js";
 import type { AppSessionSearchRequestV2, AppSessionSearchResultV2 } from "./session-search.js";
 import type { AppCapabilityEnforcement, AppCapabilityStatus } from "../app-capability-introspection.js";
+import type { SpeechGenerationInfo } from "../speech-generation-info.js";
 /** A session target must name a stable id or one of the supported legacy locators. */
 export type AppSessionTargetV2 = (AppSessionRefV2 & {
     readonly sessionId: string;
@@ -46,9 +47,16 @@ export interface AppSessionCreateRequestV2 {
     readonly permissionMode?: string;
     /** App ownership and visibility are stamped by the host, never selected here. */
     readonly kind?: string | null;
+    /**
+     * 会话落在哪里：app（默认，只在本 App 内可见）或 home（出现在主页列表，需要 app/sessions.home 授权）。
+     * 只增不改：缺省为 app。
+     */
+    readonly namespace?: "app" | "home";
 }
 export interface AppSessionCreateResultV2 {
     readonly ok: true;
+    /** 只读：服务端决定的空间（app / home）。 */
+    readonly namespace?: "app" | "home";
     readonly sessionId?: string;
     readonly sessionRef?: {
         readonly sessionId: string;
@@ -233,7 +241,7 @@ export interface AppCapabilityRowV2 {
 export interface AppAppCapabilitiesResultV2 {
     readonly capabilities: readonly AppCapabilityRowV2[];
 }
-export type AppMediaCapabilityV2 = "image_generation" | "video_generation" | "speech_recognition";
+export type AppMediaCapabilityV2 = "image_generation" | "video_generation" | "speech_recognition" | "speech_generation";
 export type AppMediaReferenceV2 = {
     readonly kind: "local-file";
     readonly path: string;
@@ -270,14 +278,24 @@ export type AppMediaGenerationRequestV2 = {
 };
 export type AppMediaGenerateRequestV2 = AppMediaGenerationRequestV2 & {
     readonly input: AppMediaGenerationInputV2 & {
-        readonly kind: "image" | "video" | "audio" | "image_generation" | "video_generation" | "speech_recognition" | "asr" | "transcription";
+        readonly kind: "image" | "video" | "audio" | "speech" | "speech_generation" | "speechGeneration" | "image_generation" | "video_generation" | "speech_recognition" | "asr" | "transcription";
     };
 };
+/** One submitted media task handle: its id, and (for speech) its text + frozen metadata. */
+export interface AppMediaGenerationTaskV2 {
+    readonly taskId: string;
+    readonly prompt?: string;
+    readonly speech?: SpeechGenerationInfo;
+}
 export interface AppMediaGenerationResultV2 {
     readonly ok: boolean;
+    readonly kind?: string;
     readonly taskId?: string;
     readonly batchId?: string;
     readonly status?: string;
+    readonly prompt?: string;
+    readonly tasks?: readonly AppMediaGenerationTaskV2[];
+    readonly delivery?: unknown;
     readonly files?: readonly unknown[];
 }
 export interface AppMediaProvidersRequestV2 {
@@ -478,6 +496,10 @@ export interface AppBusRequests {
         input: AppMediaGenerationRequestV2;
         output: AppMediaGenerationResultV2;
     };
+    "media:generate-speech": {
+        input: AppSpeechGenerationRequestV2;
+        output: AppSpeechGenerationResultV2;
+    };
     "media:transcribe-audio": {
         input: AppTranscribeAudioRequestV2;
         output: AppTranscribeAudioResultV2;
@@ -564,6 +586,7 @@ export declare const APP_SDK_BUS_METHODS: {
         readonly generate: "media:generate";
         readonly generateImage: "media:generate-image";
         readonly generateVideo: "media:generate-video";
+        readonly generateSpeech: "media:generate-speech";
         readonly transcribeAudio: "media:transcribe-audio";
     };
     readonly providers: {

@@ -4,6 +4,7 @@
  * and re-run the sync script instead.
  */
 import type { PluginUiContributions } from "../ui-contribution-points.js";
+import type { AppServiceReferenceV2 } from "./runtime.js";
 /** Capability required for an App to create and control its isolated App instances. */
 export declare const APP_INSTANCES_MANAGE_CAPABILITY: "app/instances.manage";
 export type AppInstanceState = "awaiting-approval" | "running" | "stopped" | "failed" | "closing" | "cleanup-pending" | "closed";
@@ -39,6 +40,7 @@ export interface AppInstanceCatalog {
         readonly title?: string;
         readonly description?: string;
         readonly route?: string;
+        readonly service?: AppServiceReferenceV2;
         readonly detachedRoute?: string;
         readonly detachedDefaultSize?: {
             readonly width: number;
@@ -47,6 +49,7 @@ export interface AppInstanceCatalog {
         readonly embedUrl?: string;
         readonly cardForm?: string;
         readonly titlebar?: string;
+        readonly titleMode?: string;
         readonly realization?: "card" | "page";
         readonly pageOf?: string;
         readonly closable?: boolean;
@@ -56,7 +59,10 @@ export interface AppInstanceCatalog {
         readonly functionPanelLabel?: string;
         readonly functionPanelRoute?: string;
         readonly functionPanelEmbedUrl?: string;
+        readonly functionPanelService?: AppServiceReferenceV2;
         readonly faceImage?: string;
+        /** Ui-relative bundled page navigation icon of a whole-page primary card. */
+        readonly pageIcon?: string;
         readonly formFactors?: readonly string[];
     }[];
     readonly settings: {

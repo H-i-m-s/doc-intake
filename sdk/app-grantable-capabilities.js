@@ -38,6 +38,8 @@ import { APP_ENVIRONMENTS_MANAGE_CAPABILITY } from "./app-contract/environments.
 import { APP_PUBLIC_DATA_CAPABILITY_WORDS } from "./app-contract/public-data.js";
 import { APP_INPUT_PANELS_CAPABILITY_WORDS } from "./app-input-panel-capabilities.js";
 import { APP_NOTIFICATIONS_CAPABILITY_WORDS } from "./app-contract/notifications.js";
+import { APP_THEME_CAPABILITY_WORDS } from "./app-theme-capabilities.js";
+import { APP_CASUAL_STYLE_CAPABILITY } from "./app-casual-style-capabilities.js";
 /** Emit onto the local desktop `app_event` channel. Default deny. */
 export const APP_EVENTS_EMIT_CAPABILITY = "app/events.emit";
 export const APP_GRANTABLE_CAPABILITIES = new Set([
@@ -66,5 +68,7 @@ export const APP_GRANTABLE_CAPABILITIES = new Set([
     ...APP_PUBLIC_DATA_CAPABILITY_WORDS,
     ...APP_INPUT_PANELS_CAPABILITY_WORDS,
     ...APP_NOTIFICATIONS_CAPABILITY_WORDS,
+    ...APP_THEME_CAPABILITY_WORDS,
+    APP_CASUAL_STYLE_CAPABILITY,
 ]);
 //# sourceMappingURL=app-grantable-capabilities.js.map

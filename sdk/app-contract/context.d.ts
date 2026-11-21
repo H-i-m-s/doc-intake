@@ -79,7 +79,19 @@ export type { AppViewRequest, AppViewResult, AppViewImage } from "../preview/app
  * `ToolRegistration` and satisfies this shape structurally.
  */
 export interface HanaPluginToolRegistrationV2 {
-    /** The name the model calls. Unique across the host's tool registry. */
+    /**
+     * This App's own name for the tool, unique within the App.
+     *
+     * It is the name every App-facing surface speaks: the manifest's
+     * `messageActions[].toolName`, App-scoped UI actions and
+     * the per-Agent activation table. Two Apps may use the same local name; the
+     * host mints a distinct model-facing call name for each, and a duplicate
+     * within one App is refused.
+     *
+     * The model-facing name is a host detail: an App never writes it, never
+     * depends on its spelling. Generic Card Host tool bindings use the canonical
+     * name returned by tool discovery, not an unscoped local name.
+     */
     readonly name: string;
     /** What the tool does, for the model. Required — never defaulted to `""`. */
     readonly description: string;
@@ -111,6 +123,9 @@ export interface HanaPluginToolRegistrationV2 {
  * One tool `ctx.tools.listOwn()` hands back — the same three fields a
  * registration itself requires, never `execute`, `metadata` or
  * `sessionPermission`.
+ *
+ * `name` is this App's own local name, the one it declared — not the
+ * host-minted model-facing call name.
  */
 export interface HanaPluginOwnToolV2 {
     readonly name: string;

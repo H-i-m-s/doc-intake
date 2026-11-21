@@ -34,6 +34,32 @@ export const UI_SLOT_KEYBINDINGS = "hana/commands.keybindings";
 export const UI_SLOT_INPUT_CONTROLS = "hana/input.controls";
 /** Host-rendered launch entries for Apps that provide a Developer Space. */
 export const UI_SLOT_HOME_ACTIONS = "hana/home.actions";
+/**
+ * The window's companion overlay: one sprite an App places against a named
+ * host anchor, sitting above the normal UI and below every safety layer.
+ */
+export const UI_SLOT_COMPANIONS = "hana/window.companions";
+// ---------------------------------------------------------------------------
+// Companion vocabulary — the anchors a sprite may attach to and the events it
+// may answer. Both are host-owned lists: an App picks from them, it cannot
+// invent a seat or an event name, and a later release opens more of each
+// without touching any contribution's shape.
+// ---------------------------------------------------------------------------
+/** The host anchors this version places companions against. */
+export const UI_COMPANION_ANCHORS = ["hana/composer"];
+/**
+ * The events a declared `on` block may answer. `click` / `dblclick` come from
+ * the sprite itself; the `agent.*` four are the host's agent lifecycle, which
+ * carries no conversation content.
+ */
+export const UI_COMPANION_EVENTS = [
+    "click",
+    "dblclick",
+    "agent.idle",
+    "agent.working",
+    "agent.waiting",
+    "agent.done",
+];
 export const UI_SLOT_DIRECTORY = [
     {
         id: UI_SLOT_MESSAGE_ACTIONS,
@@ -104,6 +130,12 @@ export const UI_SLOT_DIRECTORY = [
         render: "host-primitive",
         access: "plugin",
         implementedAt: "InputControlBar.tsx / InputStatusItems.tsx：contributes.ui.inputStatus 与按 sessionId 的动态覆盖",
+    },
+    {
+        id: UI_SLOT_COMPANIONS,
+        render: "host-primitive",
+        access: "plugin",
+        implementedAt: "desktop/src/react/companion/CompanionLayer.tsx",
     },
     {
         id: "hana/commands.slash",

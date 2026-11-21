@@ -42,6 +42,7 @@ export const APP_BUS_REQUEST_ALLOWLIST = Object.freeze([
     "media:generate",
     "media:generate-image",
     "media:generate-video",
+    "media:generate-speech",
     "media:transcribe-audio",
     "provider:media-providers",
     "render:html-to-pdf",
@@ -159,7 +160,7 @@ const HOST_UNDOCUMENTED_EVENT_TYPES = [
     // core/speech-recognition-service.ts
     "voice_transcription_update",
     // lib/wait/wait-registration-store.ts
-    "wait_started", "wait_finished", "wait_task_settled", "wait_cancelled",
+    "wait_started", "wait_updated", "wait_finished", "wait_task_settled", "wait_cancelled",
     // hub/index.ts's session:send failure path
     "error",
 ];

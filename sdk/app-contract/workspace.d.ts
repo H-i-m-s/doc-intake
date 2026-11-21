@@ -80,6 +80,7 @@ export type AppWorkspaceCommand = {
     readonly appId: string;
     readonly definitionId: string;
     readonly slot?: 'card' | 'settings';
+    readonly instanceKey?: string;
 } | {
     readonly action: 'card.take-out';
     readonly pageId: string;

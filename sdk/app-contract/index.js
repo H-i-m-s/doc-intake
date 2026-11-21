@@ -39,6 +39,17 @@ export * from "./canvas.js";
 export * from "./workspace.js";
 export * from "./input-panels.js";
 export * from "./notifications.js";
+export * from "./chrome.js";
+// ---------------------------------------------------------------------------
+// User custom themes (hana.themes.custom)
+// ---------------------------------------------------------------------------
+/**
+ * The user-custom-theme vocabulary — ids, definition/record/preview types, the
+ * variable schema and the CSS compiler. Lives in `shared/app-custom-themes.ts`
+ * (outside `shared/app-contract/`) but is re-exported here so it lands in the
+ * published `@hana/app-sdk` exactly like the rest of the contract.
+ */
+export * from "../app-custom-themes.js";
 // ---------------------------------------------------------------------------
 // ctx.bus — the verb allowlist and event denylist
 // ---------------------------------------------------------------------------
@@ -52,7 +63,7 @@ export { APP_INPUT_STATUS_CAPABILITY, APP_INPUT_STATUS_CAPABILITY_WORDS } from "
 export { APP_INPUT_PANELS_CAPABILITY, APP_INPUT_PANELS_CAPABILITY_WORDS } from "../app-input-panel-capabilities.js";
 export { APP_NOTIFICATIONS_SHOW_CAPABILITY, APP_NOTIFICATIONS_CAPABILITY_WORDS } from "./notifications.js";
 export { APP_USAGE_READ_CAPABILITY, APP_PROVIDER_CREDENTIALS_READ_CAPABILITY, APP_MODELS_READ_CAPABILITY, APP_QUERY_CAPABILITY_WORDS, APP_QUERY_BUS_VERBS, appQueryCapabilityForBusVerb, isAppQueryBusVerb, } from "../app-query-capabilities.js";
-export { APP_AGENTS_READ_CAPABILITY, APP_AGENTS_MANAGE_CAPABILITY, APP_SESSIONS_READ_CAPABILITY, APP_SESSIONS_MANAGE_CAPABILITY, APP_SESSIONS_SEARCH_CAPABILITY, APP_ENTITY_CAPABILITY_WORDS, } from "../app-entity-capabilities.js";
+export { APP_AGENTS_READ_CAPABILITY, APP_AGENTS_MANAGE_CAPABILITY, APP_SESSIONS_READ_CAPABILITY, APP_SESSIONS_MANAGE_CAPABILITY, APP_SESSIONS_HOME_CAPABILITY, APP_SESSIONS_SEARCH_CAPABILITY, APP_ENTITY_CAPABILITY_WORDS, } from "../app-entity-capabilities.js";
 export { APP_PUBLIC_DATA_PUBLISH_CAPABILITY, APP_PUBLIC_DATA_READ_CAPABILITY, APP_PUBLIC_DATA_CAPABILITY_WORDS, } from "./public-data.js";
 export { APP_MCP_PROVIDE_CAPABILITY, APP_MCP_READ_CAPABILITY, APP_MCP_MANAGE_CAPABILITY, APP_MCP_CAPABILITY_WORDS, } from "../app-mcp-capabilities.js";
 export { APP_TOOLS_READ_CAPABILITY, APP_COMMANDS_READ_CAPABILITY, APP_CATALOG_CAPABILITY_WORDS, } from "../app-catalog-capabilities.js";
@@ -66,5 +77,7 @@ export { APP_SESSION_SWITCH_MODEL_CAPABILITY, APP_SESSION_THINKING_LEVEL_CAPABIL
 export { APP_SESSION_STAGE_FILE_CAPABILITY, APP_SESSION_FILE_CAPABILITY_WORDS, } from "../app-session-file-capabilities.js";
 export { APP_TOOLS_EXPOSE_TO_MODEL_CAPABILITY, APP_TOOL_SUPPLIER } from "../app-tool-exposure.js";
 export { APP_UI_OPEN_EXTERNAL_CAPABILITY, APP_UI_CLIPBOARD_WRITE_CAPABILITY, APP_UI_CAPABILITY_WORDS, } from "../app-ui-capabilities.js";
+export { APP_THEMES_READ_CAPABILITY, APP_THEMES_MANAGE_CAPABILITY, APP_THEMES_APPLY_CAPABILITY, APP_THEME_CAPABILITY_WORDS, } from "../app-theme-capabilities.js";
+export { APP_CASUAL_STYLE_CAPABILITY } from "../app-casual-style-capabilities.js";
 export { MARKET_INDEX_SCHEMA_VERSION } from "../extension-market-index.js";
 //# sourceMappingURL=index.js.map

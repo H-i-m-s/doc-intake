@@ -26,6 +26,14 @@ export type HanaPluginRuntimeProfileV2 = "scoped" | "native" | "local-machine";
 export type HanaPluginRuntimeNetworkV2 = "none" | "loopback" | "external";
 export type HanaPluginRuntimeKindV2 = "node" | "command";
 export type HanaPluginRuntimeStateV2 = "starting" | "ready" | "stopping" | "exited" | "failed" | "stopped";
+/** Longest stable service id the host accepts. */
+export declare const APP_RUNTIME_SERVICE_ID_MAX_LENGTH = 128;
+/**
+ * A stable, App-scoped service id: 1 to 128 ASCII characters, a letter or
+ * digit first, then letters, digits, dot, underscore or hyphen. It is compared
+ * verbatim, so the host never trims a value into a different alias.
+ */
+export declare function isAppRuntimeServiceId(value: unknown): value is string;
 /**
  * `service` is an explicit declaration, never a port a child printed and the
  * host guessed. A proxy may be exposed only after the exact ready marker has
@@ -34,6 +42,26 @@ export type HanaPluginRuntimeStateV2 = "starting" | "ready" | "stopping" | "exit
 export interface HanaPluginRuntimeServiceV2 {
     readonly port: number;
     readonly readyMarker: string;
+    /**
+     * Optional stable name for this managed service within one App install or
+     * isolation scope. Omitted keeps the existing anonymous service behavior.
+     */
+    readonly id?: string;
+}
+/**
+ * An App card's logical reference to one of the App's own managed services.
+ *
+ * `id` names the stable service within this App (the same grammar
+ * {@link isAppRuntimeServiceId} enforces for a runtime service id). `path` is
+ * a canonical service pathname — never a URL: no scheme, authority, port,
+ * credential or lease — resolved through the App's existing `_runtime` mount.
+ * Both halves are logical; which concrete runtime generation the mount
+ * resolves to is the host's to decide and never travels in a declaration or a
+ * saved layout.
+ */
+export interface AppServiceReferenceV2 {
+    readonly id: string;
+    readonly path: string;
 }
 export interface HanaPluginRuntimeStartInputV2 {
     readonly runtime: HanaPluginRuntimeKindV2;
@@ -61,6 +89,8 @@ export interface HanaPluginRuntimeStartInputV2 {
 export interface HanaPluginRuntimeServiceStatusV2 {
     readonly port: number;
     readonly state: "pending" | "ready" | "unavailable";
+    /** Echoes the declared stable id when the service declared one. */
+    readonly id?: string;
 }
 export interface HanaPluginRuntimeInfoV2 {
     readonly runtimeId: string;

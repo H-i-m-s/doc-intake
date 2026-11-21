@@ -3,8 +3,8 @@
  * by `node scripts/sync-app-sdk.mjs`. Do not edit by hand; edit the source
  * and re-run the sync script instead.
  */
-import { CHALKBOARD_CHANNELS_PAGE_ID, CHALKBOARD_CHAT_PAGE_ID } from '../chalkboard-layout.js';
-export { CHALKBOARD_CHANNELS_PAGE_ID, CHALKBOARD_CHAT_PAGE_ID };
+import { CHALKBOARD_CHANNELS_PAGE_ID, CHALKBOARD_CHAT_PAGE_ID, CHALKBOARD_CODE_PAGE_ID, CHALKBOARD_STUDIO_PAGE_ID } from '../chalkboard-layout.js';
+export { CHALKBOARD_CHANNELS_PAGE_ID, CHALKBOARD_CHAT_PAGE_ID, CHALKBOARD_CODE_PAGE_ID, CHALKBOARD_STUDIO_PAGE_ID };
 export const CHALKBOARD_HOME_CHAT_LEAF_ID = 'wb-home-chat-leaf';
 export const CHALKBOARD_HOME_CHAT_GROUP_ID = 'wb-home-chat-group';
 export const CHALKBOARD_HOME_CHAT_TILE_ID = 'wb-home-chat-tile';
@@ -12,6 +12,8 @@ export const CHALKBOARD_PREVIEW_LEAF_ID = 'wb-home-preview-leaf';
 export const CHALKBOARD_PREVIEW_GROUP_ID = 'wb-home-preview-group';
 export const CHALKBOARD_PREVIEW_TILE_ID = 'wb-home-preview-tile';
 export const CHALKBOARD_PREVIEW_SPLIT_ID = 'wb-home-preview-split';
+/** Code 页自己的预览瓦片实例（定义仍是 CHALKBOARD_PREVIEW_TILE_ID，只换实例身份）。 */
+export const CHALKBOARD_CODE_PREVIEW_TILE_ID = 'wb-code-preview-tile';
 export const CHALKBOARD_WORKSPACE_LEAF_ID = 'wb-home-workspace-leaf';
 export const CHALKBOARD_WORKSPACE_GROUP_ID = 'wb-home-workspace-group';
 export const CHALKBOARD_WORKSPACE_SPLIT_ID = 'wb-home-workspace-split';
@@ -21,7 +23,6 @@ export const CHALKBOARD_TILE_WORKSPACE_TODO = 'wb-tile-workspace-todo';
 export const CHALKBOARD_TILE_WORKSPACE_CORE = 'wb-tile-workspace-core';
 /** 子对话成员只在工作台内部流里渲染，没有独立卡形态；这个 id 是它在读模型
     里的身份，不是一个可挂载的卡定义。 */
-export const CHALKBOARD_TILE_WORKSPACE_SUB_CONVERSATIONS = 'wb-tile-workspace-sub-conversations';
 export const CHALKBOARD_TILE_WORKSPACE_WORKFLOW = 'wb-tile-workspace-workflow';
 export const CHALKBOARD_TILE_WORKSPACE_ACTIVITY = 'wb-tile-workspace-activity';
 export const CHALKBOARD_TILE_WORKSPACE_STATUS = 'wb-tile-workspace-status';
@@ -51,6 +52,10 @@ export const CHALKBOARD_TERMINAL_DEFAULT_PX = 520;
 /** 子进程卡：子对话 + 后台进程（子助手 / workflow / 助手起的后台命令）的一等桌面卡。
     从聊天卡面板菜单自己开、自己关，不随后台动静自动生灭；不进卡片中心。 */
 export const CHALKBOARD_SUB_PROCESSES_RENDERER_KIND = 'sub-processes';
+/** Code 页的改动卡：当前 Code 会话的 git 改动列表，只允许落在 Code 页。 */
+export const CHALKBOARD_CODE_CHANGES_RENDERER_KIND = 'code-changes';
+/** Code 页 Actions 卡（只落在 Code 页，内容为同一份 Actions 面板）。 */
+export const CHALKBOARD_CODE_ACTIONS_RENDERER_KIND = 'code-actions-card';
 export const CHALKBOARD_SUB_PROCESSES_MIN_PX = 240;
 export const CHALKBOARD_SUB_PROCESSES_DEFAULT_PX = 300;
 /** A detached, read-only transcript for one bound subagent activity. */
@@ -65,6 +70,10 @@ export const CHALKBOARD_SUBAGENT_PREVIEW_DETACHED_DEFAULT_BOUNDS = {
 };
 export const CHALKBOARD_PARALLEL_CHAT_RENDERER_KIND = 'parallel-chat';
 export const CHALKBOARD_PARALLEL_PREVIEW_RENDERER_KIND = 'parallel-preview';
+export const CHALKBOARD_STUDIO_PREVIEW_RENDERER_KIND = 'studio-preview';
+export const CHALKBOARD_STUDIO_HOME_RENDERER_KIND = 'studio-home';
+export const CHALKBOARD_STUDIO_FOLDER_RENDERER_KIND = 'studio-folder';
+export const CHALKBOARD_STUDIO_LIBRARY_RENDERER_KIND = 'studio-library';
 export const CHALKBOARD_INTERACTIVE_ARTIFACT_RENDERER_KIND = 'interactive-artifact';
 export const CHALKBOARD_TERMINAL_RENDERER_KIND = 'terminal-card';
 /** 画廊可多开的独立终端卡：进程归卡片所有，不跟随聊天会话。 */
@@ -94,7 +103,11 @@ export const CHALKBOARD_INTERACTIVE_ARTIFACT_DETACHED_DEFAULT_BOUNDS = {
     width: CHALKBOARD_INTERACTIVE_ARTIFACT_DEFAULT_PX,
     height: 720,
 };
+export const CHALKBOARD_CARD_CODE_PAGE = 'code';
+export const CHALKBOARD_FP_CODE_SESSION_LIST = 'code-session-list-pane';
 export const CHALKBOARD_CARD_CHANNELS_PAGE = 'channels';
+/** Internal host policy; App definitions cannot request permanent retention. */
+export const CHALKBOARD_RESIDENT_BUILTIN_PAGE_IDS = [CHALKBOARD_CODE_PAGE_ID];
 export const CHALKBOARD_FP_CHANNELS_LIST = 'channels-list-pane';
 export const CHALKBOARD_TILE_CHANNEL_CHAT = 'wb-tile-channel-chat';
 export const CHALKBOARD_TILE_CHANNEL_STACK = 'wb-tile-channel-stack';
@@ -103,6 +116,8 @@ export const CHALKBOARD_CHANNELS_CHAT_GROUP_ID = 'wb-channels-chat-group';
 export const CHALKBOARD_CHANNELS_STACK_LEAF_ID = 'wb-channels-stack-leaf';
 export const CHALKBOARD_CHANNELS_STACK_GROUP_ID = 'wb-channels-stack-group';
 export const CHALKBOARD_CHANNELS_DEFAULT_SPLIT_ID = 'wb-channels-default-split';
+export const CHALKBOARD_STUDIO_SURFACE_ID = 'studio-window';
+export const CHALKBOARD_STUDIO_ROOT_NODE_ID = 'node:studio-window:root';
 export function pageCanvasId(pageId) {
     if (typeof pageId !== 'string' || !pageId) {
         throw new Error('chalkboard canvas: pageId must be a non-empty string');

@@ -19,7 +19,8 @@ export interface AppSessionListRequestV2 {
 }
 export interface AppSessionListEntryV2 {
     readonly sessionId: string | null;
-    readonly path: string;
+    readonly path: string; /** 只读：空间（app / home / code / bridge / phone / background）。 */
+    readonly namespace?: string | null;
     readonly title?: string | null;
     readonly firstMessage?: string | null;
     readonly agentId?: string | null;

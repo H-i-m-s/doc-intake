@@ -6,7 +6,7 @@
 /**
  * extension-market-index.ts — 扩展市场索引 v2 schema：纯类型 + 校验，无 IO
  *
- * 覆盖六种 kind（app / skill / recipe / connector / role / bundle）的统一市场
+ * 覆盖各扩展 kind 的统一市场
  * 索引形状。这是一份"源发布什么、市场怎么读"的 wire schema。kind 取值、
  * permission 声明的形状、id 与 capability 名称的校验规则不在这里自己声明
  * 一份——直接从 shared/extension-contract.ts 引入那份唯一定义（同属
@@ -25,10 +25,16 @@
  */
 import { EXTENSION_KINDS, isCapabilityName, isExtensionKind, isSafeExtensionId, } from "./extension-contract.js";
 export const MARKET_INDEX_SCHEMA_VERSION = 2;
-// 上一代插件安装通道（lib 里那个已不在本仓库的旧市场模块）用的同一个包
-// 体积上限，延续沿用，常量放在这里而不是抓取层，因为"多大算太大"是索引
-// 数据本身的语义边界，不是传输层的关注点。
-export const MAX_MARKET_ARCHIVE_BYTES = 50 * 1024 * 1024;
+// 市场索引声明的 ZIP 压缩包共享大小上限；与安装阶段的解压预算相互独立。
+export const MAX_MARKET_ARCHIVE_BYTES = 300 * 1024 * 1024;
+// 单条已审核 README 快照的字节上限。快照随批准记录进索引，与安装解压预算无关；
+// 2 MiB 与市场 readme 代理此前允许抓取的正文上限同值，作为进入审核文件的文本边界。
+export const MAX_MARKET_README_BYTES = 2 * 1024 * 1024;
+// 生成的整份市场索引的字节上限，和客户端刷新通道的默认 payload 上限同值
+// （lib/remote-data/refresh-channel.ts 的 DEFAULT_MAX_PAYLOAD_BYTES）。发布器用它
+// 拒绝客户端读不下来的过大索引；lib/extension-market/index-channel.ts 显式把同一
+// 常量传给刷新通道，避免两边各写一个数字而悄悄漂移。
+export const MAX_MARKET_INDEX_BYTES = 8 * 1024 * 1024;
 // ---------------------------------------------------------------------------
 // 基础谓词：这份 wire schema 自己的通用类型守卫。id 与 capability 名称校验
 // 不在这里——用的是上面从 shared/extension-contract.ts 引入的
@@ -58,6 +64,9 @@ function isSha256Hex(value) {
 }
 function isPositiveInteger(value) {
     return Number.isInteger(value) && value > 0;
+}
+function isNonNegativeInteger(value) {
+    return Number.isInteger(value) && value >= 0;
 }
 function isParseableDate(value) {
     return typeof value === "string" && value.length > 0 && !Number.isNaN(Date.parse(value));
@@ -106,6 +115,14 @@ function describeItemVersion(entry, path) {
         return `${path}.minAppVersion must be a non-empty string`;
     }
     return describeArchive(entry.archive, `${path}.archive`);
+}
+function describeStats(value, path) {
+    if (!isPlainObject(value))
+        return `${path} must be an object`;
+    if (value.downloads !== undefined && !isNonNegativeInteger(value.downloads)) {
+        return `${path}.downloads must be a non-negative integer`;
+    }
+    return null;
 }
 function describeCompatibility(value, path) {
     if (!isPlainObject(value))
@@ -171,8 +188,15 @@ function describeMarketItem(raw, path) {
         return `${path}.categories must be an array of strings`;
     if (raw.keywords !== undefined && !isStringArray(raw.keywords))
         return `${path}.keywords must be an array of strings`;
+    if (raw.readme !== undefined && typeof raw.readme !== "string")
+        return `${path}.readme must be a string`;
     if (raw.readmeUrl !== undefined && typeof raw.readmeUrl !== "string")
         return `${path}.readmeUrl must be a string`;
+    if (raw.stats !== undefined) {
+        const statsError = describeStats(raw.stats, `${path}.stats`);
+        if (statsError)
+            return statsError;
+    }
     return null;
 }
 function itemLabel(raw, index) {

@@ -1,1 +1,1 @@
-{"version":3,"file":"manifest.js","sourceRoot":"","sources":["../../src/app-contract/manifest.ts"],"names":[],"mappings":""}
+{"version":3,"file":"manifest.js","sourceRoot":"","sources":["../../src/app-contract/manifest.ts"],"names":[],"mappings":"AA4FA;;;;;;;GAOG;AACH,MAAM,CAAC,MAAM,cAAc,GAAG,CAAC,QAAQ,EAAE,YAAY,EAAE,cAAc,CAAU,CAAC;AAGhF,0CAA0C;AAC1C,MAAM,CAAC,MAAM,oBAAoB,GAAG,CAAC,MAAM,EAAE,MAAM,EAAE,MAAM,CAAU,CAAC;AAGtE;;;;;;GAMG;AACH,MAAM,CAAC,MAAM,qBAAqB,GAAG,CAAC,OAAO,EAAE,MAAM,EAAE,SAAS,CAAU,CAAC"}

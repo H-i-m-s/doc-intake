@@ -87,6 +87,12 @@ export interface ToggleProps {
 export interface NumberInputProps {
     value: number | null;
     onChange: (value: number) => void;
+    /**
+     * Called instead of onChange when the user submits an empty value; the consumer
+     * decides what clearing means (for example dropping an override so the default
+     * applies). Takes precedence over emptyValue when both are provided.
+     */
+    onClear?: () => void;
     unit?: string;
     unitPlacement?: 'outside' | 'inside';
     commitOnBlur?: boolean;
@@ -228,6 +234,42 @@ export interface ListRowProps extends Omit<HTMLAttributes<HTMLDivElement>, 'titl
     overflowLabel?: string;
     overflowText?: string;
     overflowDisabled?: boolean;
+}
+/** Centered icon + guidance placeholder for an empty list or panel. */
+export interface EmptyStateProps {
+    icon?: ReactNode;
+    title?: ReactNode;
+    description?: ReactNode;
+    action?: ReactNode;
+    className?: string;
+}
+/** A labeled checkbox field with hint/error slots. `onChange` reports the boolean. */
+export interface CheckboxProps {
+    checked?: boolean;
+    defaultChecked?: boolean;
+    disabled?: boolean;
+    onChange?: (checked: boolean) => void;
+    label?: ReactNode;
+    hint?: ReactNode;
+    error?: ReactNode;
+    id?: string;
+    name?: string;
+    className?: string;
+    'aria-label'?: string;
+}
+/** A generic busy indicator (host spinner + label); not a save-button state. */
+export interface BusyStateProps {
+    label?: ReactNode;
+    className?: string;
+    style?: CSSProperties;
+}
+/** An inline error state with an optional recovery action. */
+export interface ErrorStateProps {
+    title?: ReactNode;
+    message?: ReactNode;
+    action?: ReactNode;
+    className?: string;
+    style?: CSSProperties;
 }
 export declare const SettingsPage: ComponentType<SettingsPageProps>;
 export declare const SettingsSurface: ComponentType<SettingsSurfaceProps>;

@@ -16,7 +16,7 @@
  * `UI_SLOT_DIRECTORY` the same way: a plugin may only sit in a seat this table
  * opens, it cannot invent a location.
  */
-import type { AppInputStatusIconName } from './app-input-status-icons.js';
+import type { AppInputStatusIcon } from './app-input-status-icons.js';
 /** A row of actions attached to a chat message. */
 export declare const UI_SLOT_MESSAGE_ACTIONS: "hana/chat.message.actions";
 /** Chrome attached to a card's own frame. */
@@ -32,6 +32,75 @@ export declare const UI_SLOT_KEYBINDINGS: "hana/commands.keybindings";
 export declare const UI_SLOT_INPUT_CONTROLS: "hana/input.controls";
 /** Host-rendered launch entries for Apps that provide a Developer Space. */
 export declare const UI_SLOT_HOME_ACTIONS: "hana/home.actions";
+/**
+ * The window's companion overlay: one sprite an App places against a named
+ * host anchor, sitting above the normal UI and below every safety layer.
+ */
+export declare const UI_SLOT_COMPANIONS: "hana/window.companions";
+/** The host anchors this version places companions against. */
+export declare const UI_COMPANION_ANCHORS: readonly ["hana/composer"];
+export type UiCompanionAnchor = typeof UI_COMPANION_ANCHORS[number];
+/**
+ * The events a declared `on` block may answer. `click` / `dblclick` come from
+ * the sprite itself; the `agent.*` four are the host's agent lifecycle, which
+ * carries no conversation content.
+ */
+export declare const UI_COMPANION_EVENTS: readonly ["click", "dblclick", "agent.idle", "agent.working", "agent.waiting", "agent.done"];
+export type UiCompanionEvent = typeof UI_COMPANION_EVENTS[number];
+/**
+ * One visual state. Two mutually exclusive shapes: a single file (`src`, which
+ * may be an animated png/webp or a gif) and a horizontal sprite sheet (`sheet`
+ * plus `frames` / `fps`). `revision` and `srcUrl` are host-stamped — a manifest
+ * that declares them is refused, exactly like an unknown key.
+ */
+export type UiCompanionState = {
+    readonly src: string;
+    readonly durationMs?: number;
+    readonly then?: string;
+    readonly revision?: string;
+    readonly srcUrl?: string;
+} | {
+    readonly sheet: string;
+    readonly frames: number;
+    readonly fps: number;
+    readonly loop?: boolean;
+    readonly then?: string;
+    readonly revision?: string;
+    readonly srcUrl?: string;
+};
+/** What one declared event does when it fires. */
+export interface UiCompanionAction {
+    /** A declared state name to switch to. */
+    readonly state?: string;
+    /** 1–8 lines; the host picks one at random and shows it in a host-drawn bubble. */
+    readonly bubble?: readonly string[];
+    /** A tool this App registered, invoked through the ui-actions channel. */
+    readonly toolName?: string;
+    /** Arguments for `toolName`; refused without it. */
+    readonly args?: Readonly<Record<string, unknown>>;
+}
+/** One companion an App declares under `contributes.ui.companions`. */
+export interface UiCompanionContribution {
+    /** Unique within this App's `companions` array. */
+    readonly id: string;
+    /** Accessible name and the bubble anchor's label. */
+    readonly title: string;
+    readonly anchor: UiCompanionAnchor;
+    readonly attach: "top-start" | "top-center" | "top-end";
+    /** `[x, y]` in CSS pixels applied after attaching. */
+    readonly offset: readonly [number, number];
+    readonly size: {
+        readonly width: number;
+        readonly height: number;
+    };
+    /** Per-anchor occlusion; an anchor absent here is `front` (the sprite covers it). */
+    readonly occlusion: Readonly<Partial<Record<UiCompanionAnchor, "front" | "behind">>>;
+    readonly hit: "alpha" | "box" | "none";
+    /** The state shown first; always one of `states`. */
+    readonly initial: string;
+    readonly states: Readonly<Record<string, UiCompanionState>>;
+    readonly on: Readonly<Partial<Record<UiCompanionEvent, UiCompanionAction>>>;
+}
 /**
  * One action a plugin adds to a chat message's action row.
  *
@@ -197,8 +266,12 @@ export interface UiInputStatusContribution {
     readonly id: string;
     /** Full label for tooltips and accessible names. Legacy declarations with no icon or text render this value. */
     readonly title: string;
-    /** Optional host-owned icon. When omitted, the host does not add a default icon. */
-    readonly icon?: AppInputStatusIconName;
+    /**
+     * Optional icon: a host-owned name (`check`, `pin`, `sync`) or a `ui/`-relative
+     * bundled `.png` / `.webp` / `.svg` path in this App's own `ui/` directory.
+     * When omitted, the host does not add a default icon.
+     */
+    readonly icon?: AppInputStatusIcon;
     /** Optional visible text. When combined with `icon`, both are rendered. */
     readonly text?: string;
     readonly tooltip?: string;
@@ -227,6 +300,8 @@ export interface PluginUiContributions {
     /** Global keyboard shortcuts this plugin declares. See `UiKeybindingContribution`. */
     readonly keybindings?: readonly UiKeybindingContribution[];
     readonly homeActions?: readonly UiHomeActionContribution[];
+    /** Sprites this plugin places on the window's companion overlay. */
+    readonly companions?: readonly UiCompanionContribution[];
 }
 /**
  * How a slot's content reaches the screen. `host-primitive` means the host's

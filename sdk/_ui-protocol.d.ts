@@ -195,6 +195,16 @@ export declare const APP_STORAGE_CAPABILITY: {
 export declare const APP_STORAGE_HOST_EVENT: {
     readonly CHANGED: "hana.app.storage.changed";
 };
+/**
+ * v2 App-only user-theme change broadcast: the host consumes the server's
+ * `custom-theme-changed` app event and pushes a coarse invalidation notice to
+ * the same App's mounted App iframes. The payload carries only a `kind` and an
+ * optional id/revision — never the theme contents — so subscribers re-read
+ * through `hana.themes.custom.list/get`.
+ */
+export declare const APP_CUSTOM_THEME_HOST_EVENT: {
+    readonly CHANGED: "hana.app.custom-theme.changed";
+};
 /** Open or reveal a card declared by the authenticated App itself. */
 export declare const APP_CARD_CAPABILITY: {
     readonly OPEN: "hana.cards.open";
@@ -245,11 +255,417 @@ export declare function parseAppSurfaceInteractiveRegions(value: unknown): {
     ok: false;
     error: string;
 };
+/**
+ * v2 App current-view Chrome wire vocabulary. Its own words on purpose,
+ * outside the ABI-frozen v1 `PLUGIN_UI_CAPABILITY` map: that object is pinned
+ * item by item by `tests/plugin-abi-freeze.test.ts`, so a v2-only verb added
+ * there would turn the freeze test red even with v1's own verbs untouched —
+ * the same reasoning `APP_STORAGE_CAPABILITY` records.
+ *
+ * The verbs stay separate: `SET` replaces the description, `SCROLL` only
+ * carries a boolean for the card's main scroll element, and `ACTION` is a
+ * host-to-App request, never something the App can start. A local scroll
+ * signal can therefore never clear, or stand in for, a submitted description.
+ *
+ * Every App→host write and every App→host receipt also carries the host-minted
+ * `viewToken`: the host creates one token per live iframe document and the App
+ * only echoes it back. An App that never received the current token (a stale
+ * document whose messages arrived late, a surface that was never bound) cannot
+ * have its write attributed to the live view, and the host refuses it as
+ * `VIEW_STALE` instead of silently applying it to whatever is current.
+ */
+export declare const APP_CHROME: {
+    /** App → host: submit a full Chrome description. */
+    readonly SET: "hana.app.chrome.set";
+    /** App → host: the card's registered main scroll element crossed the top boundary. */
+    readonly SCROLL: "hana.app.chrome.scroll";
+    /** Host → App: a user-driven chrome action to answer (callback / tab-select / tab-close). */
+    readonly ACTION: "hana.app.chrome.action";
+    /** Host → App: this iframe document's current view token. The App echoes it; it never chooses it. */
+    readonly BINDING: "hana.app.chrome.binding";
+    /** Host → App: prove the document behind this iframe is still the live one. */
+    readonly CHALLENGE: "hana.app.chrome.challenge";
+    /** App → host: the challenge answer: the app's own per-document nonce. */
+    readonly ACK: "hana.app.chrome.ack";
+};
+/** Stable App Chrome error codes. Callers branch on the code; the message is for humans. */
+export declare const APP_CHROME_ERROR_CODE: {
+    /** No trusted, ready App card view owns this surface (settings / function panel / v1 / preview / not ready / no binding yet). */
+    readonly UNAVAILABLE: "APP_CHROME_UNAVAILABLE";
+    /** The write carries no token, or one from a view the host has already replaced. */
+    readonly VIEW_STALE: "APP_CHROME_VIEW_STALE";
+    readonly REVISION_STALE: "APP_CHROME_REVISION_STALE";
+    readonly BAD_PAYLOAD: "APP_CHROME_BAD_PAYLOAD";
+    /** A `declared` action names an id the host cannot confirm this App registered. */
+    readonly DECLARED_UNAUTHORIZED: "APP_CHROME_DECLARED_UNAUTHORIZED";
+    /** The App has no onAction handler for this request. */
+    readonly ACTION_UNHANDLED: "APP_CHROME_ACTION_UNHANDLED";
+    /** The App's onAction handler threw or answered with something unusable. */
+    readonly ACTION_FAILED: "APP_CHROME_ACTION_FAILED";
+};
+export type AppChromeErrorCode = (typeof APP_CHROME_ERROR_CODE)[keyof typeof APP_CHROME_ERROR_CODE];
+/** The longest view token the host will mint or accept. */
+export declare const APP_CHROME_MAX_VIEW_TOKEN_LENGTH = 128;
+/**
+ * A host-minted view token. Opaque to the App; compared byte for byte. Shape is
+ * only validated so a malformed value cannot smuggle control characters.
+ */
+export declare function isAppChromeViewToken(value: unknown): value is string;
+/** Host → App: the token for the iframe document the host currently holds. */
+export interface AppChromeBinding {
+    readonly viewToken: string;
+    /**
+     * Set when the host re-binds a document it already held (a rebind or a
+     * same-document re-proof): the App should send its real scroll state once, so
+     * a boolean the host dropped while re-proving is restored without per-pixel
+     * traffic.
+     */
+    readonly resync?: boolean;
+}
+export declare function parseAppChromeBinding(value: unknown): {
+    ok: true;
+    value: AppChromeBinding;
+} | {
+    ok: false;
+    error: string;
+};
+/** Host → App: a challenge to prove the current iframe document. */
+export interface AppChromeChallenge {
+    readonly challengeId: string;
+}
+export declare function parseAppChromeChallenge(value: unknown): {
+    ok: true;
+    value: AppChromeChallenge;
+} | {
+    ok: false;
+    error: string;
+};
+/**
+ * App → host: the answer to a challenge. `documentNonce` is generated by the
+ * App's chrome SDK once per script run, so it identifies the *document* rather
+ * than the App. It is not authority — it grants nothing; the host uses it only
+ * to tell "the same document answered again" (a bridge rebind or a duplicate
+ * load) from "a new document appeared" (a real reload), and the host still
+ * mints the view token/generation itself.
+ */
+export interface AppChromeAck {
+    readonly challengeId: string;
+    readonly documentNonce: string;
+}
+export declare function parseAppChromeAck(value: unknown): {
+    ok: true;
+    value: AppChromeAck;
+} | {
+    ok: false;
+    error: string;
+};
+/** The set payload carries the description plus the echoed view token — no owner identity. */
+export interface AppChromeSetInput {
+    readonly description: unknown;
+    readonly viewToken: string;
+}
+export declare function parseAppChromeSetInput(value: unknown): {
+    ok: true;
+    value: AppChromeSetInput;
+} | {
+    ok: false;
+    error: string;
+};
+/** The scroll signal carries one boolean plus the echoed view token. */
+export interface AppChromeScrollSignal {
+    readonly scrolled: boolean;
+    readonly viewToken: string;
+}
+export declare function parseAppChromeScrollSignal(value: unknown): {
+    ok: true;
+    value: AppChromeScrollSignal;
+} | {
+    ok: false;
+    error: string;
+};
+/**
+ * The identity half of an App's action reply. The App echoes the host's
+ * requestId / revision / generation / viewToken; the host refuses a reply whose
+ * identity does not match the request it sent (including on the error path).
+ */
+export interface AppChromeActionIdentity {
+    readonly requestId: string;
+    readonly revision: number;
+    readonly generation: number;
+    readonly viewToken: string;
+}
+export declare function parseAppChromeActionIdentity(value: unknown): {
+    ok: true;
+    value: AppChromeActionIdentity;
+} | {
+    ok: false;
+    error: string;
+};
+/**
+ * What the user did on host-drawn chrome. Deliberately an explicit union of
+ * three shaped requests rather than one bag of optional fields, so a tab
+ * request can never smuggle an `actionId` and a callback can never smuggle a
+ * `tabId`.
+ *
+ * `requestId`, `revision`, `generation` and `viewToken` are all host-minted.
+ * The App may echo them back on its reply; it never chooses them, and the host
+ * refuses a reply that does not match the request it sent.
+ */
+export type AppChromeActionRequest = {
+    readonly kind: 'action';
+    readonly requestId: string;
+    readonly revision: number;
+    readonly generation: number;
+    readonly viewToken: string;
+    readonly actionId: string;
+} | {
+    readonly kind: 'tab-select';
+    readonly requestId: string;
+    readonly revision: number;
+    readonly generation: number;
+    readonly viewToken: string;
+    readonly tabId: string;
+} | {
+    readonly kind: 'tab-close';
+    readonly requestId: string;
+    readonly revision: number;
+    readonly generation: number;
+    readonly viewToken: string;
+    readonly tabId: string;
+};
+export declare function parseAppChromeActionRequest(value: unknown): {
+    ok: true;
+    value: AppChromeActionRequest;
+} | {
+    ok: false;
+    error: string;
+};
+export type AppChromeActionStatus = 'handled' | 'rejected' | 'unknown';
+export interface AppChromeActionReceipt {
+    readonly requestId: string;
+    readonly revision: number;
+    readonly generation: number;
+    readonly viewToken: string;
+    readonly status: AppChromeActionStatus;
+    readonly message?: string;
+}
+export declare function parseAppChromeActionReceipt(value: unknown): {
+    ok: true;
+    value: AppChromeActionReceipt;
+} | {
+    ok: false;
+    error: string;
+};
+/**
+ * A reply only counts when it answers the exact request that was sent: same
+ * requestId, revision, generation and view token. A mismatch is not "accepted
+ * with a caveat", it is refused, and the caller reports an unknown outcome —
+ * never a retry.
+ */
+export declare function appChromeReceiptMatchesRequest(receipt: AppChromeActionReceipt, request: AppChromeActionRequest): boolean;
+export declare function appChromeIdentityMatchesRequest(identity: AppChromeActionIdentity, request: AppChromeActionRequest): boolean;
+/**
+ * v2 App view-state wire vocabulary. Its own words on purpose, outside the
+ * ABI-frozen v1 `PLUGIN_UI_CAPABILITY` map, for the same reason `APP_CHROME`
+ * records: the v1 map is pinned item by item, so a v2-only verb added there
+ * would turn the freeze test red even with v1's own verbs untouched.
+ *
+ * Every verb carries the host-minted view token the App can only echo, plus a
+ * host-provided namespace binding id. The two ids are opaque: they say *where*
+ * a snapshot belongs, never *whether* the caller may touch it. The namespace id
+ * is not a credential, carries no host/profile/path text, and is compared code
+ * unit for code unit. The view token still has to match the live document, so a
+ * stale document cannot ride a current namespace.
+ */
+export declare const APP_VIEW_STATE: {
+    /** App → host: register the current document/namespace, returning a bound handle. */
+    readonly ENABLE: "hana.app.view-state.enable";
+    /** App → host: read the snapshot the handle's namespace currently holds. */
+    readonly GET: "hana.app.view-state.get";
+    /** App → host: compare-and-swap the handle's namespace snapshot. */
+    readonly SET: "hana.app.view-state.set";
+    /** App → host: release this handle's own registration. */
+    readonly RELEASE: "hana.app.view-state.release";
+};
+export type AppViewStateVerb = (typeof APP_VIEW_STATE)[keyof typeof APP_VIEW_STATE];
+/** The two independent view slots a namespace can hold. */
+export type AppViewStateKind = 'compact' | 'detached';
+/** UTF-16 code-unit ceiling for one opaque namespace / registration id. */
+export declare const APP_VIEW_STATE_NAMESPACE_ID_MAX_LENGTH = 256;
+/**
+ * The one rule for a host-provided namespace binding id and a registration id:
+ * an opaque, non-blank string of 1..{@link APP_VIEW_STATE_NAMESPACE_ID_MAX_LENGTH}
+ * code units with no control character. Never trimmed: `" a "` and `"a"` are
+ * different ids. It carries no access meaning and grants nothing by matching.
+ */
+export declare function isAppViewStateNamespaceId(value: unknown): value is string;
+/** What the host-bound namespace handle was enabled with. */
+export interface AppViewStateEnableInput {
+    readonly viewToken: string;
+    readonly bindingId: string;
+}
+export declare function parseAppViewStateEnableInput(value: unknown): {
+    ok: true;
+    value: AppViewStateEnableInput;
+} | {
+    ok: false;
+    error: string;
+};
+/** One operation addressed to a handle's own registration. */
+export interface AppViewStateHandleInput {
+    readonly viewToken: string;
+    readonly bindingId: string;
+    readonly registrationId: string;
+}
+export declare function parseAppViewStateGetInput(value: unknown): {
+    ok: true;
+    value: AppViewStateHandleInput;
+} | {
+    ok: false;
+    error: string;
+};
+export declare function parseAppViewStateReleaseInput(value: unknown): {
+    ok: true;
+    value: AppViewStateHandleInput;
+} | {
+    ok: false;
+    error: string;
+};
+/** A compare-and-swap write of one namespace's snapshot. */
+export interface AppViewStateSetInput extends AppViewStateHandleInput {
+    readonly expectedRevision: number;
+    /** Untouched here: the shared JSON budget is enforced by the consumer's normalizer. */
+    readonly state: unknown;
+}
+export declare function parseAppViewStateSetInput(value: unknown): {
+    ok: true;
+    value: AppViewStateSetInput;
+} | {
+    ok: false;
+    error: string;
+};
+/** The snapshot one namespace slot holds, as it travels on the wire. */
+export interface AppViewStateWireSnapshot {
+    readonly viewKind: AppViewStateKind;
+    readonly revision: number;
+    /** Untouched here: the consumer deep-validates it against the shared JSON budget. */
+    readonly state: unknown;
+}
+/**
+ * Snapshot structure and scalars only: the kind is one of the two slots, the
+ * revision is a non-negative safe integer, revision 0 carries an explicit null
+ * state, and no other field rides along. `state`'s deep JSON validation belongs
+ * to the shared pure normalizer the consumer already owns.
+ */
+export declare function parseAppViewStateSnapshot(value: unknown): {
+    ok: true;
+    value: AppViewStateWireSnapshot;
+} | {
+    ok: false;
+    error: string;
+};
+/**
+ * The reply to ENABLE / GET / SET: it echoes the operation's own target plus the
+ * snapshot the target read. The echo is wire identity, not author-visible state —
+ * a new document or a new SDK can reuse a request id, so message-id correlation
+ * alone cannot tell a reply for the current view from a late reply for an older
+ * one. The caller compares the echo against the values it captured when sending.
+ *
+ * The snapshot is deliberately left unvalidated here and checked by the
+ * consumer with `parseAppViewStateSnapshot`, so a reply whose echo names the
+ * caller's own operation is still recognisable — and its registration still
+ * reclaimable — even when the snapshot half is unusable.
+ */
+export interface AppViewStateSnapshotReply {
+    readonly viewToken: string;
+    readonly bindingId: string;
+    readonly registrationId: string;
+    readonly snapshot: unknown;
+}
+export declare function parseAppViewStateSnapshotReply(value: unknown): {
+    ok: true;
+    value: AppViewStateSnapshotReply;
+} | {
+    ok: false;
+    error: string;
+};
+/**
+ * Whether a reply's echo names the exact operation the caller sent. The view
+ * token and namespace binding id must match verbatim; when the operation has a
+ * registration id (GET / SET / RELEASE), it must match too. ENABLE passes no
+ * registration id, so only the token and binding id are compared — the reply's
+ * registration id is the newly minted one.
+ */
+export declare function appViewStateEchoMatchesOperation(echo: {
+    readonly viewToken: string;
+    readonly bindingId: string;
+    readonly registrationId?: string;
+}, operation: {
+    readonly viewToken: string;
+    readonly bindingId: string;
+    readonly registrationId?: string;
+}): boolean;
+/** The release reply: the echoed target plus whether the host accepted it. */
+export interface AppViewStateReleaseReply {
+    readonly viewToken: string;
+    readonly bindingId: string;
+    readonly registrationId: string;
+    readonly released: boolean;
+}
+export declare function parseAppViewStateReleaseReply(value: unknown): {
+    ok: true;
+    value: AppViewStateReleaseReply;
+} | {
+    ok: false;
+    error: string;
+};
 export interface AppCardOpenResult {
     cardInstanceId: string;
     existing: boolean;
     detached: boolean;
 }
+/** App-supplied business key for `hana.cards.open`; opaque to the host. */
+export interface AppCardOpenOptions {
+    instanceKey?: string;
+}
+/**
+ * The two App document path shapes a URL may name, recognised from pure path
+ * shape alone. This is *not* a grant: it says nothing about whether the host has
+ * authorised the document. The host decides that (see its own trust predicate);
+ * the SDK uses this only so its URL helpers and App entry agree on what an App
+ * surface path looks like, and so a path in some other shape is not mistaken for
+ * one.
+ *
+ *  · `ui`      — `/api/apps/<id>/ui[/...]`, the App's own static `ui/` tree.
+ *  · `runtime` — the App's scoped managed-service mount,
+ *                `/api/apps/<id>/routes/_runtime/<runtimeId>/_surface/<token>/<path>`.
+ *
+ * A bare `_runtime` segment, a relative path, or a cross-origin `//host` prefix
+ * is not an App surface path and is refused here.
+ */
+export type AppSurfacePathKind = "ui" | "runtime";
+export interface AppSurfacePathInfo {
+    /** The App id the path itself names, decoded once. */
+    readonly appId: string;
+    readonly kind: AppSurfacePathKind;
+}
+/** The App surface path one pathname names, or null. Never checks authority. */
+export declare function parseAppSurfacePathname(pathname: unknown): AppSurfacePathInfo | null;
+/** UTF-16 code-unit ceiling for one business instance key. */
+export declare const APP_CARD_INSTANCE_KEY_MAX_LENGTH = 256;
+/**
+ * The one rule for an App business instance key, shared by the SDK (which
+ * refuses before it ever posts a request) and the host (which refuses before it
+ * touches the layout). The key stays opaque: it is compared code-unit for
+ * code-unit, never trimmed, path-normalised or case-folded, so `" a "` is a
+ * different key from `"a"`. A key is a non-empty string of at most
+ * {@link APP_CARD_INSTANCE_KEY_MAX_LENGTH} code units with no NUL, and pure
+ * whitespace is refused because it carries no business identity.
+ *
+ * Returns `undefined` when the field is absent (a legacy keyless call), `null`
+ * when the field is present but invalid, and the opaque key otherwise.
+ */
+export declare function normalizeAppCardInstanceKey(value: unknown): string | null | undefined;
 /** v2 App-only host metadata; kept out of the frozen v1 host-event vocabulary. */
 export declare const APP_SURFACE_HOST_EVENT: {
     readonly CONTEXT: "hana.surface.context";
@@ -568,15 +984,42 @@ export interface AppStorageChangedEvent {
     keys: string[];
 }
 export type PluginUiSlot = 'page' | 'widget' | 'card' | 'settings' | 'function-panel' | 'slot' | 'input-panel';
+/**
+ * A host-provided, non-credential namespace marker for the App view-state
+ * handle. It names *where* a snapshot belongs (the client storage owner plus
+ * the card's logical binding and view slot), never *whether* the caller may
+ * touch it: it carries no host/profile/connection key, path or access ticket.
+ * `available` is only "temporarily usable here", not a grant — a same-id
+ * surface that pauses and returns keeps its registration rather than losing it.
+ */
+export interface PluginSurfaceViewStateNamespace {
+    bindingId: string;
+    viewKind: AppViewStateKind;
+    available: boolean;
+}
 /** Host-stamped surface identity metadata; it does not authorize access to another surface. */
 export interface PluginSurfaceContext {
     appId: string;
     slot: Extract<PluginUiSlot, 'card' | 'settings' | 'function-panel' | 'slot' | 'input-panel'>;
     cardInstanceId: string | null;
+    /**
+     * The business instance key of the mounted card, when the host can prove one
+     * from the card's own binding. Host-stamped, never read from the request, a
+     * URL query or the focus; absent on keyless cards and on settings surfaces.
+     * The field is optional; a null or otherwise invalid stamp is a protocol
+     * error (the SDK refuses the whole context) rather than a keyless card.
+     */
+    instanceKey?: string;
     /** Session where this surface is embedded, when the host has one. */
     embeddedSessionId?: string | null;
     /** Session that created this surface, when the host has one. */
     originSessionId?: string | null;
+    /**
+     * The view-state namespace this surface may opt into, when the host provides
+     * one. Optional and non-credential; an absent or invalid stamp means "no
+     * namespace", never a guessed one.
+     */
+    viewState?: PluginSurfaceViewStateNamespace;
 }
 export type PluginSurfaceMotionBudget = 'full' | 'reduced' | 'paused';
 export interface PluginSurfaceRuntimeBudget {
@@ -639,15 +1082,27 @@ export declare const PLUGIN_MANIFEST_CONTRIBUTES_KEYS: readonly ["cards", "agent
  * v2 manifest `contributes` keys. Independent of the frozen v1 table above:
  * adding a v2 word here does not change what a v1 plugin may declare.
  */
-export declare const PLUGIN_V2_MANIFEST_CONTRIBUTES_KEYS: readonly ["settings", "ui", "cards", "agentTypes", "messageRenderers", "providers", "nativeProviders", "previewers", "cliFlags", "homeActions"];
+export declare const PLUGIN_V2_MANIFEST_CONTRIBUTES_KEYS: readonly ["settings", "ui", "cards", "agentTypes", "messageRenderers", "providers", "nativeProviders", "previewers", "cliFlags", "homeActions", "stylePacks"];
+/** Keys one v2 `contributes.stylePacks[]` entry may carry. Anything else is refused. */
+export declare const PLUGIN_V2_STYLE_PACK_CONTRIBUTION_KEYS: readonly ["id", "path"];
+/** One style pack an App provides to the casual chat. `path` is a directory inside the App package. */
+export interface PluginV2StylePackContribution {
+    readonly id: string;
+    readonly path: string;
+}
+/** The ledger word a v2 App needs (granted) before its `contributes.stylePacks` take effect. */
+export declare const PLUGIN_V2_STYLE_PACKS_CAPABILITY = "app/casual.style";
 /** Keys one v2 `contributes.cards[]` entry may carry. Anything else is refused. */
-export declare const PLUGIN_V2_CARD_CONTRIBUTION_KEYS: readonly ["id", "title", "description", "route", "embedUrl", "cardForm", "titlebar", "realization", "pageOf", "closable", "siteNavEntry", "fpFullPanel", "functionPanel", "detached", "detachedDefaultSize", "face", "formFactors"];
+export declare const PLUGIN_V2_CARD_CONTRIBUTION_KEYS: readonly ["id", "title", "description", "route", "embedUrl", "service", "cardForm", "titlebar", "titleMode", "realization", "pageOf", "closable", "siteNavEntry", "fpFullPanel", "functionPanel", "detached", "detachedDefaultSize", "face", "pageIcon", "formFactors"];
 /**
- * A v2 chalkboard WebView card. `route` and `embedUrl` are mutually exclusive.
- * `route` is a `ui/`-relative path served at `/api/apps/<appId>/ui<route>`.
- * `embedUrl` is an absolute http(s) loopback URL put on the iframe `src` as
- * written — no host ticket, no wrapper page. Absent both registers the card
- * without loading an iframe.
+ * A v2 chalkboard WebView card. `route`, `embedUrl` and `service` are mutually
+ * exclusive. `route` is a `ui/`-relative path served at
+ * `/api/apps/<appId>/ui<route>`. `embedUrl` is an absolute http(s) loopback URL
+ * put on the iframe `src` as written — no host ticket, no wrapper page.
+ * `service` is a logical reference (`id` + canonical service path) to one of
+ * this App's own managed services, resolved by the host through the App's
+ * `_runtime` mount; it is never a URL and carries no port or credential.
+ * Absent all three registers the card without loading an iframe.
  *
  * `cardForm` and `titlebar` have the same meaning as the v1 fields of those
  * names. A value outside the whitelist is treated as undeclared: the card
@@ -680,6 +1135,15 @@ export interface PluginV2CardContribution {
     };
     readonly embedUrl?: string;
     /**
+     * A logical reference to one of this App's own managed services:
+     * `id` (a stable service id) plus `path` (a canonical service path).
+     * Mutually exclusive with `route` and `embedUrl`.
+     */
+    readonly service?: {
+        readonly id: string;
+        readonly path: string;
+    };
+    /**
      * How content meets the card body (`framed` / `flush`). Same meaning as v1
      * `contributes.cards[].cardForm`. Omitted keeps the historical look; a value
      * outside the whitelist is treated as undeclared.
@@ -691,6 +1155,11 @@ export interface PluginV2CardContribution {
      * whitelist is treated as undeclared.
      */
     readonly titlebar?: string;
+    /**
+     * Title display policy (`auto` / `show` / `hide`). `auto` derives from
+     * `cardForm`. Omitted is auto; a value outside the whitelist is undeclared.
+     */
+    readonly titleMode?: string;
     readonly realization?: 'card' | 'page';
     readonly pageOf?: string;
     readonly closable?: boolean;
@@ -701,10 +1170,20 @@ export interface PluginV2CardContribution {
         label?: string;
         embedUrl?: string;
         route?: string;
+        service?: {
+            readonly id: string;
+            readonly path: string;
+        };
     };
     readonly face?: {
         image: string;
     };
+    /**
+     * Bundled page navigation icon, relative to this App's own `ui/` tree (same
+     * base as `face.image`). Only the whole-page primary (`realization: "page"`
+     * without `pageOf`) keeps it; on other cards it is treated as undeclared.
+     */
+    readonly pageIcon?: string;
     readonly formFactors?: readonly string[];
 }
 /** Keys one v2 `contributes.messageRenderers[]` entry may carry. Anything else is refused. */
@@ -803,15 +1282,60 @@ export interface PluginV2PreviewerContribution {
     readonly formFactors?: readonly string[];
 }
 /** Keys a v2 `contributes.ui` block may carry. Anything else is refused. */
-export declare const PLUGIN_V2_CONTRIBUTES_UI_KEYS: readonly ["messageActions", "cardChrome", "slots", "slotContributions", "contextMenus", "keybindings", "inputStatus"];
+export declare const PLUGIN_V2_CONTRIBUTES_UI_KEYS: readonly ["messageActions", "cardChrome", "slots", "slotContributions", "contextMenus", "keybindings", "inputStatus", "companions"];
 export interface PluginV2InputStatusContribution {
     readonly id: string;
     readonly title: string;
-    readonly icon?: 'check' | 'pin' | 'sync';
+    /** A host icon name, or a `ui/`-relative bundled png/webp/svg path. */
+    readonly icon?: 'check' | 'pin' | 'sync' | (string & {});
     readonly text?: string;
     readonly tooltip?: string;
     readonly toolName?: string;
     readonly args?: Record<string, unknown>;
+}
+/**
+ * One sprite an App places on the window's companion overlay. Both file shapes
+ * are mutually exclusive: `src` is a single (possibly animated) png/webp/gif,
+ * `sheet` is a horizontal sprite sheet this host slices by `frames` / `fps`.
+ * `revision` and `srcUrl` are host-stamped and never appear in a manifest.
+ */
+export type PluginV2CompanionState = {
+    readonly src: string;
+    readonly durationMs?: number;
+    readonly then?: string;
+    readonly revision?: string;
+    readonly srcUrl?: string;
+} | {
+    readonly sheet: string;
+    readonly frames: number;
+    readonly fps: number;
+    readonly loop?: boolean;
+    readonly then?: string;
+    readonly revision?: string;
+    readonly srcUrl?: string;
+};
+/** What one declared companion event does when it fires. */
+export interface PluginV2CompanionAction {
+    readonly state?: string;
+    readonly bubble?: readonly string[];
+    readonly toolName?: string;
+    readonly args?: Record<string, unknown>;
+}
+export interface PluginV2CompanionContribution {
+    readonly id: string;
+    readonly title: string;
+    readonly anchor: 'hana/composer';
+    readonly attach: 'top-start' | 'top-center' | 'top-end';
+    readonly offset: readonly [number, number];
+    readonly size: {
+        readonly width: number;
+        readonly height: number;
+    };
+    readonly occlusion: Readonly<Partial<Record<'hana/composer', 'front' | 'behind'>>>;
+    readonly hit: 'alpha' | 'box' | 'none';
+    readonly initial: string;
+    readonly states: Readonly<Record<string, PluginV2CompanionState>>;
+    readonly on: Readonly<Partial<Record<'click' | 'dblclick' | 'agent.idle' | 'agent.working' | 'agent.waiting' | 'agent.done', PluginV2CompanionAction>>>;
 }
 /** Keys one v2 `contributes.ui.slots[]` entry may carry. Anything else is refused. */
 export declare const PLUGIN_V2_UI_SLOT_KEYS: readonly ["name", "title", "render"];

@@ -12,7 +12,7 @@ export const APP_SDK_BUS_METHODS = {
     roles: { list: "role:list", get: "role:get" },
     models: { listAvailable: "model:list" },
     capabilities: { get: "app:capabilities" },
-    media: { generate: "media:generate", generateImage: "media:generate-image", generateVideo: "media:generate-video", transcribeAudio: "media:transcribe-audio" },
+    media: { generate: "media:generate", generateImage: "media:generate-image", generateVideo: "media:generate-video", generateSpeech: "media:generate-speech", transcribeAudio: "media:transcribe-audio" },
     providers: { listMediaProviders: "provider:media-providers", getCredentials: "provider:credentials", listModelsByType: "provider:models-by-type", resolveMediaModel: "provider:resolve-media-model" },
     render: { htmlToPdf: "render:html-to-pdf" },
     usage: { list: "usage:list" },

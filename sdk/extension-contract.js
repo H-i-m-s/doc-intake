@@ -16,6 +16,7 @@
  * lib/extension-platform/types.ts 从这里 re-export（见该文件），
  * shared/extension-market-index.ts 直接 import（同层，不违反分层）。
  */
+export const SKILL_REPLACEMENT_WARNING = "Replacement overwrites local files and custom changes. Cancel to keep them.";
 export const EXTENSION_KINDS = Object.freeze([
     "app",
     "skill",
@@ -23,6 +24,7 @@ export const EXTENSION_KINDS = Object.freeze([
     "connector",
     "role",
     "bundle",
+    "sticker-pack",
 ]);
 const EXTENSION_KIND_SET = new Set(EXTENSION_KINDS);
 export function isExtensionKind(v) {

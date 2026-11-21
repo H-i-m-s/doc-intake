@@ -1,5 +1,11 @@
 import type { ChalkboardCardInstanceId, ChalkboardChildSizing, ChalkboardLayoutCommand, ChalkboardLayoutDocument, ChalkboardLayoutNode, ChalkboardLayoutNodeId, ChalkboardLayoutSurface } from './layout-document.js';
 import type { ChalkboardCardContentBinding } from './chalkboard-card-types.js';
+import { type AppCardTitleSource } from './card-title-source.js';
+/**
+ * 恢复路径专用：按已保存的页清单剪掉文档里多出来的页 surface。这不是用户删页，
+ * 不走可删性判定（旧版本里被删掉的群聊页，其墓碑仍要被尊重）；但主页永远不剪。
+ */
+export declare function pruneChalkboardPageSurfaceForRestore(doc: ChalkboardLayoutDocument, pageId: string): ChalkboardLayoutDocument;
 /** export 供 离场重称（chalkboard-slice 的 settleDepartureRowWeights）
  *  定位被移卡节点；卡不存在时抛 ChalkboardLayoutError，调用侧自行 catch。 */
 export declare function findCardNodeId(doc: ChalkboardLayoutDocument, cardInstanceId: ChalkboardCardInstanceId): ChalkboardLayoutNodeId;
@@ -56,7 +62,22 @@ export declare function defaultPlacementStackReference(nodes: Record<ChalkboardL
  * 经 requireCard 抛 NODE_NOT_FOUND，不吞不兜底。
  */
 export declare function updateCardBinding(doc: ChalkboardLayoutDocument, cardInstanceId: ChalkboardCardInstanceId, binding: ChalkboardCardContentBinding | null): ChalkboardLayoutDocument;
-/** 卡内容级 doc 助手：title 版本，语义同 updateCardBinding（见其注释）。 */
-export declare function updateCardTitle(doc: ChalkboardLayoutDocument, cardInstanceId: ChalkboardCardInstanceId, title: string | null): ChalkboardLayoutDocument;
+/**
+ * 卡内容级 doc 助手：title 版本，语义同 updateCardBinding（见其注释）。
+ *
+ * 第三个参数只管标题值；可选的第四个参数 `titleSource` 决定是否同时改写持久
+ * 来源：
+ * - `undefined`（缺省）：保持卡上现有来源不动。程序化刷新（Preview 文件改名、
+ *   pinned 命名、预览换绑）走这条路，不把刷新当用户重命名。
+ * - `'user' | 'manifest'`：显式改写来源。
+ * - `null`：清掉来源，回到"未标记"（历史缺省语义）。
+ */
+export declare function updateCardTitle(doc: ChalkboardLayoutDocument, cardInstanceId: ChalkboardCardInstanceId, title: string | null, titleSource?: AppCardTitleSource | null): ChalkboardLayoutDocument;
+/**
+ * 历史文档迁移：旧版本允许整页 App 主卡拆窗。页的配置级主卡现在不能拆窗，
+ * 恢复时把仍停在拆窗 surface 上、且按 returnSurfaceId 归属于自己页的主卡停靠
+ * 回那一页（拆窗 surface 随之回收）。没有这样的卡时原样返回同一引用。
+ */
+export declare function returnDetachedChalkboardPageFixtures(doc: ChalkboardLayoutDocument): ChalkboardLayoutDocument;
 export declare function applyChalkboardLayoutCommand(doc: ChalkboardLayoutDocument, command: ChalkboardLayoutCommand): ChalkboardLayoutDocument;
 //# sourceMappingURL=layout-document-reducer.d.ts.map

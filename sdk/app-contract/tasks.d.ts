@@ -38,6 +38,11 @@ export interface AppTaskRecordV2 {
     /** Normalized at creation time; older persisted tasks read as `next-turn`. */
     readonly delivery: AppTaskDelivery | null;
     readonly scope: AppTaskScopeV2 | null;
+    /**
+     * Chip default visibility fixed at creation. Host-owned: author metadata and
+     * `update` cannot change it. Absent on records written before this field.
+     */
+    readonly chipVisibility?: "show" | "hide";
     readonly handlerKey: string | null;
     readonly retryable: boolean;
     readonly suspension: Readonly<Record<string, true>>;
@@ -47,6 +52,7 @@ export interface AppTaskRecordV2 {
 export interface AppCreatedTaskRecordV2 extends AppTaskRecordV2 {
     readonly delivery: AppTaskDelivery;
     readonly scope: AppTaskScopeV2;
+    readonly chipVisibility: "show" | "hide";
 }
 export interface AppTaskCreateInputV2 {
     readonly callToken?: string;
@@ -57,6 +63,11 @@ export interface AppTaskCreateInputV2 {
     readonly externalId?: string;
     /** Defaults to `next-turn` for compatibility with tasks created by older Apps. */
     readonly delivery?: AppTaskDelivery;
+    /**
+     * Chip default visibility; omitted means "show". Fixed at creation and stored
+     * as a host-owned field, so author `metadata` and `update` cannot change it.
+     */
+    readonly chipVisibility?: "show" | "hide";
     readonly metadata?: Record<string, unknown>;
 }
 export interface AppTaskUpdateInputV2 {

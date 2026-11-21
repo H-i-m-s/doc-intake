@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode, Ref } from 'react';
 import type { ContextMenuItem } from "./_settings-types.js";
+import type { ButtonProps, BusyStateProps, CheckboxProps, ContextMenuProps, DropdownMenuProps, EmptyStateProps, ErrorStateProps, GridProps, IconButtonProps, InlineProps, ListRowProps, NumberInputProps, SaveButtonProps, SelectProps, SettingsRowProps, SettingsSectionProps, SettingsStackProps, TextAreaProps, TextInputProps, ToggleProps, TooltipProps, VerificationButtonProps } from "./_settings-types.js";
 export interface AppUiProviderProps {
     children: ReactNode;
     className?: string;
@@ -28,6 +29,20 @@ export interface PageNavigatorPage {
     id: string;
     title?: string;
     shape: string;
+    /**
+     * Resolved page navigation icon URL, or absent to keep the shape icon. The
+     * host wrapper resolves it from the page's unique whole-page primary card
+     * (`manifest.cards[].pageIcon`) against the connection the published App
+     * catalogue came from; the navigator itself stays presentation-only and never
+     * reads a store or catalogue.
+     */
+    iconSrc?: string | null;
+    /**
+     * Opaque identity of the icon's source generation (the App's runtime). A
+     * change lets the same path be retried once; an unchanged bad source is not.
+     * Not a credential and never written to the document or the DOM.
+     */
+    iconSourceRevision?: string | null;
 }
 export interface PageNavigatorActionPort {
     selectPage: (pageId: string) => void;
@@ -248,3 +263,36 @@ export interface FunctionPanelShellProps {
     renderContent(width: number): ReactNode;
     getOverlayTriggerRect(): FunctionPanelOverlayTriggerRect | null;
 }
+/** The icon set the HTML entry can render without a bundler or React install. */
+export declare const APP_UI_ICON_NAMES: readonly ["chevron", "check", "loading", "failure"];
+export type AppUiIconName = (typeof APP_UI_ICON_NAMES)[number];
+export interface AppUiControlMap {
+    Button: ButtonProps;
+    IconButton: IconButtonProps;
+    TextInput: TextInputProps;
+    TextArea: TextAreaProps;
+    Checkbox: CheckboxProps;
+    Select: SelectProps;
+    Toggle: ToggleProps;
+    NumberInput: NumberInputProps;
+    SettingsRow: SettingsRowProps;
+    SettingsSection: SettingsSectionProps;
+    SettingsStack: SettingsStackProps;
+    Inline: InlineProps;
+    Grid: GridProps;
+    SaveButton: SaveButtonProps;
+    VerificationButton: VerificationButtonProps;
+    ContextMenu: ContextMenuProps;
+    DropdownMenu: DropdownMenuProps;
+    Tooltip: TooltipProps;
+    ListRow: ListRowProps;
+    Tabs: TabsProps;
+    EmptyState: EmptyStateProps;
+    Busy: BusyStateProps;
+    ErrorState: ErrorStateProps;
+}
+export type AppUiControlName = keyof AppUiControlMap;
+/** Props of one named control. Typed per control, never a free-form object. */
+export type AppUiControlProps<K extends AppUiControlName> = AppUiControlMap[K];
+/** Explicit, actionable failures from the App UI mount API. */
+export type AppUiMountErrorCode = 'APP_UI_CONTROL_UNKNOWN' | 'APP_UI_ELEMENT_INVALID' | 'APP_UI_SCOPE_ROOT_INVALID' | 'APP_UI_SCOPE_REQUIRED' | 'APP_UI_NODE_OCCUPIED' | 'APP_UI_HANDLE_DESTROYED' | 'APP_UI_DOCUMENT_CHANGED';

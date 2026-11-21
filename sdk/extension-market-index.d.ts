@@ -6,7 +6,7 @@
 /**
  * extension-market-index.ts — 扩展市场索引 v2 schema：纯类型 + 校验，无 IO
  *
- * 覆盖六种 kind（app / skill / recipe / connector / role / bundle）的统一市场
+ * 覆盖各扩展 kind 的统一市场
  * 索引形状。这是一份"源发布什么、市场怎么读"的 wire schema。kind 取值、
  * permission 声明的形状、id 与 capability 名称的校验规则不在这里自己声明
  * 一份——直接从 shared/extension-contract.ts 引入那份唯一定义（同属
@@ -26,6 +26,8 @@
 import { type ExtensionKind, type PermissionDeclaration } from "./extension-contract.js";
 export declare const MARKET_INDEX_SCHEMA_VERSION = 2;
 export declare const MAX_MARKET_ARCHIVE_BYTES: number;
+export declare const MAX_MARKET_README_BYTES: number;
+export declare const MAX_MARKET_INDEX_BYTES: number;
 export interface MarketArchive {
     url: string;
     sha256: string;
@@ -40,6 +42,14 @@ export interface MarketItemVersion {
 export interface MarketItemCompatibility {
     minAppVersion?: string;
     formFactors?: string[];
+}
+/**
+ * 市场源发布的展示用统计，只用于排序和展示，不参与安装信任判断。各字段都是
+ * 可选的非负整数：downloads 是已上架 ZIP 的累计下载次数；以后的点赞等计数
+ * 加在这里，旧客户端忽略不认识的字段。
+ */
+export interface MarketItemStats {
+    downloads?: number;
 }
 export interface MarketItemV2 {
     kind: ExtensionKind;
@@ -58,7 +68,18 @@ export interface MarketItemV2 {
     icon?: string;
     categories?: string[];
     keywords?: string[];
+    /**
+     * 已审核的 README 正文快照（Markdown 文本）。它随批准记录进入索引，是发布后
+     * 被冻结的审核数据，与其它元数据同一信任边界——客户端只展示这份快照，不再按
+     * 作者仓库的 URL 活取介绍。缺失即“暂无已审核介绍”。
+     */
+    readme?: string;
+    /**
+     * 旧索引遗留的介绍地址。保留给解析兼容与旧数据迁移，市场展示不再使用；新生成
+     * 的条目一律不带这个活链。
+     */
     readmeUrl?: string;
+    stats?: MarketItemStats;
 }
 export interface MarketIndexV2 {
     schemaVersion: 2;

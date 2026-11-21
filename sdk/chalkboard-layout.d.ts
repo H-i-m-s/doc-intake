@@ -18,8 +18,12 @@ export declare const CHALKBOARD_NO_WORKSPACE_ROOT_KEY = "__none__";
 export declare const CHALKBOARD_NO_WORKSPACE_SCOPE_KEY = "workspace:__none__";
 /** 聊天页（首页）的保留 id。 */
 export declare const CHALKBOARD_CHAT_PAGE_ID = "page-chat";
-/** 内置群聊页的保留 id：默认第二页，可删（删除记墓碑，不复活）。 */
+/** Code 页的保留 id，默认紧跟主页。 */
+export declare const CHALKBOARD_CODE_PAGE_ID = "page-code";
+/** 内置群聊页的保留 id：默认第三页，不可删（它是可贡献侧边栏的 page；见 chalkboard-layout/page-card-policy）。 */
 export declare const CHALKBOARD_CHANNELS_PAGE_ID = "page-channels";
+/** 工作室窗口 surface 的保留 page id。不进主窗口页列表；只给工作室主页卡当配置级主卡归属。 */
+export declare const CHALKBOARD_STUDIO_PAGE_ID = "page-studio";
 /** 页面条目：title 可空（页面可无名）；shape 是渲染层的不透明 token
     （形状词汇表归 renderer，本层与 server 不理解也不枚举——同 renderer.kind 哲学）。 */
 export interface ChalkboardPageEntry {

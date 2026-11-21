@@ -4,11 +4,12 @@
  * and re-run the sync script instead.
  */
 import type { ChalkboardCardContentBinding, ChalkboardCardCreationSource, ChalkboardDetachedBounds } from './chalkboard-card-types.js';
+import type { AppCardTitleSource } from './card-title-source.js';
 import type { CardDiagnostics, CardRendererDeclaration, CardSource } from '../card-kernel.js';
 export type ChalkboardSurfaceId = string;
 export type ChalkboardLayoutNodeId = string;
 export type ChalkboardCardInstanceId = string;
-export type ChalkboardBuiltinSurfaceKind = 'home' | 'page' | 'detached' | 'fullscreen';
+export type ChalkboardBuiltinSurfaceKind = 'home' | 'page' | 'detached' | 'fullscreen' | 'studio';
 export type ChalkboardSurfaceKind = ChalkboardBuiltinSurfaceKind | (string & {});
 export type ChalkboardDetachedPinMode = 'normal' | 'always-on-top';
 export type ChalkboardBuiltinLayoutNodeKind = 'row' | 'column' | 'slot' | 'card';
@@ -129,6 +130,14 @@ export type ChalkboardChromeVisibilityRule = {
     kind: 'when-owner-focused';
 } | {
     kind: 'when-card-hovered';
+}
+/** 闲聊页盖在本卡上时收起（主聊天的面板入口在闲聊页里没有对应内容）。 */
+ | {
+    kind: 'when-casual-panel-closed';
+}
+/** 闲聊页盖在本卡上时才显示（闲聊自己的入口，如设置）。 */
+ | {
+    kind: 'when-casual-panel-open';
 };
 export type ChalkboardChromeOwner = {
     kind: 'card-instance';
@@ -148,6 +157,13 @@ export interface ChalkboardCardInstance {
     renderer?: CardRendererDeclaration;
     diagnostics?: CardDiagnostics;
     title?: string | null;
+    /**
+     * 可选持久标题来源。缺省表示历史未标记记录（实例标题非空时读取为 'user'，
+     * 为空时按 'manifest' 层回落）。只有 v2 App 卡由 manifest / 目录初始化时才写
+     * 'manifest'，用户显式重命名才写 'user'；普通 Preview 改名、pinned 命名等程序
+     * 刷新不写此字段。
+     */
+    titleSource?: AppCardTitleSource;
     binding?: ChalkboardCardContentBinding | null;
     rendererState?: Record<string, unknown>;
     source: ChalkboardCardCreationSource;
@@ -191,6 +207,8 @@ export interface ChalkboardCardPlacementRequest {
     binding?: ChalkboardCardContentBinding | null | 'auto';
     rendererState?: Record<string, unknown>;
     title?: string | null;
+    /** 创建时的持久标题来源；只应由明确的 App 初始化 / 用户重命名写入。 */
+    titleSource?: AppCardTitleSource;
     target?: ChalkboardPlacementTarget | 'auto';
 }
 export type ChalkboardLayoutTarget = {
@@ -216,6 +234,8 @@ export interface ChalkboardLayoutCommandMetadata {
 export type ChalkboardLayoutCommandBody = {
     kind: 'ensurePageTemplate';
     definitionId: string;
+} | {
+    kind: 'ensureStudioSurface';
 } | {
     kind: 'insertCard';
     request: ChalkboardCardPlacementRequest;

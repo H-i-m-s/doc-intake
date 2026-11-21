@@ -387,6 +387,9 @@ var APP_STORAGE_CAPABILITY = {
 var APP_STORAGE_HOST_EVENT = {
   CHANGED: "hana.app.storage.changed"
 };
+var APP_CUSTOM_THEME_HOST_EVENT = {
+  CHANGED: "hana.app.custom-theme.changed"
+};
 var APP_CARD_CAPABILITY = { OPEN: "hana.cards.open" };
 var APP_SESSION_CAPABILITY = {
   GET_ACTIVE: "hana.sessions.get-active",
@@ -419,6 +422,256 @@ function parseAppSurfaceInteractiveRegions(value) {
     regions.push({ x, y, width, height });
   }
   return { ok: true, value: { regions } };
+}
+var APP_CHROME = {
+  /** App → host: submit a full Chrome description. */
+  SET: "hana.app.chrome.set",
+  /** App → host: the card's registered main scroll element crossed the top boundary. */
+  SCROLL: "hana.app.chrome.scroll",
+  /** Host → App: a user-driven chrome action to answer (callback / tab-select / tab-close). */
+  ACTION: "hana.app.chrome.action",
+  /** Host → App: this iframe document's current view token. The App echoes it; it never chooses it. */
+  BINDING: "hana.app.chrome.binding",
+  /** Host → App: prove the document behind this iframe is still the live one. */
+  CHALLENGE: "hana.app.chrome.challenge",
+  /** App → host: the challenge answer: the app's own per-document nonce. */
+  ACK: "hana.app.chrome.ack"
+};
+var APP_CHROME_ERROR_CODE = {
+  /** No trusted, ready App card view owns this surface (settings / function panel / v1 / preview / not ready / no binding yet). */
+  UNAVAILABLE: "APP_CHROME_UNAVAILABLE",
+  /** The write carries no token, or one from a view the host has already replaced. */
+  VIEW_STALE: "APP_CHROME_VIEW_STALE",
+  REVISION_STALE: "APP_CHROME_REVISION_STALE",
+  BAD_PAYLOAD: "APP_CHROME_BAD_PAYLOAD",
+  /** A `declared` action names an id the host cannot confirm this App registered. */
+  DECLARED_UNAUTHORIZED: "APP_CHROME_DECLARED_UNAUTHORIZED",
+  /** The App has no onAction handler for this request. */
+  ACTION_UNHANDLED: "APP_CHROME_ACTION_UNHANDLED",
+  /** The App's onAction handler threw or answered with something unusable. */
+  ACTION_FAILED: "APP_CHROME_ACTION_FAILED"
+};
+var APP_CHROME_MAX_VIEW_TOKEN_LENGTH = 128;
+function isAppChromeViewToken(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > APP_CHROME_MAX_VIEW_TOKEN_LENGTH)
+    return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127)
+      return false;
+  }
+  return true;
+}
+function parseAppChromeBinding(value) {
+  if (!isObject(value) || !isAppChromeViewToken(value.viewToken)) {
+    return { ok: false, error: "A chrome binding requires a host-minted view token." };
+  }
+  if (value.resync !== void 0 && typeof value.resync !== "boolean") {
+    return { ok: false, error: "A chrome binding resync flag must be a boolean when present." };
+  }
+  return { ok: true, value: { viewToken: value.viewToken, ...value.resync === void 0 ? {} : { resync: value.resync } } };
+}
+function parseAppChromeChallenge(value) {
+  if (!isObject(value) || !isAppChromeViewToken(value.challengeId)) {
+    return { ok: false, error: "A chrome challenge requires a host-minted challenge id." };
+  }
+  return { ok: true, value: { challengeId: value.challengeId } };
+}
+function parseAppChromeActionIdentity(value) {
+  if (!isObject(value))
+    return { ok: false, error: "App chrome action identity must be an object." };
+  if (typeof value.requestId !== "string" || value.requestId === "") {
+    return { ok: false, error: "App chrome action identity requires a non-empty requestId." };
+  }
+  if (!Number.isSafeInteger(value.revision) || value.revision <= 0) {
+    return { ok: false, error: "App chrome action identity requires a positive revision." };
+  }
+  if (!Number.isSafeInteger(value.generation) || value.generation <= 0) {
+    return { ok: false, error: "App chrome action identity requires a positive generation." };
+  }
+  if (!isAppChromeViewToken(value.viewToken)) {
+    return { ok: false, error: "App chrome action identity requires the view token." };
+  }
+  return {
+    ok: true,
+    value: {
+      requestId: value.requestId,
+      revision: value.revision,
+      generation: value.generation,
+      viewToken: value.viewToken
+    }
+  };
+}
+function parseAppChromeActionRequest(value) {
+  if (!isObject(value))
+    return { ok: false, error: "App chrome action request must be an object." };
+  const kind = value.kind;
+  if (kind !== "action" && kind !== "tab-select" && kind !== "tab-close") {
+    return { ok: false, error: 'App chrome action request kind must be "action", "tab-select" or "tab-close".' };
+  }
+  const identity = parseAppChromeActionIdentity(value);
+  if (identity.ok === false)
+    return identity;
+  const base = identity.value;
+  if (kind === "action") {
+    if (typeof value.actionId !== "string" || value.actionId === "") {
+      return { ok: false, error: "App chrome action request requires a non-empty actionId." };
+    }
+    return { ok: true, value: { kind, ...base, actionId: value.actionId } };
+  }
+  if (typeof value.tabId !== "string" || value.tabId === "") {
+    return { ok: false, error: `App chrome ${kind} request requires a non-empty tabId.` };
+  }
+  return { ok: true, value: { kind, ...base, tabId: value.tabId } };
+}
+var APP_VIEW_STATE = {
+  /** App → host: register the current document/namespace, returning a bound handle. */
+  ENABLE: "hana.app.view-state.enable",
+  /** App → host: read the snapshot the handle's namespace currently holds. */
+  GET: "hana.app.view-state.get",
+  /** App → host: compare-and-swap the handle's namespace snapshot. */
+  SET: "hana.app.view-state.set",
+  /** App → host: release this handle's own registration. */
+  RELEASE: "hana.app.view-state.release"
+};
+var APP_VIEW_STATE_NAMESPACE_ID_MAX_LENGTH = 256;
+function isAppViewStateNamespaceId(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > APP_VIEW_STATE_NAMESPACE_ID_MAX_LENGTH)
+    return false;
+  if (value.trim().length === 0)
+    return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127)
+      return false;
+  }
+  return true;
+}
+function hasExactWireKeys(value, allowed) {
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== allowed.length)
+    return false;
+  for (const key of keys) {
+    if (typeof key !== "string" || !allowed.includes(key))
+      return false;
+  }
+  return true;
+}
+function parseAppViewStateSnapshot(value) {
+  if (!isObject(value) || !hasExactWireKeys(value, ["viewKind", "revision", "state"])) {
+    return { ok: false, error: "App view-state snapshot must carry exactly viewKind, revision and state." };
+  }
+  if (value.viewKind !== "compact" && value.viewKind !== "detached") {
+    return { ok: false, error: 'App view-state snapshot kind must be "compact" or "detached".' };
+  }
+  if (!Number.isSafeInteger(value.revision) || value.revision < 0) {
+    return { ok: false, error: "App view-state snapshot revision must be a non-negative safe integer." };
+  }
+  if (value.state === void 0) {
+    return { ok: false, error: "App view-state snapshot requires a state object or an explicit null." };
+  }
+  if (value.revision === 0 && value.state !== null) {
+    return { ok: false, error: "App view-state revision 0 only carries a null state." };
+  }
+  return { ok: true, value: { viewKind: value.viewKind, revision: value.revision, state: value.state } };
+}
+function parseAppViewStateSnapshotReply(value) {
+  if (!isObject(value) || !hasExactWireKeys(value, ["viewToken", "bindingId", "registrationId", "snapshot"])) {
+    return { ok: false, error: "App view-state reply must echo exactly a view token, namespace binding id, registration id and snapshot." };
+  }
+  if (!isAppChromeViewToken(value.viewToken)) {
+    return { ok: false, error: "App view-state reply requires the host-minted view token." };
+  }
+  if (!isAppViewStateNamespaceId(value.bindingId)) {
+    return { ok: false, error: "App view-state reply requires an opaque namespace binding id." };
+  }
+  if (!isAppViewStateNamespaceId(value.registrationId)) {
+    return { ok: false, error: "App view-state reply requires an opaque registration id." };
+  }
+  return {
+    ok: true,
+    value: { viewToken: value.viewToken, bindingId: value.bindingId, registrationId: value.registrationId, snapshot: value.snapshot }
+  };
+}
+function appViewStateEchoMatchesOperation(echo, operation) {
+  if (echo.viewToken !== operation.viewToken || echo.bindingId !== operation.bindingId)
+    return false;
+  if (operation.registrationId === void 0)
+    return true;
+  return echo.registrationId === operation.registrationId;
+}
+function parseAppViewStateReleaseReply(value) {
+  if (!isObject(value) || !hasExactWireKeys(value, ["viewToken", "bindingId", "registrationId", "released"])) {
+    return { ok: false, error: "App view-state release reply must echo exactly a view token, namespace binding id, registration id and a boolean released flag." };
+  }
+  if (!isAppChromeViewToken(value.viewToken)) {
+    return { ok: false, error: "App view-state release reply requires the host-minted view token." };
+  }
+  if (!isAppViewStateNamespaceId(value.bindingId)) {
+    return { ok: false, error: "App view-state release reply requires an opaque namespace binding id." };
+  }
+  if (!isAppViewStateNamespaceId(value.registrationId)) {
+    return { ok: false, error: "App view-state release reply requires an opaque registration id." };
+  }
+  if (typeof value.released !== "boolean") {
+    return { ok: false, error: "App view-state release reply requires a boolean released flag." };
+  }
+  return { ok: true, value: { viewToken: value.viewToken, bindingId: value.bindingId, registrationId: value.registrationId, released: value.released } };
+}
+var APP_UI_SURFACE_PATH_RE = /^\/api\/apps\/([^/]+)\/ui(?:\/|$)/;
+var APP_RUNTIME_SURFACE_PATH_RE = /^\/api\/apps\/([^/]+)\/routes\/_runtime\/([^/]+)\/_surface\/([^/]+)\//;
+function decodeSurfaceSegment(raw) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  if (decoded.length === 0)
+    return null;
+  if (decoded.includes("/") || decoded.includes("\\") || decoded.includes("\0"))
+    return null;
+  for (let index = 0; index < decoded.length; index += 1) {
+    const code = decoded.charCodeAt(index);
+    if (code <= 31 || code === 127)
+      return null;
+  }
+  return decoded;
+}
+function parseAppSurfacePathname(pathname) {
+  if (typeof pathname !== "string" || !pathname.startsWith("/api/apps/"))
+    return null;
+  const runtime = APP_RUNTIME_SURFACE_PATH_RE.exec(pathname);
+  if (runtime) {
+    const appId = decodeSurfaceSegment(runtime[1]);
+    const runtimeId = decodeSurfaceSegment(runtime[2]);
+    const token = decodeSurfaceSegment(runtime[3]);
+    if (appId === null || runtimeId === null || token === null)
+      return null;
+    return { appId, kind: "runtime" };
+  }
+  const ui = APP_UI_SURFACE_PATH_RE.exec(pathname);
+  if (ui) {
+    const appId = decodeSurfaceSegment(ui[1]);
+    if (appId === null)
+      return null;
+    return { appId, kind: "ui" };
+  }
+  return null;
+}
+var APP_CARD_INSTANCE_KEY_MAX_LENGTH = 256;
+function normalizeAppCardInstanceKey(value) {
+  if (value === void 0)
+    return void 0;
+  if (typeof value !== "string")
+    return null;
+  if (value.length === 0 || value.length > APP_CARD_INSTANCE_KEY_MAX_LENGTH)
+    return null;
+  if (value.includes("\0"))
+    return null;
+  if (value.trim().length === 0)
+    return null;
+  return value;
 }
 var APP_SURFACE_HOST_EVENT = {
   CONTEXT: "hana.surface.context"
@@ -520,7 +773,8 @@ var PLUGIN_V2_MANIFEST_CONTRIBUTES_KEYS = [
   "nativeProviders",
   "previewers",
   "cliFlags",
-  "homeActions"
+  "homeActions",
+  "stylePacks"
 ];
 var PLUGIN_MANIFEST_TRUST_LEVELS = ["restricted", "full-access"];
 var PLUGIN_MANIFEST_ACTIVATION_EVENT_NAMES = [
@@ -540,6 +794,972 @@ var ACTIVATION_EVENT_EXACT_SET = /* @__PURE__ */ new Set([
 ]);
 var UI_HOST_CAPABILITY_VALUES = Object.values(PLUGIN_UI_CAPABILITY);
 var UI_HOST_CAPABILITY_SET = new Set(UI_HOST_CAPABILITY_VALUES);
+
+// src/app-current-view.ts
+var AppCurrentViewBindingError = class extends Error {
+  reason;
+  constructor(reason, message) {
+    super(message);
+    this.name = "AppCurrentViewBindingError";
+    this.reason = reason;
+  }
+};
+function mintDocumentNonce() {
+  return `chrome-doc:${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+function identityTuple(context) {
+  return JSON.stringify([context.appId, context.cardInstanceId ?? null, context.instanceKey ?? null]);
+}
+function createAppCurrentViewBinding(deps) {
+  const documentNonce = mintDocumentNonce();
+  let viewToken = null;
+  let disposed = false;
+  let confirmedIdentity;
+  let identityAvailable = true;
+  const bindingWaiters = /* @__PURE__ */ new Set();
+  const bindingListeners = /* @__PURE__ */ new Set();
+  let transitionEpoch = 0;
+  const bumpTransition = () => {
+    transitionEpoch += 1;
+  };
+  const unavailable = (message) => new AppCurrentViewBindingError("unavailable", message);
+  const identityChanged = () => new AppCurrentViewBindingError(
+    "identity-changed",
+    "The current App card identity changed while this view write waited."
+  );
+  const tokenStale = () => new AppCurrentViewBindingError(
+    "token-stale",
+    "The held view token is no longer the current document."
+  );
+  const forgetWaiter = (waiter) => {
+    bindingWaiters.delete(waiter);
+    deps.targetWindow.clearTimeout(waiter.timer);
+    if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
+  };
+  const rejectWaiter = (waiter, error) => {
+    forgetWaiter(waiter);
+    waiter.reject(error);
+  };
+  const settleBinding = (token, resync) => {
+    const changed = viewToken !== token;
+    const wasAvailable = identityAvailable;
+    viewToken = token;
+    identityAvailable = true;
+    if (changed || !wasAvailable) bumpTransition();
+    for (const waiter of [...bindingWaiters]) {
+      forgetWaiter(waiter);
+      if (waiter.identity !== void 0 && waiter.identity !== confirmedIdentity) {
+        waiter.reject(identityChanged());
+        continue;
+      }
+      waiter.resolve(token);
+    }
+    if (bindingListeners.size === 0) return;
+    const event = { changed, resync };
+    const epoch = transitionEpoch;
+    for (const entry of [...bindingListeners]) {
+      if (disposed || epoch !== transitionEpoch) return;
+      if (!bindingListeners.has(entry)) continue;
+      entry.listener(event);
+    }
+  };
+  const applySurfaceContext = (context) => {
+    if (disposed) return;
+    if (context === null) {
+      if (!identityAvailable) return;
+      identityAvailable = false;
+      bumpTransition();
+      return;
+    }
+    const nextIdentity = identityTuple(context);
+    if (confirmedIdentity === nextIdentity) return;
+    if (confirmedIdentity !== void 0) {
+      for (const waiter of [...bindingWaiters]) rejectWaiter(waiter, identityChanged());
+      viewToken = null;
+    }
+    confirmedIdentity = nextIdentity;
+    bumpTransition();
+  };
+  const waitForToken = (timeoutMs, signal) => {
+    if (disposed) {
+      return Promise.reject(unavailable("The current App card view binding was released."));
+    }
+    if (signal?.aborted) {
+      return Promise.reject(unavailable("The current App card view wait was aborted."));
+    }
+    if (viewToken && identityAvailable) return Promise.resolve(viewToken);
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        identity: confirmedIdentity,
+        timer: deps.targetWindow.setTimeout(() => {
+          forgetWaiter(waiter);
+          reject(unavailable("The host has not bound this App card view; the current view is unavailable here."));
+        }, timeoutMs)
+      };
+      if (signal) {
+        waiter.signal = signal;
+        waiter.onAbort = () => rejectWaiter(waiter, unavailable("The current App card view wait was aborted."));
+        signal.addEventListener("abort", waiter.onAbort);
+      }
+      bindingWaiters.add(waiter);
+    });
+  };
+  const assertCurrentToken = (token) => {
+    if (disposed) throw unavailable("The current App card view binding was released.");
+    if (!identityAvailable || !viewToken) {
+      throw unavailable("The current App card view is not writable here right now.");
+    }
+    if (viewToken !== token) throw tokenStale();
+  };
+  const handleHostMessage = (message) => {
+    const isChallenge = message.type === APP_CHROME.CHALLENGE;
+    const isBinding = message.type === APP_CHROME.BINDING;
+    if (!isChallenge && !isBinding) return false;
+    if (disposed) return true;
+    if (isChallenge && message.kind === "event") {
+      const parsed = parseAppChromeChallenge(message.payload);
+      if (parsed.ok === true) {
+        deps.post({
+          protocol: PLUGIN_UI_PROTOCOL,
+          version: PLUGIN_UI_PROTOCOL_VERSION,
+          kind: "event",
+          type: APP_CHROME.ACK,
+          payload: { challengeId: parsed.value.challengeId, documentNonce }
+        });
+        if (!disposed) deps.reannounceReady?.();
+      }
+      return true;
+    }
+    if (isBinding && message.kind === "event") {
+      const parsed = parseAppChromeBinding(message.payload);
+      if (parsed.ok === true) settleBinding(parsed.value.viewToken, parsed.value.resync === true);
+      return true;
+    }
+    return true;
+  };
+  return {
+    handleHostMessage,
+    applySurfaceContext,
+    currentToken() {
+      return !disposed && identityAvailable ? viewToken : null;
+    },
+    waitForToken,
+    assertCurrentToken,
+    onBinding(listener) {
+      if (disposed) return () => void 0;
+      const entry = { listener };
+      bindingListeners.add(entry);
+      return () => {
+        bindingListeners.delete(entry);
+      };
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      viewToken = null;
+      identityAvailable = false;
+      for (const waiter of [...bindingWaiters]) {
+        rejectWaiter(waiter, unavailable("The current App card view binding was released."));
+      }
+      bindingWaiters.clear();
+      bindingListeners.clear();
+    }
+  };
+}
+
+// src/app-chrome.ts
+function createScrollSourceManager(getToken, post) {
+  let active = null;
+  let nextGeneration = 0;
+  const send = (scrolled) => {
+    const viewToken = getToken();
+    if (!viewToken) return;
+    post({
+      protocol: PLUGIN_UI_PROTOCOL,
+      version: PLUGIN_UI_PROTOCOL_VERSION,
+      kind: "event",
+      type: APP_CHROME.SCROLL,
+      payload: { scrolled, viewToken }
+    });
+  };
+  const detachActive = (notify) => {
+    const entry = active;
+    if (!entry) return;
+    active = null;
+    entry.detach();
+    if (notify && entry.scrolled) send(false);
+  };
+  return {
+    register(element) {
+      if (!element || typeof element.scrollTop !== "number" || typeof element.addEventListener !== "function") {
+        throw new TypeError("hana.chrome.registerScrollSource requires an element.");
+      }
+      detachActive(true);
+      const generation = ++nextGeneration;
+      const windowOf = element.ownerDocument?.defaultView;
+      const entry = { generation, scrolled: element.scrollTop > 0, detach: () => void 0 };
+      const update = () => {
+        if (!active || active.generation !== generation) return;
+        const nextScrolled = element.scrollTop > 0;
+        if (nextScrolled === active.scrolled) return;
+        active.scrolled = nextScrolled;
+        send(nextScrolled);
+      };
+      element.addEventListener("scroll", update, { passive: true });
+      const Observer = windowOf?.ResizeObserver;
+      const observer = Observer ? new Observer(update) : null;
+      observer?.observe(element);
+      entry.detach = () => {
+        element.removeEventListener("scroll", update);
+        observer?.disconnect();
+      };
+      active = entry;
+      if (entry.scrolled) send(true);
+      return () => {
+        if (!active || active.generation !== generation) return;
+        const current = active;
+        active = null;
+        current.detach();
+        if (current.scrolled) send(false);
+      };
+    },
+    /** The host bound this document (or re-bound it): report the real state. */
+    flush() {
+      if (active?.scrolled) send(true);
+    },
+    dispose: () => detachActive(false)
+  };
+}
+function toActionEvent(request) {
+  const identity = { requestId: request.requestId, revision: request.revision };
+  if (request.kind === "action") {
+    return { ...identity, kind: "action", actionId: request.actionId };
+  }
+  return request.kind === "tab-select" ? { ...identity, kind: "tab-select", tabId: request.tabId } : { ...identity, kind: "tab-close", tabId: request.tabId };
+}
+var DEFAULT_REQUEST_TIMEOUT_MS = 1e4;
+function createAppChromeApi(deps) {
+  const requestTimeoutMs = deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const currentView = deps.currentView;
+  let disposed = false;
+  let handlerEntry = null;
+  const chromeLifetime = new AbortController();
+  const scroll = createScrollSourceManager(() => disposed ? null : currentView.currentToken(), deps.post);
+  const unsubscribeBinding = currentView.onBinding((event) => {
+    if (disposed) return;
+    if (event.changed || event.resync) scroll.flush();
+  });
+  const staleError = () => Object.assign(
+    new Error("The App card business identity changed; this chrome write is stale."),
+    { code: APP_CHROME_ERROR_CODE.VIEW_STALE }
+  );
+  const unavailableError = () => Object.assign(
+    new Error("The host has not bound this App card view; chrome is unavailable here."),
+    { code: APP_CHROME_ERROR_CODE.UNAVAILABLE }
+  );
+  const releasedError = () => Object.assign(
+    new Error("The App chrome view was released."),
+    { code: APP_CHROME_ERROR_CODE.UNAVAILABLE }
+  );
+  const mapCurrentViewError = (error) => {
+    if (!(error instanceof AppCurrentViewBindingError)) return error;
+    return error.reason === "unavailable" ? unavailableError() : staleError();
+  };
+  const reply = (message, body) => {
+    deps.post({
+      protocol: PLUGIN_UI_PROTOCOL,
+      version: PLUGIN_UI_PROTOCOL_VERSION,
+      id: message.id,
+      type: message.type,
+      ...body
+    });
+  };
+  const handleHostMessage = (message) => {
+    if (message.type !== APP_CHROME.ACTION) return false;
+    if (disposed) return true;
+    if (message.kind !== "request") return false;
+    const parsed = parseAppChromeActionRequest(message.payload);
+    if (parsed.ok === false) {
+      reply(message, { kind: "error", error: { code: APP_CHROME_ERROR_CODE.BAD_PAYLOAD, message: parsed.error } });
+      return true;
+    }
+    const request = parsed.value;
+    const identity = {
+      requestId: request.requestId,
+      revision: request.revision,
+      generation: request.generation,
+      viewToken: request.viewToken
+    };
+    const entryAtCall = handlerEntry;
+    if (!entryAtCall) {
+      reply(message, {
+        kind: "error",
+        payload: identity,
+        error: { code: APP_CHROME_ERROR_CODE.ACTION_UNHANDLED, message: "This App has no chrome action handler." }
+      });
+      return true;
+    }
+    if (request.viewToken !== currentView.currentToken()) {
+      reply(message, {
+        kind: "error",
+        payload: identity,
+        error: { code: APP_CHROME_ERROR_CODE.VIEW_STALE, message: "This chrome action belongs to a replaced view." }
+      });
+      return true;
+    }
+    const stillCurrent = () => !disposed && handlerEntry === entryAtCall && request.viewToken === currentView.currentToken();
+    void Promise.resolve().then(async () => {
+      if (!stillCurrent()) {
+        reply(message, {
+          kind: "error",
+          payload: identity,
+          error: { code: APP_CHROME_ERROR_CODE.VIEW_STALE, message: "This chrome action belongs to a replaced view." }
+        });
+        return;
+      }
+      let received;
+      try {
+        received = await entryAtCall.fn(toActionEvent(request));
+      } catch (error) {
+        if (!stillCurrent()) return;
+        reply(message, {
+          kind: "error",
+          payload: identity,
+          error: {
+            code: APP_CHROME_ERROR_CODE.ACTION_FAILED,
+            message: error instanceof Error ? error.message : "The App chrome action handler failed."
+          }
+        });
+        return;
+      }
+      if (!stillCurrent()) return;
+      reply(message, {
+        kind: "response",
+        payload: {
+          ...identity,
+          status: received && received.status === "rejected" ? "rejected" : "handled",
+          ...received && typeof received.message === "string" && received.message ? { message: received.message } : {}
+        }
+      });
+    });
+    return true;
+  };
+  const onPageHide = () => scroll.dispose();
+  deps.targetWindow.addEventListener("pagehide", onPageHide);
+  const assertLive = (what) => {
+    if (disposed) {
+      throw Object.assign(new Error(`The App chrome view was released; ${what} is unavailable.`), { code: APP_CHROME_ERROR_CODE.UNAVAILABLE });
+    }
+  };
+  return {
+    api: {
+      set(description, options) {
+        const timeoutMs = options?.timeoutMs ?? requestTimeoutMs;
+        return currentView.waitForToken(timeoutMs, chromeLifetime.signal).then(
+          (token) => {
+            assertLive("hana.chrome.set");
+            try {
+              currentView.assertCurrentToken(token);
+            } catch (error) {
+              throw mapCurrentViewError(error);
+            }
+            return deps.request(APP_CHROME.SET, { description, viewToken: token }, { timeoutMs });
+          },
+          (error) => {
+            throw disposed ? releasedError() : mapCurrentViewError(error);
+          }
+        );
+      },
+      onAction(fn) {
+        assertLive("hana.chrome.onAction");
+        if (typeof fn !== "function") throw new TypeError("hana.chrome.onAction requires a handler.");
+        const entry = { fn };
+        handlerEntry = entry;
+        return () => {
+          if (handlerEntry === entry) handlerEntry = null;
+        };
+      },
+      registerScrollSource(element) {
+        assertLive("hana.chrome.registerScrollSource");
+        return scroll.register(element);
+      }
+    },
+    handleHostMessage,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      chromeLifetime.abort();
+      deps.targetWindow.removeEventListener("pagehide", onPageHide);
+      unsubscribeBinding();
+      handlerEntry = null;
+      scroll.dispose();
+    }
+  };
+}
+
+// src/app-view-state.ts
+var APP_VIEW_STATE_JSON_MAX_DEPTH = 16;
+var APP_VIEW_STATE_MAX_NODES = 4096;
+var APP_VIEW_STATE_SNAPSHOT_MAX_BYTES = 24 * 1024;
+var APP_VIEW_STATE_ENVELOPE_MAX_BYTES = 64 * 1024;
+var AppViewStateError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "AppViewStateError";
+    this.code = code;
+  }
+};
+var TEXT_ENCODER = new TextEncoder();
+function utf8ByteLength(text) {
+  return TEXT_ENCODER.encode(text).length;
+}
+function isPlainObject(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+function canonicalArrayIndex(key) {
+  const index = Number(key);
+  if (!Number.isInteger(index) || index < 0 || String(index) !== key) return null;
+  return index;
+}
+function jsonErrorCode(context) {
+  return context === "input" ? "VIEW_STATE_INVALID_INPUT" : "VIEW_STATE_INVALID_STORAGE";
+}
+function cloneJsonValue(value, context) {
+  const code = jsonErrorCode(context);
+  const ancestors = /* @__PURE__ */ new Set();
+  let nodes = 0;
+  const visit = (current, depth) => {
+    nodes += 1;
+    if (nodes > APP_VIEW_STATE_MAX_NODES) {
+      throw new AppViewStateError(code, "App view state contains too many values.");
+    }
+    if (depth > APP_VIEW_STATE_JSON_MAX_DEPTH) {
+      throw new AppViewStateError(code, "App view state is nested too deeply.");
+    }
+    if (current === null) return null;
+    const type = typeof current;
+    if (type === "string" || type === "boolean") return current;
+    if (type === "number") {
+      if (!Number.isFinite(current)) {
+        throw new AppViewStateError(code, "App view state numbers must be finite.");
+      }
+      return current;
+    }
+    if (type !== "object") {
+      throw new AppViewStateError(code, "App view state must contain only JSON values.");
+    }
+    const object = current;
+    if (ancestors.has(object)) {
+      throw new AppViewStateError(code, "App view state must not contain cycles.");
+    }
+    const prototype = Object.getPrototypeOf(object);
+    if (Array.isArray(object)) {
+      if (prototype !== Array.prototype) {
+        throw new AppViewStateError(code, "App view state must contain only plain arrays.");
+      }
+      ancestors.add(object);
+      const length2 = object.length;
+      for (const key of Reflect.ownKeys(object)) {
+        if (typeof key !== "string") {
+          throw new AppViewStateError(code, "App view state must not contain symbol keys.");
+        }
+        if (key === "length") {
+          const descriptor2 = Object.getOwnPropertyDescriptor(object, "length");
+          if (descriptor2.enumerable || descriptor2.get || descriptor2.set) {
+            throw new AppViewStateError(code, "App view state arrays must expose a plain length.");
+          }
+          continue;
+        }
+        const index = canonicalArrayIndex(key);
+        if (index === null || index >= length2) {
+          throw new AppViewStateError(code, "App view state arrays must not carry extra keys.");
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(object, key);
+        if (!descriptor.enumerable || descriptor.get || descriptor.set) {
+          throw new AppViewStateError(code, "App view state arrays must index plain values.");
+        }
+      }
+      const array = [];
+      for (let index = 0; index < length2; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(object, String(index));
+        if (!descriptor) {
+          throw new AppViewStateError(code, "App view state must not contain sparse arrays.");
+        }
+        array.push(visit(descriptor.value, depth + 1));
+      }
+      ancestors.delete(object);
+      return array;
+    }
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new AppViewStateError(code, "App view state must contain only plain objects.");
+    }
+    ancestors.add(object);
+    const dictionary = /* @__PURE__ */ Object.create(null);
+    for (const key of Reflect.ownKeys(object)) {
+      if (typeof key !== "string") {
+        throw new AppViewStateError(code, "App view state must not contain symbol keys.");
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if (!descriptor.enumerable) {
+        throw new AppViewStateError(code, "App view state must not contain non-enumerable fields.");
+      }
+      if (descriptor.get || descriptor.set) {
+        throw new AppViewStateError(code, "App view state must not contain accessors.");
+      }
+      dictionary[key] = visit(descriptor.value, depth + 1);
+    }
+    ancestors.delete(object);
+    return dictionary;
+  };
+  return visit(value, 0);
+}
+function cloneStateRoot(value, context) {
+  if (value === null) return null;
+  if (!isPlainObject(value)) {
+    throw new AppViewStateError(
+      jsonErrorCode(context),
+      "App view state must be a JSON object or null."
+    );
+  }
+  return cloneJsonValue(value, context);
+}
+function finalizeState(clone, context) {
+  if (clone === null) return null;
+  const json = JSON.stringify(clone);
+  if (utf8ByteLength(json) > APP_VIEW_STATE_SNAPSHOT_MAX_BYTES) {
+    throw new AppViewStateError(
+      context === "input" ? "VIEW_STATE_TOO_LARGE" : "VIEW_STATE_INVALID_STORAGE",
+      context === "input" ? "App view state exceeds the size budget." : "Stored app view state exceeds the size budget."
+    );
+  }
+  return JSON.parse(json);
+}
+function normalizeAppViewStateValue(value) {
+  return finalizeState(cloneStateRoot(value, "input"), "input");
+}
+
+// src/app-view-recovery.ts
+var APP_VIEW_STATE_ERROR_CODE = {
+  UNAVAILABLE: "VIEW_STATE_UNAVAILABLE",
+  VIEW_STALE: "VIEW_STATE_VIEW_STALE",
+  RELEASED: "VIEW_STATE_RELEASED",
+  INVALID_INPUT: "VIEW_STATE_INVALID_INPUT",
+  BAD_RESPONSE: "VIEW_STATE_BAD_RESPONSE"
+};
+var AppViewStateRequestError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "AppViewStateRequestError";
+    this.code = code;
+  }
+};
+var DEFAULT_REQUEST_TIMEOUT_MS2 = 1e4;
+function localError(code, message) {
+  return new AppViewStateRequestError(code, message);
+}
+function copySnapshot(snapshot) {
+  return {
+    viewKind: snapshot.viewKind,
+    revision: snapshot.revision,
+    state: normalizeAppViewStateValue(snapshot.state)
+  };
+}
+function createAppViewRecovery(deps) {
+  const defaultTimeoutMs = deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS2;
+  let disposed = false;
+  let enableSeq = 0;
+  let currentRegistration = null;
+  const pendingEnables = /* @__PURE__ */ new Map();
+  let confirmedBindingId = null;
+  let confirmedSurface = null;
+  let confirmedSurfaceKnown = false;
+  const mapCurrentViewError = (error) => {
+    if (!(error instanceof AppCurrentViewBindingError)) return error;
+    return error.reason === "unavailable" ? localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "The App card view is not writable here right now.") : localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "The App card view this operation was bound to is no longer current.");
+  };
+  const terminateRegistration = (state, reason) => {
+    if (!state || state.terminated !== null) return;
+    state.terminated = reason;
+    state.lifetime.abort();
+  };
+  const terminateOwned = (reason) => {
+    terminateRegistration(currentRegistration, reason);
+    currentRegistration = null;
+    for (const pending of pendingEnables.values()) pending.abort.abort();
+    pendingEnables.clear();
+  };
+  const onContext = (context) => {
+    if (disposed) return;
+    if (context === null) return;
+    if (context.slot !== "card") {
+      terminateOwned("namespace-changed");
+      confirmedSurface = null;
+      confirmedSurfaceKnown = true;
+      confirmedBindingId = null;
+      return;
+    }
+    const surface = JSON.stringify([context.appId, context.cardInstanceId, context.instanceKey ?? null]);
+    const nextBindingId = context.viewState?.bindingId ?? null;
+    const surfaceChanged = confirmedSurfaceKnown && confirmedSurface !== surface;
+    const bindingChanged = nextBindingId !== null && confirmedBindingId !== null && nextBindingId !== confirmedBindingId;
+    if (surfaceChanged || bindingChanged) terminateOwned("namespace-changed");
+    confirmedSurface = surface;
+    confirmedSurfaceKnown = true;
+    if (nextBindingId !== null) confirmedBindingId = nextBindingId;
+  };
+  const onBinding = (event) => {
+    if (disposed) return;
+    if (!event.changed) return;
+    terminateRegistration(currentRegistration, "document-changed");
+    currentRegistration = null;
+    for (const pending of pendingEnables.values()) {
+      if (pending.tokenCaptured) pending.abort.abort();
+    }
+  };
+  const unsubscribeContext = deps.subscribeContext(onContext);
+  const unsubscribeBinding = deps.currentView.onBinding(onBinding);
+  const tokenIsCurrent = (token) => deps.currentView.currentToken() === token;
+  const assertTokenOrThrow = (token) => {
+    try {
+      deps.currentView.assertCurrentToken(token);
+    } catch (error) {
+      throw mapCurrentViewError(error);
+    }
+  };
+  const readyNamespace = (state) => {
+    const context = deps.getContext();
+    if (!context || context.slot !== "card") {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "The App view-state namespace is not available on this surface.");
+    }
+    const namespace = context.viewState;
+    if (!namespace) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "The App view-state namespace is not available here right now.");
+    }
+    if (namespace.bindingId !== state.bindingId || namespace.viewKind !== state.viewKind) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state handle belongs to a namespace that is no longer current.");
+    }
+    if (namespace.available !== true) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "The App view-state namespace is temporarily unavailable.");
+    }
+  };
+  const terminatedError = (reason) => reason === "document-changed" || reason === "namespace-changed" ? localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state handle's view changed before the operation could be adopted.") : localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "This view-state handle has been released.");
+  const preflight = (state) => {
+    if (disposed) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "The App view-state controller was released.");
+    }
+    if (state.terminated !== null) throw terminatedError(state.terminated);
+    if (state.lifetime.signal.aborted) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "This view-state handle has been released.");
+    }
+    if (currentRegistration !== state) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state handle is no longer the current registration.");
+    }
+    assertTokenOrThrow(state.viewToken);
+    readyNamespace(state);
+    return state.viewToken;
+  };
+  const postflight = (state, token) => {
+    if (disposed) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "The App view-state controller was released.");
+    }
+    if (state.terminated !== null) throw terminatedError(state.terminated);
+    if (state.lifetime.signal.aborted) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "This view-state handle has been released.");
+    }
+    if (!tokenIsCurrent(token)) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "The document changed before this view-state reply arrived.");
+    }
+    const context = deps.getContext();
+    const namespace = context?.viewState;
+    if (!context || context.slot !== "card" || !namespace || namespace.bindingId !== state.bindingId || namespace.viewKind !== state.viewKind) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "The namespace changed before this view-state reply arrived.");
+    }
+    if (namespace.available !== true) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "The App view-state namespace paused before this reply arrived.");
+    }
+  };
+  const sendOrThrow = async (type, payload, timeoutMs, state) => {
+    try {
+      return await deps.request(type, payload, { timeoutMs });
+    } catch (error) {
+      if (state !== null) {
+        if (state.terminated !== null) throw terminatedError(state.terminated);
+        if (state.lifetime.signal.aborted) {
+          throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "This view-state handle has been released.");
+        }
+      }
+      if (disposed) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "The App view-state controller was released.");
+      }
+      throw error;
+    }
+  };
+  const snapshotFromWire = (viewKind, wire) => {
+    if (wire.viewKind !== viewKind) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, "The view-state reply carried a different view kind than the operation targeted.");
+    }
+    let state;
+    try {
+      state = normalizeAppViewStateValue(wire.state);
+    } catch (error) {
+      if (error instanceof AppViewStateError) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, "The view-state reply carried a state outside the shared JSON budget.");
+      }
+      throw error;
+    }
+    return { viewKind, revision: wire.revision, state };
+  };
+  const getSnapshot = async (state, options) => {
+    const timeoutMs = options?.timeoutMs ?? defaultTimeoutMs;
+    const token = preflight(state);
+    const raw = await sendOrThrow(APP_VIEW_STATE.GET, {
+      viewToken: token,
+      bindingId: state.bindingId,
+      registrationId: state.registrationId
+    }, timeoutMs, state);
+    postflight(state, token);
+    const reply = parseAppViewStateSnapshotReply(raw);
+    if (reply.ok === false) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, reply.error);
+    }
+    if (!appViewStateEchoMatchesOperation(reply.value, {
+      viewToken: token,
+      bindingId: state.bindingId,
+      registrationId: state.registrationId
+    })) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state reply answered a different view than the one this handle targets.");
+    }
+    const snapshot = parseAppViewStateSnapshot(reply.value.snapshot);
+    if (snapshot.ok === false) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, snapshot.error);
+    }
+    return snapshotFromWire(state.viewKind, snapshot.value);
+  };
+  const setSnapshot = async (state, input, options) => {
+    const timeoutMs = options?.timeoutMs ?? defaultTimeoutMs;
+    const expectedRevision = readExpectedRevision(input);
+    const nextState = normalizeAppViewStateValue(input.state);
+    const token = preflight(state);
+    const raw = await sendOrThrow(APP_VIEW_STATE.SET, {
+      viewToken: token,
+      bindingId: state.bindingId,
+      registrationId: state.registrationId,
+      expectedRevision,
+      state: nextState
+    }, timeoutMs, state);
+    postflight(state, token);
+    const reply = parseAppViewStateSnapshotReply(raw);
+    if (reply.ok === false) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, reply.error);
+    }
+    if (!appViewStateEchoMatchesOperation(reply.value, {
+      viewToken: token,
+      bindingId: state.bindingId,
+      registrationId: state.registrationId
+    })) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state reply answered a different view than the one this handle targets.");
+    }
+    const snapshot = parseAppViewStateSnapshot(reply.value.snapshot);
+    if (snapshot.ok === false) {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, snapshot.error);
+    }
+    return snapshotFromWire(state.viewKind, snapshot.value);
+  };
+  const conditionalRelease = async (viewToken, bindingId, registrationId) => {
+    if (!tokenIsCurrent(viewToken)) return;
+    const context = deps.getContext();
+    if (!context || context.slot !== "card" || context.viewState?.bindingId !== bindingId) return;
+    try {
+      const raw = await deps.request(APP_VIEW_STATE.RELEASE, { viewToken, bindingId, registrationId }, { timeoutMs: defaultTimeoutMs });
+      const parsed = parseAppViewStateReleaseReply(raw);
+      if (parsed.ok === false || !appViewStateEchoMatchesOperation(parsed.value, { viewToken, bindingId, registrationId })) {
+        console.error("[hana] App view-state cleanup reply did not confirm the released registration.");
+      }
+    } catch (error) {
+      console.error("[hana] failed to release a superseded App view-state registration:", error instanceof Error ? error.message : error);
+    }
+  };
+  const releaseRegistration = (state, options) => {
+    if (state.releasePromise) return state.releasePromise;
+    state.releasePromise = (async () => {
+      const timeoutMs = options?.timeoutMs ?? defaultTimeoutMs;
+      terminateRegistration(state, "released");
+      if (currentRegistration === state) currentRegistration = null;
+      const context = deps.getContext();
+      const namespace = context?.viewState;
+      const stillLive = tokenIsCurrent(state.viewToken) && context?.slot === "card" && !!namespace && namespace.bindingId === state.bindingId;
+      if (!stillLive) return { released: false };
+      const raw = await deps.request(APP_VIEW_STATE.RELEASE, {
+        viewToken: state.viewToken,
+        bindingId: state.bindingId,
+        registrationId: state.registrationId
+      }, { timeoutMs });
+      const parsed = parseAppViewStateReleaseReply(raw);
+      if (parsed.ok === false) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, parsed.error);
+      }
+      if (!appViewStateEchoMatchesOperation(parsed.value, {
+        viewToken: state.viewToken,
+        bindingId: state.bindingId,
+        registrationId: state.registrationId
+      })) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state release reply answered a different view than the one this handle targets.");
+      }
+      const after = deps.getContext();
+      if (!tokenIsCurrent(state.viewToken) || after?.slot !== "card" || after.viewState?.bindingId !== state.bindingId || after.viewState?.viewKind !== state.viewKind) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "The namespace changed before this view-state release was confirmed.");
+      }
+      return { released: parsed.value.released };
+    })();
+    return state.releasePromise;
+  };
+  const createRegistration = (viewToken, bindingId, viewKind, registrationId, initial) => {
+    const lifetime = new AbortController();
+    const state = {
+      viewToken,
+      bindingId,
+      viewKind,
+      registrationId,
+      lifetime,
+      initial,
+      releasePromise: null,
+      terminated: null
+    };
+    state.handle = {
+      get initial() {
+        return copySnapshot(state.initial);
+      },
+      signal: lifetime.signal,
+      get: (options) => getSnapshot(state, options),
+      set: (input, options) => setSnapshot(state, input, options),
+      release: (options) => releaseRegistration(state, options)
+    };
+    return state;
+  };
+  const enable = async (options) => {
+    const timeoutMs = options?.timeoutMs ?? defaultTimeoutMs;
+    if (disposed) throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "The App view-state controller was released.");
+    const startContext = deps.getContext();
+    if (startContext && startContext.slot !== "card") {
+      throw localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "View-state recovery is only available on an App card surface.");
+    }
+    const startBindingId = startContext?.viewState?.bindingId ?? null;
+    const seq = ++enableSeq;
+    terminateOwned("superseded");
+    const abort = new AbortController();
+    const pending = { abort, tokenCaptured: false };
+    pendingEnables.set(seq, pending);
+    let minted = null;
+    try {
+      let token;
+      try {
+        token = await deps.currentView.waitForToken(timeoutMs, abort.signal);
+      } catch (error) {
+        if (disposed) throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "The App view-state controller was released.");
+        if (abort.signal.aborted) {
+          throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "A newer view-state enable replaced this one before it was bound.");
+        }
+        throw mapCurrentViewError(error);
+      }
+      pending.tokenCaptured = true;
+      if (disposed) throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "The App view-state controller was released.");
+      if (seq !== enableSeq || abort.signal.aborted) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "A newer view-state enable replaced this one before it was bound.");
+      }
+      assertTokenOrThrow(token);
+      const context = deps.getContext();
+      const namespace = context?.viewState;
+      if (!context || context.slot !== "card" || !namespace || namespace.available !== true) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "The App view-state namespace is not available here right now.");
+      }
+      if (startBindingId !== null && startBindingId !== namespace.bindingId) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "The App view-state namespace changed before this enable was sent.");
+      }
+      assertTokenOrThrow(token);
+      const raw = await sendOrThrow(APP_VIEW_STATE.ENABLE, {
+        viewToken: token,
+        bindingId: namespace.bindingId
+      }, timeoutMs, null);
+      const reply = parseAppViewStateSnapshotReply(raw);
+      if (reply.ok === false) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, reply.error);
+      }
+      if (!appViewStateEchoMatchesOperation(reply.value, { viewToken: token, bindingId: namespace.bindingId })) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state enable reply answered a different view than the one that was enabled.");
+      }
+      minted = { token, bindingId: namespace.bindingId, registrationId: reply.value.registrationId };
+      if (disposed) throw localError(APP_VIEW_STATE_ERROR_CODE.RELEASED, "The App view-state controller was released.");
+      if (seq !== enableSeq || abort.signal.aborted || !pendingEnables.has(seq)) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "This view-state enable was voided before its reply arrived.");
+      }
+      if (!tokenIsCurrent(token)) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "The document changed before this view-state enable reply arrived.");
+      }
+      const after = deps.getContext();
+      if (!after || after.slot !== "card" || after.viewState?.bindingId !== namespace.bindingId || after.viewState?.viewKind !== namespace.viewKind) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.VIEW_STALE, "The namespace changed before this view-state enable reply arrived.");
+      }
+      if (after.viewState?.available !== true) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.UNAVAILABLE, "The App view-state namespace paused before this enable was confirmed.");
+      }
+      const parsedSnapshot = parseAppViewStateSnapshot(reply.value.snapshot);
+      if (parsedSnapshot.ok === false) {
+        throw localError(APP_VIEW_STATE_ERROR_CODE.BAD_RESPONSE, parsedSnapshot.error);
+      }
+      const snapshot = snapshotFromWire(namespace.viewKind, parsedSnapshot.value);
+      const registration = createRegistration(token, namespace.bindingId, namespace.viewKind, reply.value.registrationId, snapshot);
+      currentRegistration = registration;
+      minted = null;
+      return registration.handle;
+    } catch (error) {
+      if (minted !== null) await conditionalRelease(minted.token, minted.bindingId, minted.registrationId);
+      throw error;
+    } finally {
+      pendingEnables.delete(seq);
+    }
+  };
+  const api = { enable };
+  return {
+    api,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      enableSeq += 1;
+      terminateRegistration(currentRegistration, "disposed");
+      currentRegistration = null;
+      for (const pending of pendingEnables.values()) pending.abort.abort();
+      pendingEnables.clear();
+      unsubscribeContext();
+      unsubscribeBinding();
+    }
+  };
+}
+function readExpectedRevision(input) {
+  if (typeof input !== "object" || input === null) {
+    throw localError(APP_VIEW_STATE_ERROR_CODE.INVALID_INPUT, "View-state set requires an object with an expected revision and a state.");
+  }
+  const expected = input.expectedRevision;
+  if (!Number.isSafeInteger(expected) || expected < 0) {
+    throw localError(APP_VIEW_STATE_ERROR_CODE.INVALID_INPUT, "View-state set requires a non-negative safe-integer expected revision.");
+  }
+  return expected;
+}
+
+// src/app-ui-internals.ts
+var resolvers = /* @__PURE__ */ new WeakMap();
+function registerAppViewRecoveryResolver(owner, resolver) {
+  resolvers.set(owner, resolver);
+}
+function getAppViewRecoveryApi(owner) {
+  const resolver = resolvers.get(owner);
+  return resolver ? resolver() : null;
+}
 
 // src/input-panel.ts
 function record(value) {
@@ -827,6 +2047,190 @@ function createInputPanelBridge(post) {
   return { api, handleMessage, clear };
 }
 
+// src/app-custom-themes.ts
+var CUSTOM_THEME_FORMAT_VERSION = 1;
+var CUSTOM_THEME_ID_PREFIX = "custom:";
+var CUSTOM_THEME_RADIUS_MIN = 0;
+var CUSTOM_THEME_RADIUS_MAX = 32;
+var CUSTOM_THEME_FONT_MIN_ITEMS = 1;
+var CUSTOM_THEME_FONT_MAX_ITEMS = 8;
+var CUSTOM_THEME_FONT_ITEM_MAX_LENGTH = 80;
+function color(name, group, label, opaque = false) {
+  return { name, type: "color", group, label, required: true, ...opaque ? { opaque: true } : {} };
+}
+function length(name, group, label) {
+  return {
+    name,
+    type: "length",
+    group,
+    label,
+    required: true,
+    min: CUSTOM_THEME_RADIUS_MIN,
+    max: CUSTOM_THEME_RADIUS_MAX
+  };
+}
+function fontFamily(name, group, label) {
+  return {
+    name,
+    type: "font-family",
+    group,
+    label,
+    required: true,
+    minItems: CUSTOM_THEME_FONT_MIN_ITEMS,
+    maxItems: CUSTOM_THEME_FONT_MAX_ITEMS,
+    itemMaxLength: CUSTOM_THEME_FONT_ITEM_MAX_LENGTH
+  };
+}
+var ANSI_COLOURS = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+var VARIABLE_SPECS = Object.freeze([
+  // Background
+  color("--bg", "background", "Background", true),
+  color("--bg-card", "background", "Card background", true),
+  color("--bg-glass", "background", "Glass background"),
+  color("--sidebar-bg", "background", "Sidebar background"),
+  // Accent / link
+  color("--accent", "accent", "Accent", true),
+  color("--accent-hover", "accent", "Accent hover"),
+  color("--accent-light", "accent", "Accent tint"),
+  color("--link", "accent", "Link", true),
+  color("--link-hover", "accent", "Link hover"),
+  // Text
+  color("--text", "text", "Text"),
+  color("--text-light", "text", "Secondary text"),
+  color("--text-muted", "text", "Muted text"),
+  color("--hana-text", "text", "Chat text"),
+  // Structural colours
+  color("--border", "structural", "Border"),
+  color("--shadow", "structural", "Shadow"),
+  color("--green", "structural", "Success", true),
+  color("--coral", "structural", "Coral", true),
+  color("--danger", "structural", "Danger", true),
+  // Note pad
+  color("--jian-note-bg", "note", "Note background"),
+  color("--jian-note-border", "note", "Note border"),
+  // Chat surfaces
+  color("--mood-bg", "chat", "Mood background"),
+  color("--mood-text", "chat", "Mood text"),
+  color("--mood-border", "chat", "Mood border"),
+  color("--tool-bg", "chat", "Tool background"),
+  color("--tool-text", "chat", "Tool text"),
+  color("--user-bg", "chat", "User bubble background"),
+  color("--drop-overlay-bg", "chat", "Drop overlay background"),
+  color("--attach-bg", "chat", "Attachment background"),
+  // Overlay / scrim scale + tab slider
+  color("--overlay-subtle", "overlay", "Overlay subtle"),
+  color("--overlay-light", "overlay", "Overlay light"),
+  color("--overlay-medium", "overlay", "Overlay medium"),
+  color("--overlay-strong", "overlay", "Overlay strong"),
+  color("--tab-slider-bg", "overlay", "Tab slider background"),
+  // Terminal base
+  color("--term-bg", "terminal", "Terminal background"),
+  color("--term-fg", "terminal", "Terminal foreground"),
+  color("--term-cursor", "terminal", "Terminal cursor"),
+  color("--term-cursor-accent", "terminal", "Terminal cursor accent"),
+  color("--term-selection-bg", "terminal", "Terminal selection"),
+  ...ANSI_COLOURS.map((c) => color(`--term-ansi-${c}`, "terminal", `Terminal ANSI ${c}`)),
+  ...ANSI_COLOURS.map((c) => color(`--term-ansi-bright-${c}`, "terminal", `Terminal ANSI bright ${c}`)),
+  // Shape
+  length("--radius-input", "shape", "Input radius"),
+  length("--radius-card", "shape", "Card radius"),
+  length("--radius-chat-card", "shape", "Chat card radius"),
+  length("--radius-chat-surface", "shape", "Chat surface radius"),
+  // Typography
+  fontFamily("--font-ui", "typography", "UI font stack"),
+  fontFamily("--font-serif", "typography", "Serif font stack"),
+  fontFamily("--font-mono", "typography", "Monospace font stack")
+]);
+var CUSTOM_THEME_VARIABLE_NAMES = Object.freeze(
+  VARIABLE_SPECS.map((spec) => spec.name)
+);
+var SPEC_BY_NAME = new Map(
+  VARIABLE_SPECS.map((spec) => [spec.name, spec])
+);
+var CUSTOM_THEME_OPAQUE_COLOR_NAMES = Object.freeze(
+  VARIABLE_SPECS.filter((spec) => spec.type === "color" && spec.opaque).map((spec) => spec.name)
+);
+var CUSTOM_THEME_RGB_SOURCE_NAMES = Object.freeze([
+  "--accent",
+  "--link",
+  "--green",
+  "--coral",
+  "--danger"
+]);
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isCustomThemeId(value) {
+  if (typeof value !== "string" || !value.startsWith(CUSTOM_THEME_ID_PREFIX)) return false;
+  return UUID.test(value.slice(CUSTOM_THEME_ID_PREFIX.length));
+}
+var CUSTOM_THEME_INITIAL_DEFINITION = Object.freeze({
+  formatVersion: CUSTOM_THEME_FORMAT_VERSION,
+  name: "My theme",
+  appearance: "light",
+  variables: Object.freeze({
+    "--bg": "#F6F6F4",
+    "--bg-card": "#FCFCFB",
+    "--bg-glass": "#F6F6F4F0",
+    "--sidebar-bg": "#EFEFED",
+    "--accent": "#5B6B8C",
+    "--accent-hover": "#4A5877",
+    "--accent-light": "#5B6B8C14",
+    "--link": "#4A5877",
+    "--link-hover": "#3E4A66",
+    "--text": "#33363B",
+    "--text-light": "#5F646C",
+    "--text-muted": "#83888F",
+    "--hana-text": "#2E3A4A",
+    "--border": "#C9CCD1",
+    "--shadow": "#33363B17",
+    "--green": "#4F8A6A",
+    "--coral": "#E0857F",
+    "--danger": "#9B4A44",
+    "--jian-note-bg": "#FAF7EF",
+    "--jian-note-border": "#C9C2B4",
+    "--mood-bg": "#6B4A6B12",
+    "--mood-text": "#6B4A6B",
+    "--mood-border": "#6B4A6B2E",
+    "--tool-bg": "#00000008",
+    "--tool-text": "#5F646C",
+    "--user-bg": "#5B6B8C14",
+    "--drop-overlay-bg": "#F6F6F4D9",
+    "--attach-bg": "#0000000A",
+    "--overlay-subtle": "#00000008",
+    "--overlay-light": "#0000000D",
+    "--overlay-medium": "#00000014",
+    "--overlay-strong": "#00000026",
+    "--tab-slider-bg": "#00000026",
+    "--term-bg": "#4A5877",
+    "--term-fg": "#FCFCFB",
+    "--term-cursor": "#FCFCFB",
+    "--term-cursor-accent": "#4A5877",
+    "--term-selection-bg": "#FFFFFF40",
+    "--term-ansi-black": "#2B3340",
+    "--term-ansi-red": "#C07A75",
+    "--term-ansi-green": "#7BAE7F",
+    "--term-ansi-yellow": "#C6A15B",
+    "--term-ansi-blue": "#7A9CC6",
+    "--term-ansi-magenta": "#A98BC0",
+    "--term-ansi-cyan": "#79B4BC",
+    "--term-ansi-white": "#E6E8EA",
+    "--term-ansi-bright-black": "#6F757D",
+    "--term-ansi-bright-red": "#D99A95",
+    "--term-ansi-bright-green": "#9CC9A0",
+    "--term-ansi-bright-yellow": "#DCC088",
+    "--term-ansi-bright-blue": "#9DB8D9",
+    "--term-ansi-bright-magenta": "#C4ACD6",
+    "--term-ansi-bright-cyan": "#9CCCD2",
+    "--term-ansi-bright-white": "#FFFFFF",
+    "--radius-input": 6,
+    "--radius-card": 8,
+    "--radius-chat-card": 8,
+    "--radius-chat-surface": 16,
+    "--font-ui": Object.freeze(["-apple-system", "Segoe UI", "sans-serif"]),
+    "--font-serif": Object.freeze(["Georgia", "Times New Roman", "serif"]),
+    "--font-mono": Object.freeze(["JetBrains Mono", "monospace"])
+  })
+});
+
 // src/index.ts
 var HanaPluginError = class extends Error {
   name = "HanaPluginError";
@@ -998,6 +2402,14 @@ function optionalSurfaceSessionId(value) {
   if (typeof value === "string") return value;
   return void 0;
 }
+function normalizeSurfaceViewStateNamespace(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
+  const record2 = value;
+  if (!isAppViewStateNamespaceId(record2.bindingId)) return void 0;
+  if (record2.viewKind !== "compact" && record2.viewKind !== "detached") return void 0;
+  if (typeof record2.available !== "boolean") return void 0;
+  return { bindingId: record2.bindingId, viewKind: record2.viewKind, available: record2.available };
+}
 function normalizeSurfaceContextPayload(payload) {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
   const record2 = payload;
@@ -1007,17 +2419,30 @@ function normalizeSurfaceContextPayload(payload) {
   if (!appId || slot !== "card" && slot !== "function-panel" && slot !== "settings" && slot !== "slot" && slot !== "input-panel") return null;
   const embeddedSessionId = optionalSurfaceSessionId(record2.embeddedSessionId);
   const originSessionId = optionalSurfaceSessionId(record2.originSessionId);
+  const instanceKey = normalizeAppCardInstanceKey(record2.instanceKey);
+  if (instanceKey === null) return null;
+  const viewState = normalizeSurfaceViewStateNamespace(record2.viewState);
+  const hasCardIdentity = typeof cardInstanceId === "string" && !!cardInstanceId.trim();
+  if (instanceKey !== void 0 && !hasCardIdentity) return null;
   const contextMetadata = {};
   if (embeddedSessionId !== void 0) contextMetadata.embeddedSessionId = embeddedSessionId;
   if (originSessionId !== void 0) contextMetadata.originSessionId = originSessionId;
+  if (instanceKey !== void 0) contextMetadata.instanceKey = instanceKey;
+  if (viewState !== void 0) contextMetadata.viewState = viewState;
   if (slot === "settings" || slot === "input-panel") return cardInstanceId === null ? { appId, slot, cardInstanceId: null, ...contextMetadata } : null;
-  if (typeof cardInstanceId === "string" && cardInstanceId.trim()) {
+  if (hasCardIdentity) {
     return { appId, slot, cardInstanceId: cardInstanceId.trim(), ...contextMetadata };
   }
   if (slot !== "card" || cardInstanceId !== null || typeof record2.embeddedSessionId !== "string" || !record2.embeddedSessionId.trim()) {
     return null;
   }
   return { appId, slot, cardInstanceId: null, ...contextMetadata };
+}
+function copySurfaceContext(context) {
+  return {
+    ...context,
+    ...context.viewState ? { viewState: { ...context.viewState } } : {}
+  };
 }
 function normalizeActiveSession(payload) {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
@@ -1057,15 +2482,11 @@ function clipboardWriteTextPayload(input) {
   return typeof input === "string" ? { text: input } : input;
 }
 function readAppIdFromIframeRoute(targetWindow) {
-  const match = /^\/api\/apps\/([^/]+)\/ui(?:\/|$)/.exec(targetWindow.location.pathname || "");
-  if (!match) {
-    throw new Error("App asset/API URL helper requires an iframe route under /api/apps/:appId/ui/.");
+  const info = parseAppSurfacePathname(targetWindow.location.pathname || "");
+  if (!info) {
+    throw new Error("App asset/API URL helper requires an App surface route under /api/apps/:appId/ui/ or a scoped service mount.");
   }
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    throw new Error("App asset/API URL helper could not decode the current app id.");
-  }
+  return info.appId;
 }
 function hasConfirmedAdvancedAppSurface(targetWindow, surfaceContext) {
   if (!surfaceContext || !["card", "function-panel", "settings", "slot"].includes(surfaceContext.slot)) return false;
@@ -1174,6 +2595,35 @@ function pluginApiFetch(targetWindow, input, init, documentBindingId) {
     headers
   });
 }
+function customThemeIdError() {
+  return new HanaPluginError({ code: "CUSTOM_THEME_INVALID_ID", message: "A user theme id must be custom:<uuid>." });
+}
+async function customThemesCall(targetWindow, path, init) {
+  const appId = readAppIdFromIframeRoute(targetWindow);
+  const surfaceSession = readSurfaceSession(targetWindow);
+  if (!surfaceSession) {
+    throw new Error("hana.themes.custom requires appSurfaceSession in the iframe URL.");
+  }
+  const fetchImpl = targetWindow.fetch?.bind(targetWindow) ?? globalThis.fetch?.bind(globalThis);
+  if (!fetchImpl) throw new Error("hana.themes.custom requires window.fetch.");
+  const headers = new Headers(init?.headers);
+  headers.set(APP_SURFACE_SESSION_HEADER, surfaceSession);
+  if (init?.body !== void 0 && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const response = await fetchImpl(
+    `${targetWindow.location.origin}/api/apps/${encodeURIComponent(appId)}/custom-themes${path}`,
+    { ...init, headers }
+  );
+  if (response.status === 204) return void 0;
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const record2 = typeof body === "object" && body !== null ? body : {};
+    throw new HanaPluginError({
+      code: typeof record2.code === "string" ? record2.code : "HOST_ERROR",
+      message: typeof record2.error === "string" ? record2.error : `User theme request failed (${response.status}).`
+    });
+  }
+  return body;
+}
 function readUserGesture(targetWindow) {
   try {
     const nav = targetWindow.navigator;
@@ -1202,6 +2652,22 @@ function createHanaPluginSdk(options = {}) {
   const requestTimeoutMs = options.requestTimeoutMs ?? 1e4;
   const idFactory = options.idFactory ?? defaultIdFactory;
   const inputPanelBridge = createInputPanelBridge(post);
+  const currentView = createAppCurrentViewBinding({
+    targetWindow,
+    post,
+    // A host that rebound its bridge to this same document gets a fresh
+    // handshake by re-announcing the ready the page already sent.
+    reannounceReady: () => {
+      if (readyWasCalled) postReady(readyPayload);
+    }
+  });
+  const appChrome = createAppChromeApi({
+    request,
+    post,
+    targetWindow,
+    currentView,
+    requestTimeoutMs
+  });
   const themeFollowEnabled = options.followHostTheme !== false;
   let themeSnapshot = readInitialTheme(targetWindow);
   let runtimeSnapshot = readInitialRuntimeSnapshot(targetWindow);
@@ -1212,6 +2678,7 @@ function createHanaPluginSdk(options = {}) {
   const lifecycleSubscribers = /* @__PURE__ */ new Set();
   const surfaceContextSubscribers = /* @__PURE__ */ new Set();
   const storageChangedSubscribers = /* @__PURE__ */ new Set();
+  const customThemeChangedSubscribers = /* @__PURE__ */ new Set();
   const appStorageChangedSubscribers = /* @__PURE__ */ new Set();
   const panelEventSubscribers = /* @__PURE__ */ new Set();
   const panelRefreshSubscribers = /* @__PURE__ */ new Set();
@@ -1229,6 +2696,8 @@ function createHanaPluginSdk(options = {}) {
   let nextAnimationHandle = 1;
   let animationPumpCancel = null;
   let lastAnimationFrameTime = null;
+  let viewRecovery = null;
+  let viewLifetimeEnded = false;
   function followHostTheme(cssUrl) {
     if (!themeFollowEnabled || !cssUrl) return;
     const doc = targetWindow.document;
@@ -1425,6 +2894,8 @@ function createHanaPluginSdk(options = {}) {
     const parsed = parsePluginUiMessage(data);
     if (!parsed.ok) return;
     const message = parsed.value;
+    if (currentView.handleHostMessage(message)) return;
+    if (appChrome.handleHostMessage(message)) return;
     if (inputPanelBridge.handleMessage(message)) {
       if (message.type === APP_INPUT_PANEL_MESSAGE.CONTEXT && message.payload === null && readyWasCalled) postReady(readyPayload);
       return;
@@ -1589,10 +3060,11 @@ function createHanaPluginSdk(options = {}) {
     if (message.type === APP_SURFACE_HOST_EVENT.CONTEXT) {
       const next = message.payload === null ? null : normalizeSurfaceContextPayload(message.payload);
       if (message.payload !== null && next === null) return;
-      const changed = next?.appId !== surfaceContext?.appId || next?.slot !== surfaceContext?.slot || next?.cardInstanceId !== surfaceContext?.cardInstanceId || next?.embeddedSessionId !== surfaceContext?.embeddedSessionId || next?.originSessionId !== surfaceContext?.originSessionId;
+      const changed = next?.appId !== surfaceContext?.appId || next?.slot !== surfaceContext?.slot || next?.cardInstanceId !== surfaceContext?.cardInstanceId || next?.instanceKey !== surfaceContext?.instanceKey || next?.embeddedSessionId !== surfaceContext?.embeddedSessionId || next?.originSessionId !== surfaceContext?.originSessionId || next?.viewState?.bindingId !== surfaceContext?.viewState?.bindingId || next?.viewState?.viewKind !== surfaceContext?.viewState?.viewKind || next?.viewState?.available !== surfaceContext?.viewState?.available;
+      currentView.applySurfaceContext(next === null ? null : { appId: next.appId, cardInstanceId: next.cardInstanceId, instanceKey: next.instanceKey ?? null });
       surfaceContext = next;
       if (changed) {
-        for (const callback of surfaceContextSubscribers) callback(surfaceContext ? { ...surfaceContext } : null);
+        for (const callback of surfaceContextSubscribers) callback(surfaceContext ? copySurfaceContext(surfaceContext) : null);
       }
       return;
     }
@@ -1629,6 +3101,18 @@ function createHanaPluginSdk(options = {}) {
       }
       return;
     }
+    if (message.type === APP_CUSTOM_THEME_HOST_EVENT.CHANGED) {
+      if (typeof message.payload !== "object" || message.payload === null) return;
+      const payload = message.payload;
+      if (typeof payload.kind !== "string") return;
+      const change = {
+        kind: payload.kind,
+        ...typeof payload.id === "string" ? { id: payload.id } : {},
+        ...typeof payload.revision === "number" ? { revision: payload.revision } : {}
+      };
+      for (const callback of customThemeChangedSubscribers) callback(change);
+      return;
+    }
     if (message.type === PLUGIN_UI_HOST_EVENT.PANEL_EVENT) {
       if (typeof message.payload !== "object" || message.payload === null) return;
       const payload = message.payload;
@@ -1649,10 +3133,16 @@ function createHanaPluginSdk(options = {}) {
     }
   }
   subscribeHost(onHostMessage);
-  targetWindow.addEventListener("pagehide", () => {
+  targetWindow.addEventListener("pagehide", (event) => {
     inputPanelBridge.clear();
     activeSessionPageHidden = true;
     scheduleActiveSessionLifecycle();
+    if (event?.persisted === false) {
+      viewLifetimeEnded = true;
+      currentView.dispose();
+      viewRecovery?.dispose();
+      appChrome.dispose();
+    }
   });
   targetWindow.addEventListener("pageshow", () => {
     if (!activeSessionPageHidden) return;
@@ -1741,7 +3231,7 @@ function createHanaPluginSdk(options = {}) {
       }
     };
   }
-  return {
+  const sdk = {
     ready(payload) {
       readyWasCalled = true;
       readyPayload = payload;
@@ -1778,6 +3268,53 @@ function createHanaPluginSdk(options = {}) {
         };
       }
     },
+    themes: {
+      custom: {
+        list: () => customThemesCall(targetWindow, "").then((body) => body.themes),
+        get: (id) => {
+          if (!isCustomThemeId(id)) return Promise.reject(customThemeIdError());
+          return customThemesCall(targetWindow, `/${encodeURIComponent(id)}`);
+        },
+        getSchema: () => customThemesCall(targetWindow, "/schema"),
+        create: (definition) => customThemesCall(targetWindow, "", {
+          method: "POST",
+          body: JSON.stringify(definition)
+        }),
+        update: (id, input) => {
+          if (!isCustomThemeId(id)) return Promise.reject(customThemeIdError());
+          return customThemesCall(targetWindow, `/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(input)
+          });
+        },
+        remove: (id, options2) => {
+          if (!isCustomThemeId(id)) return Promise.reject(customThemeIdError());
+          return customThemesCall(targetWindow, `/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            body: JSON.stringify(options2)
+          });
+        },
+        apply: (id) => {
+          if (!isCustomThemeId(id)) return Promise.reject(customThemeIdError());
+          return customThemesCall(targetWindow, `/${encodeURIComponent(id)}/apply`, { method: "POST" });
+        },
+        preview: (input) => customThemesCall(targetWindow, "/preview", {
+          method: "POST",
+          body: JSON.stringify(input)
+        }),
+        endPreview: (previewId) => customThemesCall(
+          targetWindow,
+          `/preview/${encodeURIComponent(previewId)}`,
+          { method: "DELETE" }
+        ),
+        subscribe(callback) {
+          customThemeChangedSubscribers.add(callback);
+          return () => {
+            customThemeChangedSubscribers.delete(callback);
+          };
+        }
+      }
+    },
     envelope: {
       getSnapshot() {
         return envelopeSnapshot ? copyEnvelope(envelopeSnapshot) : null;
@@ -1803,20 +3340,37 @@ function createHanaPluginSdk(options = {}) {
       }
     },
     cards: {
-      open(cardId) {
+      open(cardId, options2) {
         if (typeof cardId !== "string" || !cardId.trim()) {
           return Promise.reject(new TypeError("hana.cards.open requires a non-empty declared card ID."));
         }
-        return request(APP_CARD_CAPABILITY.OPEN, { cardId: cardId.trim() });
+        let instanceKey;
+        if (options2 !== void 0) {
+          if (typeof options2 !== "object" || options2 === null || Array.isArray(options2)) {
+            return Promise.reject(new TypeError("hana.cards.open options must be an object."));
+          }
+          if (Object.keys(options2).some((key) => key !== "instanceKey")) {
+            return Promise.reject(new TypeError("hana.cards.open options accepts only instanceKey."));
+          }
+          const parsed = normalizeAppCardInstanceKey(options2.instanceKey);
+          if (parsed === null) {
+            return Promise.reject(new TypeError("hana.cards.open instanceKey must be a non-empty string of at most 256 code units without NUL."));
+          }
+          instanceKey = parsed;
+        }
+        return request(APP_CARD_CAPABILITY.OPEN, {
+          cardId: cardId.trim(),
+          ...instanceKey === void 0 ? {} : { instanceKey }
+        });
       }
     },
     surface: {
       getContext() {
-        return surfaceContext ? { ...surfaceContext } : null;
+        return surfaceContext ? copySurfaceContext(surfaceContext) : null;
       },
       onContextChanged(callback) {
         surfaceContextSubscribers.add(callback);
-        callback(surfaceContext ? { ...surfaceContext } : null);
+        callback(surfaceContext ? copySurfaceContext(surfaceContext) : null);
         return () => {
           surfaceContextSubscribers.delete(callback);
         };
@@ -1874,6 +3428,7 @@ function createHanaPluginSdk(options = {}) {
     host: {
       request
     },
+    chrome: appChrome.api,
     toast: {
       show(input, options2) {
         return request(PLUGIN_UI_CAPABILITY.TOAST_SHOW, input, options2);
@@ -2014,6 +3569,23 @@ function createHanaPluginSdk(options = {}) {
       }
     }
   };
+  registerAppViewRecoveryResolver(sdk, () => {
+    if (viewLifetimeEnded) return null;
+    viewRecovery ??= createAppViewRecovery({
+      request,
+      currentView,
+      getContext: () => surfaceContext,
+      subscribeContext: (callback) => {
+        surfaceContextSubscribers.add(callback);
+        return () => {
+          surfaceContextSubscribers.delete(callback);
+        };
+      },
+      requestTimeoutMs
+    });
+    return viewRecovery.api;
+  });
+  return sdk;
 }
 var singleton = null;
 function getSingleton() {
@@ -2064,6 +3636,20 @@ var hana = {
       return getSingleton().theme.subscribe(callback);
     }
   },
+  themes: {
+    custom: {
+      list: () => getSingleton().themes.custom.list(),
+      get: (id) => getSingleton().themes.custom.get(id),
+      getSchema: () => getSingleton().themes.custom.getSchema(),
+      create: (definition) => getSingleton().themes.custom.create(definition),
+      update: (id, input) => getSingleton().themes.custom.update(id, input),
+      remove: (id, options) => getSingleton().themes.custom.remove(id, options),
+      apply: (id) => getSingleton().themes.custom.apply(id),
+      preview: (input) => getSingleton().themes.custom.preview(input),
+      endPreview: (previewId) => getSingleton().themes.custom.endPreview(previewId),
+      subscribe: (callback) => getSingleton().themes.custom.subscribe(callback)
+    }
+  },
   envelope: {
     getSnapshot() {
       return getSingleton().envelope.getSnapshot();
@@ -2081,8 +3667,8 @@ var hana = {
     }
   },
   cards: {
-    open(cardId) {
-      return getSingleton().cards.open(cardId);
+    open(cardId, options) {
+      return getSingleton().cards.open(cardId, options);
     }
   },
   surface: {
@@ -2118,6 +3704,17 @@ var hana = {
   host: {
     request(type, payload, options) {
       return getSingleton().host.request(type, payload, options);
+    }
+  },
+  chrome: {
+    set(description, options) {
+      return getSingleton().chrome.set(description, options);
+    },
+    onAction(handler) {
+      return getSingleton().chrome.onAction(handler);
+    },
+    registerScrollSource(element) {
+      return getSingleton().chrome.registerScrollSource(element);
     }
   },
   toast: {
@@ -2224,6 +3821,7 @@ var hana = {
     }
   }
 };
+registerAppViewRecoveryResolver(hana, () => getAppViewRecoveryApi(getSingleton()));
 
 // src/app-entry.ts
 function nativeBridge(targetWindow) {
@@ -2296,9 +3894,9 @@ function browserWindow() {
   return window;
 }
 function assertAppUiSurface(targetWindow) {
-  const pathname = targetWindow.location?.pathname ?? "";
-  if (!/^\/api\/apps\/[^/]+\/ui(?:\/|$)/.test(pathname)) {
-    throw new Error("@hana/app-sdk/ui requires an App iframe route under /api/apps/:appId/ui/.");
+  const info = parseAppSurfacePathname(targetWindow.location?.pathname ?? "");
+  if (!info) {
+    throw new Error("@hana/app-sdk/ui requires an App surface route under /api/apps/:appId/ui/ or a scoped service mount.");
   }
 }
 function assertAllowedHostRequest(type) {
@@ -2339,8 +3937,11 @@ function appUiSdk(getSdk, getWindow = browserWindow, options = {}) {
       on(type, listener) {
         if (typeof type !== "string" || !type.trim() || type.length > 128 || typeof listener !== "function") throw new TypeError("appEvents.on requires an event name and a listener.");
         const target = getWindow();
-        assertAppUiSurface(target);
-        const appId = decodeURIComponent(new URL(target.location.href).pathname.match(/^\/api\/apps\/([^/]+)\/ui(?:\/|$)/)[1]);
+        const info = parseAppSurfacePathname(target.location?.pathname ?? "");
+        if (!info) {
+          throw new Error("@hana/app-sdk/ui requires an App surface route under /api/apps/:appId/ui/ or a scoped service mount.");
+        }
+        const appId = info.appId;
         const receive = (value) => {
           const parsed = parsePluginUiMessage(value);
           if (!parsed.ok || parsed.value.kind !== "event" || parsed.value.type !== "hana.app.event") return;
@@ -2424,6 +4025,20 @@ function appUiSdk(getSdk, getWindow = browserWindow, options = {}) {
         return getSdk().theme.subscribe(callback);
       }
     },
+    themes: {
+      custom: {
+        list: () => getSdk().themes.custom.list(),
+        get: (id) => getSdk().themes.custom.get(id),
+        getSchema: () => getSdk().themes.custom.getSchema(),
+        create: (definition) => getSdk().themes.custom.create(definition),
+        update: (id, input) => getSdk().themes.custom.update(id, input),
+        remove: (id, options2) => getSdk().themes.custom.remove(id, options2),
+        apply: (id) => getSdk().themes.custom.apply(id),
+        preview: (input) => getSdk().themes.custom.preview(input),
+        endPreview: (previewId) => getSdk().themes.custom.endPreview(previewId),
+        subscribe: (callback) => getSdk().themes.custom.subscribe(callback)
+      }
+    },
     envelope: {
       getSnapshot() {
         return getSdk().envelope.getSnapshot();
@@ -2440,8 +4055,8 @@ function appUiSdk(getSdk, getWindow = browserWindow, options = {}) {
         return getSdk().lifecycle.subscribe(callback);
       }
     },
-    cards: { open(cardId) {
-      return getSdk().cards.open(cardId);
+    cards: { open(cardId, options2) {
+      return getSdk().cards.open(cardId, options2);
     } },
     surface: {
       setInteractiveRegions(regions, options2) {
@@ -2471,6 +4086,17 @@ function appUiSdk(getSdk, getWindow = browserWindow, options = {}) {
       },
       cancelAnimationFrame(handle) {
         return getSdk().performance.cancelAnimationFrame(handle);
+      }
+    },
+    chrome: {
+      set(description, options2) {
+        return getSdk().chrome.set(description, options2);
+      },
+      onAction(handler) {
+        return getSdk().chrome.onAction(handler);
+      },
+      registerScrollSource(element) {
+        return getSdk().chrome.registerScrollSource(element);
       }
     },
     host: {
@@ -2552,6 +4178,15 @@ function appUiSdk(getSdk, getWindow = browserWindow, options = {}) {
       },
       onRefresh(callback) {
         return getSdk().panel.onRefresh(callback);
+      }
+    },
+    viewState: {
+      enable(options2) {
+        const api = getAppViewRecoveryApi(getSdk());
+        if (!api) {
+          return Promise.reject(Object.assign(new Error("App view-state recovery is unavailable on this surface."), { code: "VIEW_STATE_UNAVAILABLE" }));
+        }
+        return api.enable(options2);
       }
     }
   };

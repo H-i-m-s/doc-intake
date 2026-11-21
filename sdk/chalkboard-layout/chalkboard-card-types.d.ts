@@ -4,6 +4,8 @@
  * and re-run the sync script instead.
  */
 import type { CanonicalAnnotationResourceRef, WorkspaceAnnotationResourceRef } from '../annotations.js';
+import type { AppServiceReferenceV2 } from '../app-contract/runtime.js';
+import type { AppCardTitleSource } from './card-title-source.js';
 export type CanonicalResourceRef = CanonicalAnnotationResourceRef;
 export interface FileVersion {
     mtimeMs: number;
@@ -56,6 +58,10 @@ export type ChalkboardPreviewDocumentTarget = {
     target: RemoteWorkspaceContentRef;
     /** @deprecated 文件身份成分已移除；仅为存量 layout 读兼容保留，新 target 不再写入。 */
     workspaceAgentId?: string;
+} | {
+    kind: 'browser-tab';
+    sessionId: string;
+    browserTabId: string;
 };
 /**
  * Media Card 的可持久目标。mount 引用 ResourceIO 工作区定位；resource 引用
@@ -114,16 +120,38 @@ export type ChalkboardCardContentBinding = {
     kind: 'preview';
     previewId: string;
     documentTarget?: ChalkboardPreviewDocumentTarget;
+} | {
+    kind: 'studio-folder';
+    mountId: string;
 } | ChalkboardMediaCardBinding | {
     kind: 'plugin-surface';
     pluginId: string;
     surface: 'page' | 'widget';
-} | {
+}
+/**
+ * `instanceKey` is an optional App business instance key, added compatibly:
+ * data persisted before this field is a keyless instance (read-time absence,
+ * never a migration); a present-but-invalid value is refused at the write and
+ * restore boundaries and isolated in matching, never silently keyless. It is
+ * only ever set alongside `channel: 'app'`. This is a durable-field addition,
+ * not a no-op to the persisted binding shape.
+ */
+ | {
     kind: 'plugin-webview';
     pluginId: string;
     cardId: string;
     channel?: 'app';
     route?: string;
+    /**
+     * A logical reference to one of this App's own managed services, stamped
+     * only alongside `channel: 'app'` and mutually exclusive with `route`. Only
+     * the logical `{ id, path }` is ever persisted: never a lease, a runtime id,
+     * an entry URL or a port. A card that declares a service loads its document
+     * through the host's `_runtime` mount under a freshly minted App-scoped
+     * session, not through a static `ui/` route.
+     */
+    service?: AppServiceReferenceV2;
+    instanceKey?: string;
 } | {
     /**
      * 插件流内卡（chat 流内插件卡真身，PluginStreamCard 渲染的动态块）取出后
@@ -147,6 +175,8 @@ export type ChalkboardCardContentBinding = {
     cardForm?: string | null;
     /** Same meaning as the plugin manifest `titlebar` field; parsed by `resolvePluginCardPresentation`. */
     titlebar?: string | null;
+    /** Same meaning as the plugin manifest `titleMode` field; parsed by `resolvePluginCardPresentation`. */
+    titleMode?: string | null;
 } | {
     kind: 'mcp-app';
     connectorId: string;
@@ -260,6 +290,10 @@ export interface ChalkboardPinnedArtifactEntry {
         注册表本体不追踪之后的实例运行时变化——加法字段，老条目缺省即可，
         消费方没有它时必须与"空快照"表现一致。 */
     initialState?: unknown;
+    /** 用户星标（收藏）。加法字段：老条目缺省即未收藏，消费方必须把缺失与
+        false 等价处理。只影响卡片中心魔术卡页签的呈现，不影响卡是否落位；
+        与档案柜的「收起」（favorites）互不相干。 */
+    favorited?: boolean;
     /** 文件导入的来源线索（纯 provenance，不作身份使用）。缺省 = 并非文件
         导入（chat 内 pin 的 MiniApp 没有这个字段）。 */
     importedFrom?: {
@@ -324,6 +358,8 @@ export interface ChalkboardPluginStreamCardEntry {
     cardForm?: string;
     /** Same meaning as the plugin manifest `titlebar` field; parsed by `resolvePluginCardPresentation`. */
     titlebar?: string;
+    /** Same meaning as the plugin manifest `titleMode` field; parsed by `resolvePluginCardPresentation`. */
+    titleMode?: string;
     createdAt: number;
     updatedAt: number;
 }
@@ -346,6 +382,8 @@ export interface ChalkboardCardArchiveEntry {
     cardInstanceId: string;
     definitionId: string;
     title?: string | null;
+    /** 冻结时的持久标题来源；缺省表示未标记记录，放回时按原值还原。 */
+    titleSource?: AppCardTitleSource;
     binding?: ChalkboardCardContentBinding | null;
     rendererState?: Record<string, unknown>;
     kernelSource?: unknown;
@@ -442,6 +480,9 @@ export type ChalkboardCardPlacementTarget = {
     pageId: string;
     placement?: ChalkboardCardPlacementMode;
 } | {
+    kind: 'studio-surface';
+    placement?: ChalkboardCardPlacementMode;
+} | {
     kind: 'detached';
     bounds?: ChalkboardDetachedBounds;
 };
@@ -451,5 +492,7 @@ export interface ChalkboardCardCreationRequest {
     binding?: ChalkboardCardContentBinding | null | 'auto';
     target?: ChalkboardCardPlacementTarget | 'auto';
     title?: string | null;
+    /** 创建时的持久标题来源；只由明确的 App 初始化写入，缺省不标记。 */
+    titleSource?: AppCardTitleSource;
 }
 //# sourceMappingURL=chalkboard-card-types.d.ts.map

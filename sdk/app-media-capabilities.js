@@ -35,6 +35,7 @@ export const APP_MEDIA_GENERATE_BUS_VERBS = Object.freeze([
     "media:generate",
     "media:generate-image",
     "media:generate-video",
+    "media:generate-speech",
     "media:transcribe-audio",
 ]);
 export const APP_MEDIA_PROVIDERS_BUS_VERB = "provider:media-providers";

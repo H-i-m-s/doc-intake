@@ -26,6 +26,7 @@ import type { AppSessionControlCapability } from "../app-session-control-capabil
 import type { AppSessionFileCapability } from "../app-session-file-capabilities.js";
 import { APP_TOOLS_EXPOSE_TO_MODEL_CAPABILITY } from "../app-tool-exposure.js";
 import type { AppUiCapability } from "../app-ui-capabilities.js";
+import type { AppThemeCapability } from "../app-theme-capabilities.js";
 import type { AppQueryCapability } from "../app-query-capabilities.js";
 import type { AppEntityCapability } from "../app-entity-capabilities.js";
 import type { AppMcpCapability } from "../app-mcp-capabilities.js";
@@ -73,6 +74,14 @@ export * from "./canvas.js";
 export * from "./workspace.js";
 export * from "./input-panels.js";
 export * from "./notifications.js";
+export * from "./chrome.js";
+/**
+ * The user-custom-theme vocabulary — ids, definition/record/preview types, the
+ * variable schema and the CSS compiler. Lives in `shared/app-custom-themes.ts`
+ * (outside `shared/app-contract/`) but is re-exported here so it lands in the
+ * published `@hana/app-sdk` exactly like the rest of the contract.
+ */
+export * from "../app-custom-themes.js";
 export { APP_BUS_REQUEST_ALLOWLIST, APP_BUS_EMIT_DENYLIST, isAppBusRequestAllowed, isAppBusRequestVerb, isHostReservedBusEventType, } from "../app-bus-contract.js";
 /**
  * A literal union of the same verbs `APP_BUS_REQUEST_ALLOWLIST` carries,
@@ -91,7 +100,7 @@ export { APP_NOTIFICATIONS_SHOW_CAPABILITY, APP_NOTIFICATIONS_CAPABILITY_WORDS }
 export type { AppNotificationsCapability } from "./notifications.js";
 export { APP_USAGE_READ_CAPABILITY, APP_PROVIDER_CREDENTIALS_READ_CAPABILITY, APP_MODELS_READ_CAPABILITY, APP_QUERY_CAPABILITY_WORDS, APP_QUERY_BUS_VERBS, appQueryCapabilityForBusVerb, isAppQueryBusVerb, } from "../app-query-capabilities.js";
 export type { AppQueryCapability, AppQueryBusVerb } from "../app-query-capabilities.js";
-export { APP_AGENTS_READ_CAPABILITY, APP_AGENTS_MANAGE_CAPABILITY, APP_SESSIONS_READ_CAPABILITY, APP_SESSIONS_MANAGE_CAPABILITY, APP_SESSIONS_SEARCH_CAPABILITY, APP_ENTITY_CAPABILITY_WORDS, } from "../app-entity-capabilities.js";
+export { APP_AGENTS_READ_CAPABILITY, APP_AGENTS_MANAGE_CAPABILITY, APP_SESSIONS_READ_CAPABILITY, APP_SESSIONS_MANAGE_CAPABILITY, APP_SESSIONS_HOME_CAPABILITY, APP_SESSIONS_SEARCH_CAPABILITY, APP_ENTITY_CAPABILITY_WORDS, } from "../app-entity-capabilities.js";
 export type { AppEntityCapability } from "../app-entity-capabilities.js";
 export { APP_PUBLIC_DATA_PUBLISH_CAPABILITY, APP_PUBLIC_DATA_READ_CAPABILITY, APP_PUBLIC_DATA_CAPABILITY_WORDS, } from "./public-data.js";
 export type { AppPublicDataCapability } from "./public-data.js";
@@ -124,6 +133,10 @@ export type { AppSessionFileCapability } from "../app-session-file-capabilities.
 export { APP_TOOLS_EXPOSE_TO_MODEL_CAPABILITY, APP_TOOL_SUPPLIER } from "../app-tool-exposure.js";
 export { APP_UI_OPEN_EXTERNAL_CAPABILITY, APP_UI_CLIPBOARD_WRITE_CAPABILITY, APP_UI_CAPABILITY_WORDS, } from "../app-ui-capabilities.js";
 export type { AppUiCapability } from "../app-ui-capabilities.js";
+export { APP_THEMES_READ_CAPABILITY, APP_THEMES_MANAGE_CAPABILITY, APP_THEMES_APPLY_CAPABILITY, APP_THEME_CAPABILITY_WORDS, } from "../app-theme-capabilities.js";
+export type { AppThemeCapability } from "../app-theme-capabilities.js";
+import { APP_CASUAL_STYLE_CAPABILITY } from "../app-casual-style-capabilities.js";
+export { APP_CASUAL_STYLE_CAPABILITY } from "../app-casual-style-capabilities.js";
 /**
  * Every capability word a v2 app may be granted, across every domain above —
  * the same set `APP_GRANTABLE_CAPABILITIES` names at runtime, as a type. Not
@@ -133,7 +146,7 @@ export type { AppUiCapability } from "../app-ui-capabilities.js";
  * Every source table retains literal members, including Hook and dynamic UI
  * permissions, so callers can type-check the full grantable vocabulary.
  */
-export type AppCapabilityWordV2 = AppTasksCapability | "app/models.infer" | "app/runtime.execute" | "app/runtime.network" | "app/runtime.native" | "app/runtime.local-machine" | typeof APP_INPUT_STATUS_CAPABILITY | typeof APP_INPUT_PANELS_CAPABILITY | AppNotificationsCapability | typeof APP_EVENTS_EMIT_CAPABILITY | typeof APP_WINDOWS_MANAGE_CAPABILITY | typeof APP_INSTANCES_MANAGE_CAPABILITY | typeof APP_ENVIRONMENTS_MANAGE_CAPABILITY | AppMediaCapability | AppProcessCapability | AppRenderCapability | AppResourceCapabilityV2 | AppSessionControlCapability | AppSessionFileCapability | typeof APP_TOOLS_EXPOSE_TO_MODEL_CAPABILITY | AppUiCapability | AppQueryCapability | AppEntityCapability | AppMcpCapability | AppProviderCapability | AppCatalogCapability | AppServicesCapability | AppDynamicUiCapability | AppHookCapability | AppPublicDataCapability;
+export type AppCapabilityWordV2 = AppTasksCapability | "app/models.infer" | "app/runtime.execute" | "app/runtime.network" | "app/runtime.native" | "app/runtime.local-machine" | typeof APP_INPUT_STATUS_CAPABILITY | typeof APP_INPUT_PANELS_CAPABILITY | AppNotificationsCapability | typeof APP_EVENTS_EMIT_CAPABILITY | typeof APP_WINDOWS_MANAGE_CAPABILITY | typeof APP_INSTANCES_MANAGE_CAPABILITY | typeof APP_ENVIRONMENTS_MANAGE_CAPABILITY | AppMediaCapability | AppProcessCapability | AppRenderCapability | AppResourceCapabilityV2 | AppSessionControlCapability | AppSessionFileCapability | typeof APP_TOOLS_EXPOSE_TO_MODEL_CAPABILITY | AppUiCapability | AppThemeCapability | typeof APP_CASUAL_STYLE_CAPABILITY | AppQueryCapability | AppEntityCapability | AppMcpCapability | AppProviderCapability | AppCatalogCapability | AppServicesCapability | AppDynamicUiCapability | AppHookCapability | AppPublicDataCapability;
 export type { MarketArchive, MarketItemVersion, MarketItemCompatibility, MarketItemV2, MarketIndexV2, } from "../extension-market-index.js";
 export { MARKET_INDEX_SCHEMA_VERSION } from "../extension-market-index.js";
 export type { ExtensionKind, PermissionDeclaration } from "../extension-contract.js";

@@ -9,8 +9,10 @@ export declare const APP_AGENTS_READ_CAPABILITY = "app/agents.read";
 export declare const APP_AGENTS_MANAGE_CAPABILITY = "app/agents.manage";
 export declare const APP_SESSIONS_READ_CAPABILITY = "app/sessions.read";
 export declare const APP_SESSIONS_MANAGE_CAPABILITY = "app/sessions.manage";
+/** 让 App 在主页列表里新建会话（session:create 的 namespace=home）。默认拒绝，安全页可开关。 */
+export declare const APP_SESSIONS_HOME_CAPABILITY = "app/sessions.home";
 export { APP_SESSIONS_SEARCH_CAPABILITY };
-export declare const APP_ENTITY_CAPABILITY_WORDS: readonly ["app/agents.read", "app/agents.manage", "app/sessions.read", "app/sessions.manage", "app/sessions.search"];
+export declare const APP_ENTITY_CAPABILITY_WORDS: readonly ["app/agents.read", "app/agents.manage", "app/sessions.read", "app/sessions.manage", "app/sessions.home", "app/sessions.search"];
 export type AppEntityCapability = (typeof APP_ENTITY_CAPABILITY_WORDS)[number];
 /** App-facing permission projection for existing bus verbs with App ownership scopes. */
 export declare const APP_ENTITY_CAPABILITY_BY_BUS_VERB: Readonly<{

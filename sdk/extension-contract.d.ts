@@ -16,8 +16,11 @@
  * lib/extension-platform/types.ts 从这里 re-export（见该文件），
  * shared/extension-market-index.ts 直接 import（同层，不违反分层）。
  */
-/** 六种扩展 kind。product 顺序，不是字母序。 */
-export type ExtensionKind = "app" | "skill" | "recipe" | "connector" | "role" | "bundle";
+/** 七种扩展 kind。product 顺序，不是字母序。 */
+export type ExtensionKind = "app" | "skill" | "recipe" | "connector" | "role" | "bundle" | "sticker-pack";
+/** Installed user skill/recipe content compared with its installation baseline. */
+export type ExtensionLocalState = "unmodified" | "custom" | "unknown";
+export declare const SKILL_REPLACEMENT_WARNING = "Replacement overwrites local files and custom changes. Cancel to keep them.";
 export declare const EXTENSION_KINDS: readonly ExtensionKind[];
 export declare function isExtensionKind(v: unknown): v is ExtensionKind;
 export interface PermissionDeclaration {

@@ -1,7 +1,9 @@
 import { APP_CARD_CAPABILITY, APP_STORAGE_CAPABILITY, APP_SURFACE_CAPABILITY, PLUGIN_UI_CAPABILITY } from './_ui-protocol.js';
-import type { HanaAppStorageScope, HanaClipboardWriteTextInput, HanaClipboardWriteTextResult, HanaDocumentContext, HanaDocumentOpenInput, HanaDocumentRequestHandler, HanaDocumentStatus, HanaDocumentViewRequestHandler, HanaEmitResult, HanaExternalOpenInput, HanaExternalOpenResult, HanaPanelIncomingEvent, HanaPanelPushProps, HanaPanelSetResult, HanaInputPanelApi, HanaPluginRequestOptions, HanaPluginSdk, HanaPluginSdkOptions, HanaPluginSize, HanaPluginThemeSnapshot, HanaResourceVersion, HanaSaveFileInput, HanaSaveFileResult, HanaSurfaceContext, HanaTrackResult, HanaPluginRuntimeSnapshot, Envelope } from './_ui-types.js';
+import type { HanaViewStateApi, HanaViewStateRegistration, HanaViewStateSnapshot } from './_ui-app-view-recovery.js';
+export type { HanaViewStateApi, HanaViewStateRegistration, HanaViewStateSnapshot };
+import type { HanaAppStorageScope, HanaChromeActionEvent, HanaChromeActionReceipt, HanaChromeApi, HanaClipboardWriteTextInput, HanaClipboardWriteTextResult, HanaDocumentContext, HanaDocumentOpenInput, HanaDocumentRequestHandler, HanaDocumentStatus, HanaDocumentViewRequestHandler, HanaEmitResult, HanaExternalOpenInput, HanaExternalOpenResult, HanaPanelIncomingEvent, HanaPanelPushProps, HanaPanelSetResult, HanaInputPanelApi, HanaPluginRequestOptions, HanaPluginSdk, HanaPluginSdkOptions, HanaPluginSize, HanaPluginThemeSnapshot, HanaResourceVersion, HanaSaveFileInput, HanaSaveFileResult, HanaSurfaceContext, HanaTrackResult, HanaPluginRuntimeSnapshot, Envelope } from './_ui-types.js';
 import type { AppCardOpenResult, AppSurfaceInteractiveRegion, AppStorageDeleteResult, AppStorageGetAllResult, AppStorageGetResult, AppStorageKeysResult, AppStorageSetResult, PluginResourceOpenInput, PluginResourceOpenResult, PluginResourcePickInput, PluginResourcePickResult, PluginResourceRequestAccessInput, PluginResourceRequestAccessResult, PluginResourceSaveFileInput, PluginResourceSaveFileResult, PluginStateGetResult, PluginStateSetResult } from './_ui-protocol.js';
-export type { AppSurfaceInteractiveRegion, AppCardOpenResult, AppStorageDeleteResult, AppStorageGetAllResult, AppStorageGetResult, AppStorageKeysResult, AppStorageSetResult, HanaAppStorageScope, HanaClipboardWriteTextInput, HanaClipboardWriteTextResult, HanaDocumentContext, HanaDocumentOpenInput, HanaDocumentRequestHandler, HanaDocumentStatus, HanaDocumentViewRequestHandler, HanaEmitResult, HanaExternalOpenInput, HanaExternalOpenResult, HanaPanelIncomingEvent, HanaPanelPushProps, HanaPanelSetResult, HanaInputPanelApi, HanaPluginRequestOptions, HanaPluginRuntimeSnapshot, HanaPluginSize, HanaPluginThemeSnapshot, HanaResourceVersion, HanaSaveFileInput, HanaSaveFileResult, HanaSurfaceContext, HanaTrackResult, Envelope, PluginResourceOpenInput, PluginResourceOpenResult, PluginResourcePickInput, PluginResourcePickResult, PluginResourceRequestAccessInput, PluginResourceRequestAccessResult, PluginResourceSaveFileInput, PluginResourceSaveFileResult, PluginStateGetResult, PluginStateSetResult, };
+export type { AppSurfaceInteractiveRegion, AppCardOpenResult, AppStorageDeleteResult, AppStorageGetAllResult, AppStorageGetResult, AppStorageKeysResult, AppStorageSetResult, HanaAppStorageScope, HanaChromeActionEvent, HanaChromeActionReceipt, HanaChromeApi, HanaClipboardWriteTextInput, HanaClipboardWriteTextResult, HanaDocumentContext, HanaDocumentOpenInput, HanaDocumentRequestHandler, HanaDocumentStatus, HanaDocumentViewRequestHandler, HanaEmitResult, HanaExternalOpenInput, HanaExternalOpenResult, HanaPanelIncomingEvent, HanaPanelPushProps, HanaPanelSetResult, HanaInputPanelApi, HanaPluginRequestOptions, HanaPluginRuntimeSnapshot, HanaPluginSize, HanaPluginThemeSnapshot, HanaResourceVersion, HanaSaveFileInput, HanaSaveFileResult, HanaSurfaceContext, HanaTrackResult, Envelope, PluginResourceOpenInput, PluginResourceOpenResult, PluginResourcePickInput, PluginResourcePickResult, PluginResourceRequestAccessInput, PluginResourceRequestAccessResult, PluginResourceSaveFileInput, PluginResourceSaveFileResult, PluginStateGetResult, PluginStateSetResult, };
 export type HanaAppUiOptions = HanaPluginSdkOptions;
 export interface HanaAppSurfaceEvent {
     readonly surfaceId: string;
@@ -83,12 +85,14 @@ export interface HanaAppUiSdk {
     api: HanaPluginSdk['api'];
     ui: HanaPluginSdk['ui'];
     theme: HanaPluginSdk['theme'];
+    themes: HanaPluginSdk['themes'];
     envelope: HanaPluginSdk['envelope'];
     lifecycle: HanaPluginSdk['lifecycle'];
     cards: HanaPluginSdk['cards'];
     surface: HanaPluginSdk['surface'];
     sessions: HanaPluginSdk['sessions'];
     performance: HanaPluginSdk['performance'];
+    chrome: HanaPluginSdk['chrome'];
     host: {
         request<T = unknown>(type: HanaAppUiHostRequestType, payload?: unknown, options?: HanaPluginRequestOptions): Promise<T>;
     };
@@ -105,6 +109,13 @@ export interface HanaAppUiSdk {
     emit: HanaPluginSdk['emit'];
     track: HanaPluginSdk['track'];
     panel: HanaPluginSdk['panel'];
+    /**
+     * Opt-in view-state recovery for this card view. `enable()` returns a handle
+     * bound to the document and namespace that were current when it was enabled;
+     * every later get/set/release speaks for that captured target, never for
+     * whatever is current when the call happens to run.
+     */
+    viewState: HanaViewStateApi;
 }
 export declare function createHanaAppUiSdk(options?: HanaAppUiOptions): HanaAppUiSdk;
 /** Ordinary iframe Apps retain the original singleton; native windows bind the same protocol to preload. */

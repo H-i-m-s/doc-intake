@@ -4,9 +4,11 @@
  * and re-run the sync script instead.
  */
 import type { AppMediaCapability } from "../app-media-capabilities.js";
+import type { AudioFormat } from "../audio-contract.js";
+import type { SpeechGenerationInfo } from "../speech-generation-info.js";
 import type { HanaPluginContextV2 } from "./context.js";
 export type AppMediaTaskScopeV2 = "own" | "all";
-export type AppMediaTaskFilterV2 = "favorited" | "images" | "videos";
+export type AppMediaTaskFilterV2 = "favorited" | "images" | "videos" | "audios";
 export interface AppMediaSessionFileV2 {
     readonly fileId: string | null;
     readonly name: string | null;
@@ -62,7 +64,7 @@ export interface AppMediaAdapterV2 {
     readonly types: readonly string[];
     readonly ownerAppId: string | null;
 }
-export type AppMediaModelCapabilityV2 = "image_generation" | "video_generation" | "speech_recognition";
+export type AppMediaModelCapabilityV2 = "image_generation" | "video_generation" | "speech_recognition" | "speech_generation";
 export type AppMediaModelV2 = Record<string, unknown>;
 /** A session file supplied through the current tool invocation. */
 export interface AppSessionAudioTranscriptionRequestV2 {
@@ -114,6 +116,51 @@ export interface AppTranscribeAudioResultV2 {
     readonly ok: true;
     readonly transcription: AppReadyAudioTranscriptionV2 | AppFailedAudioTranscriptionV2;
 }
+/**
+ * Speech synthesis input. Exactly one of `text` (one string) or `texts`
+ * (1–9 segments) is required; the host validates that, segment count and
+ * whitespace, and rejects unknown fields. `voice`/`speed`/`format` are
+ * optional and resolved against the chosen model's own schema; the host
+ * never reads them out of raw params.
+ */
+export interface AppSpeechGenerationInputV2 {
+    readonly text?: string;
+    readonly texts?: readonly string[];
+    readonly provider?: string;
+    readonly providerId?: string;
+    readonly model?: string;
+    readonly modelId?: string;
+    readonly voice?: string;
+    readonly speed?: number;
+    readonly format?: AudioFormat;
+    readonly delivery?: {
+        readonly mode?: "session" | "response";
+        readonly ttlMs?: number;
+    };
+    readonly deliveryMode?: "session" | "response";
+}
+export type AppSpeechGenerationRequestV2 = {
+    readonly callToken: string;
+    readonly input: AppSpeechGenerationInputV2;
+} | {
+    readonly scope: "app";
+    readonly input: AppSpeechGenerationInputV2;
+};
+/** One synthesized segment: its own verbatim text and frozen speech metadata. */
+export interface AppSpeechGenerationTaskV2 {
+    readonly taskId: string;
+    readonly prompt: string;
+    readonly speech?: SpeechGenerationInfo;
+}
+/** The async speech submission receipt (task handles, not finished audio). */
+export interface AppSpeechGenerationResultV2 {
+    readonly ok: boolean;
+    readonly kind?: "audio" | string;
+    readonly batchId?: string;
+    readonly prompt?: string;
+    readonly tasks?: readonly AppSpeechGenerationTaskV2[];
+    readonly delivery?: unknown;
+}
 export interface AppMediaProviderModelV2 {
     readonly id: string;
     readonly name: string;
@@ -155,6 +202,14 @@ export interface AppSpeechRecognitionProvidersResultV2 {
 export declare function transcribeAudio(ctx: Pick<HanaPluginContextV2, "bus">, payload: AppTranscribeAudioRequestV2): Promise<AppTranscribeAudioResultV2>;
 /** Read speech-recognition providers and their public model metadata. */
 export declare function listSpeechRecognitionProviders(ctx: Pick<HanaPluginContextV2, "bus">): Promise<AppSpeechRecognitionProvidersResultV2>;
+/**
+ * Synthesize speech that reads the given text aloud. Returns asynchronously:
+ * the result carries task handles and frozen per-segment metadata, and the
+ * finished audio is delivered as a SessionFile (session scope) or read back
+ * through `ctx.media` (app scope) — not returned inline. This is text-to-speech
+ * only, never transcription, music, or sound effects.
+ */
+export declare function generateSpeech(ctx: Pick<HanaPluginContextV2, "bus">, payload: AppSpeechGenerationRequestV2): Promise<AppSpeechGenerationResultV2>;
 export declare const APP_MEDIA_BULK_CLEANUP_PARTIAL: "APP_MEDIA_BULK_CLEANUP_PARTIAL";
 export interface AppMediaBulkCleanupFailureV2 {
     readonly code: typeof APP_MEDIA_BULK_CLEANUP_PARTIAL;

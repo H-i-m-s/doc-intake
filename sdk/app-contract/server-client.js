@@ -50,7 +50,7 @@ function bindDomain(name, domain) {
             continue;
         }
         const operation = `${name}.${key}`;
-        bound[key] = async (...args) => {
+        const call = async (...args) => {
             try {
                 const result = await Reflect.apply(value, domain, args);
                 if (REGISTRATIONS.has(operation))
@@ -61,6 +61,16 @@ function bindDomain(name, domain) {
                 throw toAppSdkError(error, operation);
             }
         };
+        bound[key] = REGISTRATIONS.has(operation)
+            ? (...args) => {
+                const receipt = call(...args);
+                // A registration left unawaited in `apply` must not become an unhandled
+                // rejection that kills the App process. Callers that await (or attach
+                // their own catch) still receive the rejection with its diagnosis.
+                receipt.catch(() => { });
+                return receipt;
+            }
+            : call;
     }
     // This adapter preserves each checked entry method's parameters and awaits
     // its result. The public mapping describes that exact transformation.

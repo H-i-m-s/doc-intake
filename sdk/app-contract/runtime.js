@@ -25,4 +25,17 @@ export const APP_RUNTIME_CAPABILITY_WORDS = Object.freeze([
     APP_RUNTIME_NATIVE_CAPABILITY,
     APP_RUNTIME_LOCAL_MACHINE_CAPABILITY,
 ]);
+/** Longest stable service id the host accepts. */
+export const APP_RUNTIME_SERVICE_ID_MAX_LENGTH = 128;
+/**
+ * A stable, App-scoped service id: 1 to 128 ASCII characters, a letter or
+ * digit first, then letters, digits, dot, underscore or hyphen. It is compared
+ * verbatim, so the host never trims a value into a different alias.
+ */
+export function isAppRuntimeServiceId(value) {
+    return typeof value === "string"
+        && value.length > 0
+        && value.length <= APP_RUNTIME_SERVICE_ID_MAX_LENGTH
+        && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+}
 //# sourceMappingURL=runtime.js.map

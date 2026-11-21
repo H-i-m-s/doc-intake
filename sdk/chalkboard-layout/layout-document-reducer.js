@@ -4,14 +4,30 @@
  * and re-run the sync script instead.
  */
 import { ChalkboardLayoutError } from './layout-errors.js';
-import { CHALKBOARD_CARD_CHANNELS_PAGE, CHALKBOARD_CHAT_PAGE_ID, CHALKBOARD_HOME_CHAT_TILE_ID, CHALKBOARD_TILE_CHANNEL_CHAT, } from './chalkboard-builtin-ids.js';
-import { CHALKBOARD_LAYOUT_CHANNEL_CHAT_CARD_ID, CHALKBOARD_LAYOUT_HOME_CHAT_CARD_ID, CHALKBOARD_LAYOUT_HOME_SURFACE_ID, ensureChalkboardPageTemplate, } from './layout-document-factory.js';
+import { checkCardRendererStateBudget, hasAppViewState } from '../card-renderer-state-budget.js';
+import { CHALKBOARD_CARD_CHANNELS_PAGE, CHALKBOARD_CARD_CODE_PAGE, CHALKBOARD_CHAT_PAGE_ID, CHALKBOARD_HOME_CHAT_TILE_ID, CHALKBOARD_TILE_CHANNEL_CHAT, } from './chalkboard-builtin-ids.js';
+import { CHALKBOARD_LAYOUT_CHANNEL_CHAT_CARD_ID, CHALKBOARD_LAYOUT_CODE_CHAT_CARD_ID, CHALKBOARD_LAYOUT_HOME_CHAT_CARD_ID, CHALKBOARD_LAYOUT_HOME_SURFACE_ID, CHALKBOARD_LAYOUT_STUDIO_PAGE_CARD_ID, ensureChalkboardPageTemplate, ensureChalkboardStudioSurface, migrateChalkboardStudioHomePage, } from './layout-document-factory.js';
 import { explicitDefaultInsertedChildSizing, insertedChildSizing } from './layout-card-width-contracts.js';
+import { isChalkboardPageRemovable, resolveChalkboardPageFixture, } from './page-card-policy.js';
+import { normalizeAppCardTitleSource, } from './card-title-source.js';
 function requireCard(doc, cardInstanceId) {
     const card = doc.cards[cardInstanceId];
     if (!card)
         throw new ChalkboardLayoutError('NODE_NOT_FOUND', `layout card not found: ${cardInstanceId}`);
     return card;
+}
+/**
+ * 读时收敛持久 titleSource：合法值原样保留，缺字段不动，非法值显式丢弃（回到
+ * "未标记"，读取时再按非空实例标题 / 空值默认分层，不写回默认来源）。合法或
+ * 缺省时返回原对象，避免每次 normalize 给所有卡换新引用。
+ */
+function cardWithNormalizedTitleSource(card) {
+    const raw = card.titleSource;
+    if (raw === undefined || normalizeAppCardTitleSource(raw) !== undefined)
+        return card;
+    const next = { ...card };
+    delete next.titleSource;
+    return next;
 }
 function requireSurface(doc, surfaceId) {
     const surface = doc.surfaces[surfaceId];
@@ -85,10 +101,28 @@ function setFocus(doc, focus) {
     };
 }
 function removePage(doc, pageId) {
-    const surface = requireSurfaceByPage(doc, pageId);
-    if (surface.capabilities.locked || !surface.capabilities.canClose) {
+    requireSurfaceByPage(doc, pageId);
+    // page 是否可删是页的属性：主页、群聊页永不可删，其余看页能力。
+    if (!isChalkboardPageRemovable(doc, pageId)) {
         throw new ChalkboardLayoutError('INVALID_STRUCTURE', `layout page cannot be removed: ${pageId}`);
     }
+    return removePageSurface(doc, pageId);
+}
+/**
+ * 恢复路径专用：按已保存的页清单剪掉文档里多出来的页 surface。这不是用户删页，
+ * 不走可删性判定（旧版本里被删掉的群聊页，其墓碑仍要被尊重）；但主页永远不剪。
+ */
+export function pruneChalkboardPageSurfaceForRestore(doc, pageId) {
+    if (pageId === CHALKBOARD_CHAT_PAGE_ID)
+        return doc;
+    if (!Object.values(doc.surfaces).some((item) => item.pageId === pageId))
+        return doc;
+    return normalizeChalkboardLayoutDocument(removePageSurface(normalizeChalkboardLayoutDocument(doc), pageId));
+}
+function removePageSurface(doc, pageId) {
+    // 历史文档里可能还有停在拆窗里的本页主卡：先迁回页上，随页一并移除。
+    doc = returnDetachedChalkboardPageFixtures(doc);
+    const surface = requireSurfaceByPage(doc, pageId);
     const nodeIds = collectNodeSubtree(doc.nodes, surface.rootNodeId);
     const cardIds = collectCardIdsFromNodes(doc.nodes, nodeIds);
     const nodes = { ...doc.nodes };
@@ -486,6 +520,7 @@ export function mergePromotedChildSizing(childSizing, parentSizing) {
     return childSizing ?? parentSizing;
 }
 export function normalizeChalkboardLayoutDocument(doc) {
+    doc = migrateChalkboardStudioHomePage(doc);
     const rootNodeIds = new Set(Object.values(doc.surfaces).map((surface) => surface.rootNodeId));
     const nodes = {};
     const visiting = new Set();
@@ -616,7 +651,7 @@ export function normalizeChalkboardLayoutDocument(doc) {
     const cards = {};
     for (const [cardId, card] of Object.entries(doc.cards)) {
         if (reachableCardIds.has(cardId))
-            cards[cardId] = card;
+            cards[cardId] = cardWithNormalizedTitleSource(card);
     }
     // 悬空 lineage 清理。lineage 是卡与卡之间的反向指针，而删页、删卡走的都是
     // 布局子树的物理摘除，谁都不会回头去修别处指向被删卡的这条指针；lineage
@@ -863,8 +898,12 @@ function insertSiblingAtEdge(doc, nodes, childNodeId, referenceNodeId, edge) {
 function resolvePlacementSurface(doc, target) {
     if (target.kind === 'surface')
         return requireSurface(doc, target.surfaceId);
-    if (target.kind === 'active-page')
-        return requireSurface(doc, doc.activeSurfaceId);
+    if (target.kind === 'active-page') {
+        const surface = requireSurface(doc, doc.activeSurfaceId);
+        if (surface.kind === 'studio')
+            return requireSurface(doc, CHALKBOARD_LAYOUT_HOME_SURFACE_ID);
+        return surface;
+    }
     if (target.kind === 'home')
         return requireSurface(doc, CHALKBOARD_LAYOUT_HOME_SURFACE_ID);
     throw new ChalkboardLayoutError('INVALID_STRUCTURE', `layout placement target is not a surface: ${target.kind}`);
@@ -912,8 +951,10 @@ const DEFAULT_PLACEMENT_STACK_CAP = 2;
  *  堆叠参照被竖切——它们所在的格保持设计好的横排构图（如群聊页的
  *  固定宽频道面板贴在聊天卡右侧）。 */
 const DEFAULT_PLACEMENT_PROTECTED_HOST_CARD_IDS = [
+    CHALKBOARD_LAYOUT_CODE_CHAT_CARD_ID,
     CHALKBOARD_LAYOUT_HOME_CHAT_CARD_ID,
     CHALKBOARD_LAYOUT_CHANNEL_CHAT_CARD_ID,
+    CHALKBOARD_LAYOUT_STUDIO_PAGE_CARD_ID,
 ];
 function subtreeContainsProtectedHostCard(nodes, nodeId) {
     return DEFAULT_PLACEMENT_PROTECTED_HOST_CARD_IDS.some((cardInstanceId) => subtreeContainsCardInstance(nodes, nodeId, cardInstanceId));
@@ -1001,6 +1042,7 @@ function insertCard(doc, request) {
         ...(request.diagnostics ? { diagnostics: request.diagnostics } : {}),
         binding: request.binding === 'auto' ? null : request.binding ?? null,
         title: request.title ?? null,
+        ...(request.titleSource !== undefined ? { titleSource: request.titleSource } : {}),
         createdAt: 0,
         lifecycle: 'active',
     };
@@ -1100,14 +1142,31 @@ export function updateCardBinding(doc, cardInstanceId, binding) {
         },
     };
 }
-/** 卡内容级 doc 助手：title 版本，语义同 updateCardBinding（见其注释）。 */
-export function updateCardTitle(doc, cardInstanceId, title) {
+/**
+ * 卡内容级 doc 助手：title 版本，语义同 updateCardBinding（见其注释）。
+ *
+ * 第三个参数只管标题值；可选的第四个参数 `titleSource` 决定是否同时改写持久
+ * 来源：
+ * - `undefined`（缺省）：保持卡上现有来源不动。程序化刷新（Preview 文件改名、
+ *   pinned 命名、预览换绑）走这条路，不把刷新当用户重命名。
+ * - `'user' | 'manifest'`：显式改写来源。
+ * - `null`：清掉来源，回到"未标记"（历史缺省语义）。
+ */
+export function updateCardTitle(doc, cardInstanceId, title, titleSource) {
     const card = requireCard(doc, cardInstanceId);
+    // titleSource === undefined 时展开本身就保留了卡上现有来源，不做任何改写。
+    const next = { ...card, title };
+    if (titleSource === null) {
+        delete next.titleSource;
+    }
+    else if (titleSource !== undefined) {
+        next.titleSource = titleSource;
+    }
     return {
         ...doc,
         cards: {
             ...doc.cards,
-            [card.id]: { ...card, title },
+            [card.id]: next,
         },
     };
 }
@@ -1115,6 +1174,7 @@ function updateCardRendererState(doc, cardInstanceId, rendererState) {
     const card = requireCard(doc, cardInstanceId);
     const nextCard = { ...card };
     if (rendererState && Object.keys(rendererState).length > 0) {
+        assertRendererStateBudget(card.rendererState, rendererState);
         nextCard.rendererState = rendererState;
     }
     else {
@@ -1127,6 +1187,22 @@ function updateCardRendererState(doc, cardInstanceId, rendererState) {
             [card.id]: nextCard,
         },
     };
+}
+/**
+ * 视图快照共存护栏：整包（`appViewState` + hana.state + 其它子键）受 64KiB
+ * UTF-8 约束，而这里是布局 doc 的唯一写入边界。只在**这张卡真的带
+ * `appViewState`**（现有或待写）时才量整包：没接入 F 的旧卡维持原行为，不因其
+ * 历史组合突然被拒；跨过 64KiB 则显式抛错（不静默截断、不改任何输入）。
+ */
+function assertRendererStateBudget(current, next) {
+    if (!hasAppViewState(current) && !hasAppViewState(next))
+        return;
+    const result = checkCardRendererStateBudget(next);
+    if (result.ok === false) {
+        throw new ChalkboardLayoutError('INVALID_STRUCTURE', result.reason === 'too-large'
+            ? 'Layout card renderer state exceeds its size budget.'
+            : 'Layout card renderer state must be JSON-serializable.');
+    }
 }
 function resizeContainer(doc, nodeId, sizing) {
     const node = requireNode(doc, nodeId);
@@ -1194,10 +1270,29 @@ function removeCardFromLayout(doc, cardInstanceId) {
     delete nextCards[cardInstanceId];
     return { ...doc, nodes: nextNodes, cards: nextCards };
 }
+/**
+ * 页的配置级主卡（见 page-card-policy）是页的正文，不是可拿走的普通卡：
+ * 不能关、不能拆窗、不能离开它的页。三条命令共用这一处拒绝。
+ */
+function assertNotPageFixture(doc, cardInstanceId, operation) {
+    const fixture = resolveChalkboardPageFixture(doc, cardInstanceId);
+    if (!fixture)
+        return;
+    throw new ChalkboardLayoutError('INVALID_STRUCTURE', operation === 'close'
+        ? `layout page card cannot be closed: ${cardInstanceId} (page ${fixture.pageId})`
+        : `layout page card cannot be detached: ${cardInstanceId} (page ${fixture.pageId})`);
+}
+function assertPageFixtureStaysOnPage(doc, cardInstanceId, targetSurface) {
+    const fixture = resolveChalkboardPageFixture(doc, cardInstanceId);
+    if (!fixture || targetSurface.id === fixture.pageSurfaceId)
+        return;
+    throw new ChalkboardLayoutError('INVALID_STRUCTURE', `layout page card cannot leave its page: ${cardInstanceId} (page ${fixture.pageId})`);
+}
 function closeCard(doc, cardInstanceId) {
     if (cardInstanceId === CHALKBOARD_LAYOUT_HOME_CHAT_CARD_ID) {
         throw new ChalkboardLayoutError('INVALID_STRUCTURE', 'layout home chat card cannot be closed');
     }
+    assertNotPageFixture(doc, cardInstanceId, 'close');
     let next = doc;
     const descendantIds = collectLifecycleDescendantCardIds(doc, cardInstanceId);
     for (const descendantId of descendantIds) {
@@ -1216,6 +1311,7 @@ function assertCardCanDetach(card) {
 function detachCard(doc, cardInstanceId, bounds) {
     const card = requireCard(doc, cardInstanceId);
     assertCardCanDetach(card);
+    assertNotPageFixture(doc, cardInstanceId, 'detach');
     const nodeId = findCardNodeId(doc, cardInstanceId);
     const oldSurface = surfaceContainingNode(doc, nodeId);
     const nodesWithoutCard = removeNodeFromLayoutPosition(doc, nodeId);
@@ -1264,13 +1360,25 @@ function findPageSurface(surfaces, pageId) {
         return surfaces[CHALKBOARD_LAYOUT_HOME_SURFACE_ID];
     return Object.values(surfaces).find((item) => item.pageId === pageId);
 }
+function isHostActivationSurface(surface) {
+    return !!surface && surface.kind !== 'studio';
+}
 function resolveFocusFallbackSurface(surfaces, input) {
-    return surfaces[input.activeSurfaceId]
-        ?? findPageSurface(surfaces, input.activePageId)
-        ?? (input.vanishedReturnSurfaceId ? surfaces[input.vanishedReturnSurfaceId] : undefined)
-        ?? surfaces[CHALKBOARD_LAYOUT_HOME_SURFACE_ID]
-        ?? Object.values(surfaces)[0]
-        ?? null;
+    const current = surfaces[input.activeSurfaceId];
+    if (isHostActivationSurface(current))
+        return current;
+    const pageSurface = findPageSurface(surfaces, input.activePageId);
+    if (isHostActivationSurface(pageSurface))
+        return pageSurface;
+    const returned = input.vanishedReturnSurfaceId
+        ? surfaces[input.vanishedReturnSurfaceId]
+        : undefined;
+    if (isHostActivationSurface(returned))
+        return returned;
+    if (isHostActivationSurface(surfaces[CHALKBOARD_LAYOUT_HOME_SURFACE_ID])) {
+        return surfaces[CHALKBOARD_LAYOUT_HOME_SURFACE_ID];
+    }
+    return Object.values(surfaces).find((item) => item.kind !== 'studio') ?? null;
 }
 function removeDetachedSurface(doc, surface) {
     if (surface.kind !== 'detached')
@@ -1357,6 +1465,7 @@ function dockCard(doc, cardInstanceId, target) {
     if (cardInstanceId === CHALKBOARD_LAYOUT_HOME_CHAT_CARD_ID && targetSurface.id !== oldSurface.id) {
         throw new ChalkboardLayoutError('INVALID_STRUCTURE', `layout home chat card cannot leave home page: ${cardInstanceId}`);
     }
+    assertPageFixtureStaysOnPage(doc, cardInstanceId, targetSurface);
     let nodes = removeNodeFromLayoutPosition(doc, nodeId);
     const surfaces = { ...doc.surfaces };
     if (oldSurface.kind === 'detached') {
@@ -1440,6 +1549,7 @@ function moveCard(doc, cardInstanceId, target) {
     if (cardInstanceId === CHALKBOARD_LAYOUT_HOME_CHAT_CARD_ID && targetSurface.id !== oldSurface.id) {
         throw new ChalkboardLayoutError('INVALID_STRUCTURE', `layout home chat card cannot leave home page: ${cardInstanceId}`);
     }
+    assertPageFixtureStaysOnPage(doc, cardInstanceId, targetSurface);
     let nodes = removeNodeFromLayoutPosition(doc, nodeId);
     let surfaces = { ...doc.surfaces };
     ({ nodes, surfaces } = cleanupOldDetachedSurface(doc, nodes, surfaces, oldSurface, nodeId));
@@ -1495,10 +1605,15 @@ function activateSlotChild(doc, slotNodeId, childNodeId) {
 function reduceChalkboardLayoutCommand(doc, command) {
     switch (command.kind) {
         case 'ensurePageTemplate':
+            if (command.definitionId === CHALKBOARD_CARD_CODE_PAGE) {
+                return ensureChalkboardPageTemplate(doc, { kind: 'code' });
+            }
             if (command.definitionId === CHALKBOARD_CARD_CHANNELS_PAGE) {
                 return ensureChalkboardPageTemplate(doc, { kind: 'channels' });
             }
             throw new ChalkboardLayoutError('INVALID_STRUCTURE', `unsupported page template: ${command.definitionId}`);
+        case 'ensureStudioSurface':
+            return ensureChalkboardStudioSurface(doc);
         case 'insertCard':
             return insertCard(doc, command.request);
         case 'updateCardRendererState':
@@ -1534,6 +1649,31 @@ function reduceChalkboardLayoutCommand(doc, command) {
         default:
             throw new ChalkboardLayoutError('INVALID_STRUCTURE', `unsupported layout command: ${command.kind}`);
     }
+}
+/**
+ * 历史文档迁移：旧版本允许整页 App 主卡拆窗。页的配置级主卡现在不能拆窗，
+ * 恢复时把仍停在拆窗 surface 上、且按 returnSurfaceId 归属于自己页的主卡停靠
+ * 回那一页（拆窗 surface 随之回收）。没有这样的卡时原样返回同一引用。
+ */
+export function returnDetachedChalkboardPageFixtures(doc) {
+    let next = doc;
+    for (const cardInstanceId of Object.keys(doc.cards)) {
+        const fixture = resolveChalkboardPageFixture(next, cardInstanceId);
+        if (!fixture?.detachedSurfaceId)
+            continue;
+        next = normalizeChalkboardLayoutDocument(dockCard(next, cardInstanceId, {
+            kind: 'surface-root',
+            surfaceId: fixture.pageSurfaceId,
+            placement: { kind: 'default' },
+        }));
+    }
+    if (next === doc)
+        return doc;
+    // 迁回不是一次用户导航：保持原来的活动页与焦点（若仍有效）。
+    const activeSurface = next.surfaces[doc.activeSurfaceId];
+    return activeSurface
+        ? { ...next, activeSurfaceId: doc.activeSurfaceId, activePageId: doc.activePageId, focus: next.surfaces[doc.focus.surfaceId] ? doc.focus : { kind: 'surface', surfaceId: activeSurface.id } }
+        : next;
 }
 export function applyChalkboardLayoutCommand(doc, command) {
     const current = normalizeChalkboardLayoutDocument(doc);

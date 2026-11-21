@@ -9,12 +9,15 @@ export const APP_AGENTS_READ_CAPABILITY = "app/agents.read";
 export const APP_AGENTS_MANAGE_CAPABILITY = "app/agents.manage";
 export const APP_SESSIONS_READ_CAPABILITY = "app/sessions.read";
 export const APP_SESSIONS_MANAGE_CAPABILITY = "app/sessions.manage";
+/** 让 App 在主页列表里新建会话（session:create 的 namespace=home）。默认拒绝，安全页可开关。 */
+export const APP_SESSIONS_HOME_CAPABILITY = "app/sessions.home";
 export { APP_SESSIONS_SEARCH_CAPABILITY };
 export const APP_ENTITY_CAPABILITY_WORDS = Object.freeze([
     APP_AGENTS_READ_CAPABILITY,
     APP_AGENTS_MANAGE_CAPABILITY,
     APP_SESSIONS_READ_CAPABILITY,
     APP_SESSIONS_MANAGE_CAPABILITY,
+    APP_SESSIONS_HOME_CAPABILITY,
     APP_SESSIONS_SEARCH_CAPABILITY,
 ]);
 /** App-facing permission projection for existing bus verbs with App ownership scopes. */

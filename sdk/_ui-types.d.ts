@@ -1,6 +1,10 @@
-import { type AppCardOpenResult, type AppActiveSession, type AppActiveSessionChanged, type AppStorageDeleteResult, type AppStorageGetAllResult, type AppStorageGetResult, type AppStorageKeysResult, type AppStorageSetResult, type AppSurfaceInteractiveRegion, type PluginStateGetResult, type PluginStateSetResult, type PluginStorageDeleteResult, type PluginStorageGetAllResult, type PluginStorageGetResult, type PluginStorageSetResult, type PluginSurfaceRuntimeBudget, type PluginSurfaceContext, type PluginResourceOpenInput, type PluginResourceOpenResult, type PluginResourcePickInput, type PluginResourcePickResult, type PluginResourceSaveFileInput, type PluginResourceSaveFileResult, type PluginResourceRequestAccessInput, type PluginResourceRequestAccessResult, type PluginUiError, type PluginUiMessage } from './_ui-protocol.js';
+import { type HanaChromeApi } from './_ui-app-chrome.js';
+import { type AppCardOpenOptions, type AppCardOpenResult, type AppActiveSession, type AppActiveSessionChanged, type AppStorageDeleteResult, type AppStorageGetAllResult, type AppStorageGetResult, type AppStorageKeysResult, type AppStorageSetResult, type AppSurfaceInteractiveRegion, type PluginStateGetResult, type PluginStateSetResult, type PluginStorageDeleteResult, type PluginStorageGetAllResult, type PluginStorageGetResult, type PluginStorageSetResult, type PluginSurfaceRuntimeBudget, type PluginSurfaceContext, type PluginResourceOpenInput, type PluginResourceOpenResult, type PluginResourcePickInput, type PluginResourcePickResult, type PluginResourceSaveFileInput, type PluginResourceSaveFileResult, type PluginResourceRequestAccessInput, type PluginResourceRequestAccessResult, type PluginUiError, type PluginUiMessage } from './_ui-protocol.js';
 import { type HanaInputPanelApi } from './_ui-input-panel.js';
+import { type CustomThemesApi } from './_ui-app-custom-themes.js';
 export type { HanaInputPanelApi, HanaInputPanelSubmitHandler, HanaInputPanelPresentationPatch } from './_ui-input-panel.js';
+export type { HanaChromeApi, HanaChromeActionEvent, HanaChromeActionReceipt } from './_ui-app-chrome.js';
+export type { AppChromeActionV2, AppChromeActivityV2, AppChromeDescriptionV2, AppChromeIconId, AppChromeTabV2, } from './_ui-app-chrome.js';
 export type { AppInputPanelContext } from './_ui-protocol.js';
 export type { AppActiveSession, AppActiveSessionChanged, AppSurfaceInteractiveRegion, } from './_ui-protocol.js';
 export interface HanaPluginSize {
@@ -195,6 +199,15 @@ export interface HanaPluginSdk {
         getSnapshot(): HanaPluginThemeSnapshot;
         subscribe(callback: (theme: HanaPluginThemeSnapshot) => void): () => void;
     };
+    /**
+     * The user's own custom themes (`hana.themes.custom`). UI-only: every method
+     * talks to the host's App-scoped user-theme endpoints from inside a real App
+     * surface, carrying the surface credential the host placed on this document's
+     * URL. `hana.theme` stays the read-only view of the *effective* appearance.
+     */
+    themes: {
+        custom: CustomThemesApi;
+    };
     envelope: {
         getSnapshot(): Envelope | null;
         subscribe(callback: (envelope: Envelope | null) => void): () => void;
@@ -204,7 +217,7 @@ export interface HanaPluginSdk {
         subscribe(callback: (snapshot: HanaPluginRuntimeSnapshot) => void): () => void;
     };
     cards: {
-        open(cardId: string): Promise<AppCardOpenResult>;
+        open(cardId: string, options?: AppCardOpenOptions): Promise<AppCardOpenResult>;
     };
     surface: {
         getContext(): HanaSurfaceContext | null;
@@ -227,6 +240,14 @@ export interface HanaPluginSdk {
     host: {
         request<T = unknown>(type: string, payload?: unknown, options?: HanaPluginRequestOptions): Promise<T>;
     };
+    /**
+     * Current-view Chrome for a v2 App card: submit the card's title / controlled
+     * tabs / controlled actions, answer host-driven chrome actions, and report the
+     * card's main scroll boolean. Only a live, ready App card view has a host-side
+     * lease to act on, so this is refused everywhere else (settings, function
+     * panel, preview, v1).
+     */
+    chrome: HanaChromeApi;
     toast: {
         show(input: HanaToastShowInput, options?: HanaPluginRequestOptions): Promise<HanaToastShowResult>;
     };
