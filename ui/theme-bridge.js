@@ -195,13 +195,16 @@ export function installThemeBridge(options = {}) {
     try { return String(hana?.theme?.getSnapshot?.()?.theme || "").trim(); } catch { return ""; }
   }
 
-  /** 主题 id → 样式表地址。宿主给的地址就是这个形状，换掉 theme 参数即可。 */
+  /** 主题 id → 样式表地址。宿主给的地址就是这个形状，换掉 theme 参数即可。
+   *  已经是一个完整地址时原样用它（宿主下发的 hana-css 与 light/dark 那一对就是这个形状）。 */
   function urlForTheme(id) {
+    const raw = String(id || "").trim();
+    if (/^(https?:)?\/\//i.test(raw) || raw.startsWith("/")) return raw;
     const baseUrl = activeThemeUrl();
     if (!baseUrl) return "";
     try {
       const url = new URL(baseUrl, win.location?.href || "http://localhost/");
-      url.searchParams.set("theme", String(id || ""));
+      url.searchParams.set("theme", raw);
       return url.toString();
     } catch { return ""; }
   }
@@ -265,6 +268,15 @@ export function installThemeBridge(options = {}) {
     }
     root.style.setProperty("--ui-on-accent", onColor(palette.accent));
     root.setAttribute("data-ui-theme", palette.theme);
+    // 主题样式表是按 [data-theme="<id>"] 选择器写变量的，宿主通常已经在根元素上
+    // 设了这个属性；设不上或对不上时，整张表就不生效（颜色全空）。
+    // 这里再写一次，值是同一个，没副作用；也顺手让选择器和当前主题一致。
+    try {
+      const html = doc.documentElement;
+      if (html && palette.id && !html.getAttribute("data-theme")) {
+        html.setAttribute("data-theme", palette.id);
+      }
+    } catch { /* 拿不到根元素就只靠宿主已经设好的那个属性 */ }
   }
 
   async function refresh() {
@@ -288,8 +300,7 @@ export function installThemeBridge(options = {}) {
 
     palette.stylesheet = loaded ? "loaded" : activeThemeUrl() ? "failed" : "missing";
     palette.id = palette.id || activeThemeId();
-    write(palette);
-    applied = palette;
+    write(palette);    applied = palette;
     try { onApply?.(palette); } catch { /* 回调是调用方的代码 */ }
     return applied;
   }
@@ -300,11 +311,17 @@ export function installThemeBridge(options = {}) {
    * 量完即拆。两种都不想动当前页面。
    */
   async function paletteOf(id) {
-    const key = String(id || "").trim();
-    if (!key) return null;
-    if (paletteCache.has(key)) return paletteCache.get(key);
-    const url = urlForTheme(key);
+    const raw = String(id || "").trim();
+    if (!raw) return null;
+    const url = urlForTheme(raw);
     if (!url) return null;
+    // 参数可以是主题 id，也可以是宿主下发的完整地址；统一按地址里那个 theme 参数认身份，
+    // 这样缓存与返回的 id 不会因为入参形式不同而分裂。
+    let key = raw;
+    try {
+      key = new URL(url, win.location?.href || "http://localhost/").searchParams.get("theme") || raw;
+    } catch { key = raw; }
+    if (paletteCache.has(key)) return paletteCache.get(key);
 
     let palette = null;
     try {
@@ -331,6 +348,9 @@ export function installThemeBridge(options = {}) {
           frame.src = "about:blank";
           (doc.body || doc.documentElement).appendChild(frame);
           const fdoc = frame.contentDocument;
+          // 主题表是按 [data-theme="<id>"] 选择器写变量的，iframe 里没有这个属性
+          // 的话整张表都不生效，量出来全是空。先打上再加载。
+          try { fdoc.documentElement.setAttribute("data-theme", key); } catch { /* 设不上就靠 body */ }
           const link = fdoc.createElement("link");
           link.rel = "stylesheet";
           link.href = url;
