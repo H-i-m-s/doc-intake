@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文档提取</title>
+  <link rel="stylesheet" href="./panel.css" />
+</head>
+<body>
+  <!-- 底色与圆角由宿主的卡片壳提供（manifest 里 cardForm 是 flush），
+       这一层只排内容：源 / 保存到 / 开始 / 高级选项 / 结果区，竖着往下走。
+
+       每块都是「标签行 + 控件」两段：标签和它的动作按钮同一行，控件单独一行。
+       原因是最上面那块带两个按钮，控件是多行文本，塞进同一行会被挤成一条窄缝；
+       三块统一成这个形状，竖着看左边缘是一条线。 -->
+  <div class="di-panel" id="di-panel">
+
+    <!-- 第一块：源 -->
+    <div class="di-field">
+      <div class="di-field__head">
+        <span class="di-label">源</span>
+        <div class="di-field__actions">
+          <button class="di-mini" id="di-pick-file" type="button">选文件</button>
+          <button class="di-mini" id="di-pick-dir" type="button">选文件夹</button>
+        </div>
+      </div>
+      <textarea class="di-input di-input--multi" id="di-sources" rows="3"
+                placeholder="每行一个文件或文件夹" spellcheck="false" autocomplete="off"></textarea>
+    </div>
+
+    <!-- 第二块：保存到。留空不在这里算默认路径 —— 那套规则在解析器一侧，
+         面板再算一遍就会出现两种口径。 -->
+    <div class="di-field">
+      <div class="di-field__head">
+        <span class="di-label">保存到</span>
+        <div class="di-field__actions">
+          <button class="di-mini" id="di-pick-save" type="button">浏览…</button>
+        </div>
+      </div>
+      <input class="di-input" id="di-save-path" type="text"
+             placeholder="留空则按设置里的规则由解析器决定" spellcheck="false" autocomplete="off" />
+    </div>
+
+    <button class="di-run" id="di-run" type="button">开始提取</button>
+    <!-- 本工单不接提取，点了只在这里现身一句话，位置贴着按钮，不压下面的折叠区。 -->
+    <p class="di-hint" id="di-run-hint" hidden>还没接通（下一步接入真实提取）</p>
+
+    <!-- 第四块：高级选项，默认收起。标题行整行可点，键盘 Enter / 空格也认得，
+         所以它是个 button 而不是 div + 监听。
+         箭头用 SVG 线条：字符箭头在不同字体里大小与基线都不一样，跟着主题字体变样子。 -->
+    <div class="di-adv">
+      <button class="di-adv__head" id="di-adv-toggle" type="button"
+              aria-expanded="false" aria-controls="di-adv-body">
+        <svg class="di-adv__chevron" id="di-adv-chevron" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M4.4 2.6 L7.8 6 L4.4 9.4" fill="none" stroke="currentColor"
+                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span class="di-adv__label">高级选项</span>
+      </button>
+      <div class="di-adv__body" id="di-adv-body" aria-hidden="true">
+        <div class="di-adv__inner" id="di-adv-inner">
+          <div class="di-row">
+            <label class="di-row__label" for="di-backend">解析后端</label>
+            <select class="di-input di-select" id="di-backend">
+              <option value="auto">自动</option>
+              <option value="mineru">MinerU</option>
+              <option value="paddleocr">PaddleOCR</option>
+              <option value="mineru-local">MinerU 本地</option>
+              <option value="paddleocr-local">PaddleOCR 本地</option>
+              <option value="local">本地</option>
+            </select>
+          </div>
+          <div class="di-row">
+            <label class="di-row__label" for="di-page-range">页码范围</label>
+            <!-- 页码范围永远从空开始：它是一次调用上的临时参数，不是设置项，
+                 没有「上次用的范围」这种东西。 -->
+            <input class="di-input" id="di-page-range" type="text"
+                   placeholder="如 1-20，留空为全部" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="di-row">
+            <label class="di-row__label" for="di-language">语言</label>
+            <input class="di-input" id="di-language" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <!-- 两项合成一行：都是开关，各自一个字都不长，分成两行只是把卡片拉高。 -->
+          <div class="di-checks">
+            <label class="di-check">
+              <input type="checkbox" id="di-include-media" />
+              <span>提取图片与媒体</span>
+            </label>
+            <label class="di-check">
+              <input type="checkbox" id="di-save-json" />
+              <span>另存 JSON</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结果区：本工单保持隐藏，下一步填内容。占位放在这里是为了下一工单只改 JS。 -->
+    <div class="di-result" id="di-result" hidden></div>
+  </div>
+  <script type="module" src="./panel.js"></script>
+</body>
+</html>

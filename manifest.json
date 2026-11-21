@@ -390,6 +390,16 @@
           }
         }
       }
-    }
+    },
+    "cards": [
+      {
+        "id": "panel",
+        "title": "文档提取",
+        "description": "选文件、定目录、手动跑一次",
+        "route": "/panel.html",
+        "cardForm": "flush",
+        "realization": "card"
+      }
+    ]
   }
 }

@@ -1,0 +1,366 @@
+/* ui/panel.css — 文档提取面板卡（卡片中心，用户自己点开）
+   --------------------------------------------------------------------------
+   取色纪律与进度卡（ui/card.css）同一套：
+   · 主题变量优先取宿主注入的 --hana-*，取不到就用本文件自带的值；
+     深浅两套都写全，宿主不注入时靠 body.t-dark 切换，两种情况下层级一致。
+   · accent 只出现在一处：主按钮的底色。标签、小按钮、输入框、勾选框一律用
+     ink 混出来的灰，勾选框也不借系统 accent（那会在这一页上再多出一种彩色）。
+   · 不画渐变、不加图标。唯一的线条是折叠箭头和几条分隔细线。
+   · 外层容器不画背景和圆角 —— 宿主卡片壳已经给了（manifest 里 cardForm=flush），
+     再画一层就是双边框。
+   -------------------------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+:root {
+  --di-ink: var(--hana-text, var(--text, #2f2a24));
+  --di-sub: var(--hana-text-light, var(--text-light, #6f6659));
+  --di-muted: var(--hana-text-muted, var(--text-muted, #8d8274));
+  --di-accent: var(--hana-accent, var(--accent, #4a6fa5));
+  /* accent 上的字单独一份：浅色主题的 accent 偏深，白字；深色主题的 accent 偏亮，
+     白字就糊了，改用近黑。两种主题下都够对比，又不用在别处再引入一个颜色。 */
+  --di-on-accent: #ffffff;
+  /* 分隔线：从 ink 混出来，深浅两套都不用另配灰度。 */
+  --di-line: color-mix(in srgb, var(--di-ink) 10%, transparent);
+}
+
+body.t-dark {
+  --di-ink: var(--hana-text, #e6e2da);
+  --di-sub: var(--hana-text-light, #b6aea2);
+  --di-muted: var(--hana-text-muted, #8f877c);
+  --di-accent: var(--hana-accent, #7794c2);
+  --di-on-accent: #14181c;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 460px;
+  /* 宽度固定，内容一律不许把它撑开：溢出在卡片里表现为被截断或被滚动，
+     而不是整卡变宽顶出宿主给的列宽。 */
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  color: var(--di-ink);
+  font-family: var(--hana-font-ui, var(--font-ui, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif));
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 行距不用 gap：折叠区收起时高度必须是 0，而 flex 的 gap 会给零高度子项照样留间距。
+   改成每一块自带上边距，收起时整体归零。 */
+.di-panel {
+  width: 460px;
+  max-width: 100%;
+  padding: 12px 15px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 第一、二块：标签行 + 控件 ---------- */
+.di-field + .di-field { margin-top: 11px; }
+
+.di-field__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 6px;
+}
+
+.di-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--di-sub);
+  white-space: nowrap;
+}
+
+.di-field__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 小按钮做成胶囊而不是方按钮：它们是给输入框喂内容的附属动作，
+   不该和下面的主按钮抢同一副面孔。尺寸按 11.5px 字 + 2px 上下留白，
+   一行的富余高度刚好放得下 10px 的胶囊。 */
+.di-mini {
+  appearance: none;
+  margin: 0;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--di-ink) 74%, transparent);
+  background: color-mix(in srgb, var(--di-ink) 9%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 160ms linear, color 160ms linear;
+}
+
+.di-mini:hover {
+  color: var(--di-ink);
+  background: color-mix(in srgb, var(--di-ink) 15%, transparent);
+}
+
+.di-mini:active { background: color-mix(in srgb, var(--di-ink) 22%, transparent); }
+
+/* 系统文件对话框开着的时候按钮禁用，不然连点会叠出两个选择框。 */
+.di-mini[disabled] {
+  color: var(--di-muted);
+  background: color-mix(in srgb, var(--di-ink) 6%, transparent);
+  cursor: default;
+}
+
+.di-mini[disabled]:hover {
+  color: var(--di-muted);
+  background: color-mix(in srgb, var(--di-ink) 6%, transparent);
+}
+
+/* ---------- 输入控件 ---------- */
+/* 输入框内的字用等宽：这一页里装的主要是路径，\ 与 / 和 : 在等宽下不容易看错位。
+   placeholder 换回界面字体 —— 那是给人读的一句话，不是路径。 */
+.di-input {
+  appearance: none;
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Segoe UI", monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--di-ink);
+  background: color-mix(in srgb, var(--di-ink) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--di-ink) 10%, transparent);
+  /* 让浏览器按主题画输入光标、选区与下拉箭头；写在元素上而不是全局，
+     免得这一页把宿主的滚动条配色也一起改了。 */
+  color-scheme: light;
+  transition: background-color 140ms linear, box-shadow 140ms linear;
+}
+
+body.t-dark .di-input { color-scheme: dark; }
+
+.di-input::placeholder {
+  color: var(--di-muted);
+  font-family: var(--hana-font-ui, var(--font-ui, system-ui, "Microsoft YaHei", sans-serif));
+}
+
+.di-input:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--di-ink) 18%, transparent);
+}
+
+/* 聚焦用 ink 混出来的内描边，不用 accent：一页上只有一个东西是强调色。 */
+.di-input:focus {
+  outline: none;
+  background: color-mix(in srgb, var(--di-ink) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--di-ink) 34%, transparent);
+}
+
+/* 多行框自己滚，不跟着行数长高：卡片高度不能随用户粘进来的路径数量乱跳。
+   resize 关掉，拖角改的是这个框而不是卡片，看着像坏了。 */
+.di-input--multi {
+  display: block;
+  min-height: 62px;
+  max-height: 132px;
+  overflow: auto;
+  resize: none;
+}
+
+/* 下拉保留原生外观（不设 appearance:none）：箭头、弹出层的键盘行为都由系统给，
+   自己用一个 CSS 三角替上去只会丢掉这些。颜色靠上面的 color-scheme 跟着主题走。
+   字换回界面字体，后端名是词不是路径。 */
+.di-select {
+  appearance: auto;
+  font-family: var(--hana-font-ui, var(--font-ui, system-ui, "Microsoft YaHei", sans-serif));
+  cursor: pointer;
+}
+
+/* ---------- 主按钮：这一页唯一的强调色 ---------- */
+.di-run {
+  appearance: none;
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 9px;
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  color: var(--di-on-accent);
+  background: var(--di-accent);
+  cursor: pointer;
+  transition: box-shadow 160ms linear, transform 120ms ease-out;
+}
+
+/* 悬停用一层 ink 铺满整个按钮（inset 100px 铺开），而不是另配一个深一号的 accent：
+   浅色主题里 ink 是深色，等于压暗；深色主题里 ink 是浅色，等于提亮。
+   同一条规则在两种主题下方向都对。 */
+.di-run:hover { box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--di-ink) 9%, transparent); }
+
+.di-run:active {
+  box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--di-ink) 16%, transparent);
+  transform: translateY(0.5px);
+}
+
+/* ---------- 提示行 ---------- */
+.di-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--di-muted);
+}
+
+.di-hint[hidden] { display: none; }
+
+/* ---------- 第四块：高级选项 ---------- */
+/* 一条极淡的分隔线把它和主流程分开：高级选项不是必填区，
+   但也不能看着像主按钮掉下来的一块。 */
+.di-adv {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--di-line);
+}
+
+/* 整行是按钮：点标题、点箭头都能展开，命中面积大。 */
+.di-adv__head {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--di-sub);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 160ms linear;
+}
+
+.di-adv__head:hover { color: var(--di-ink); }
+
+/* 箭头占位固定，旋转不改尺寸，标题不会跟着挪。 */
+.di-adv__chevron {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  display: block;
+  color: currentColor;
+  transition: transform 200ms ease-out;
+}
+
+.di-adv__chevron.is-open { transform: rotate(90deg); }
+
+/* 收起用 max-height:0 而不是 display:none：硬切看不出下面还有东西，
+   也做不出过渡。展开高度由 panel.js 写进 --di-adv-h，多留 1px 免得小数舍入
+   把最后一行切掉一条边。 */
+.di-adv__body {
+  overflow: hidden;
+  /* 折叠区是 flex 子项，自动最小尺寸在部分引擎上会跟 max-height 拧着，
+     钉死这一项才能保证收起时高度真是 0。 */
+  min-height: 0;
+  max-height: 0;
+  margin-top: 0;
+  transition: max-height 200ms ease-out, margin-top 200ms ease-out;
+}
+
+.di-adv__body.is-open {
+  max-height: calc(var(--di-adv-h, 0px) + 1px);
+  margin-top: 10px;
+}
+
+.di-adv__inner {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* 三项一行一件：标签定宽，控件左边缘对齐成一条线。
+   定宽值按最长的「页码范围」四个字算（11.5px 字号下 4.6em 刚好留一点余量）。 */
+.di-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.di-row__label {
+  flex: 0 0 auto;
+  width: 4.6em;
+  font-size: 11.5px;
+  color: var(--di-sub);
+  white-space: nowrap;
+}
+
+.di-row .di-input { flex: 1 1 auto; }
+
+/* 两个勾选框合成一行，左边留出标签那一列的宽度，
+   和上面三行的控件对齐，不单独缩进成一个孤岛。 */
+.di-checks {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-left: calc(4.6em + 10px);
+}
+
+.di-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--di-sub);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* 勾选框不跟着系统 accent 变蓝：这一页的强调色只留给主按钮。 */
+.di-check input {
+  appearance: auto;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--di-sub);
+  cursor: pointer;
+}
+
+/* ---------- 结果区（本工单保持隐藏） ---------- */
+.di-result {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--di-line);
+  font-size: 11.5px;
+  color: var(--di-sub);
+}
+
+.di-result[hidden] { display: none; }
+
+/* ---------- 键盘可达 ---------- */
+.di-mini:focus-visible,
+.di-run:focus-visible,
+.di-adv__head:focus-visible,
+.di-check input:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--di-ink) 34%, transparent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .di-adv__body,
+  .di-adv__chevron,
+  .di-run { transition: none; }
+}
