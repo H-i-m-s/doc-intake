@@ -4,7 +4,6 @@
 // 手动跑一次。两条端点：
 //   GET  /panel-defaults  打开时读一次，把设置里同名的字段铺到表单上
 //   POST /run             按下「开始提取」，展开路径并起一次后台作业
-//   POST /panel-diag     临时诊断：把页面读到的主题变量落成一行日志（查完就拆）
 //
 // 作业怎么跑不在这里：建作业、逐文件落状态、收尾都在 lib/job-runner.js，
 // 批处理在 lib/extract-batch.js。这里只做三件事：校验入参、把设置翻译成
@@ -17,8 +16,6 @@
 // 只读配置 + 起作业，不下发任何 Token：面板拿到的就是表单要的那几个默认值。
 
 import { basename } from "node:path";
-import fs from "node:fs";
-import path from "node:path";
 
 import { scheduleAutoCleanup } from "../lib/cleanup.js";
 import { expandSourcesWithPython, processFiles } from "../lib/extract-batch.js";
@@ -54,25 +51,6 @@ function trimmedString(value) {
 }
 
 export default function registerPanelRoutes(app, ctx) {
-  // 临时诊断端点：页面把 getComputedStyle 读到的主题变量吐回一行，落成 jsonl。
-  // 用途只有一件：确认宿主到底有没有把 --hana-* 变量带进卡片。查完就拆。
-  app.post("/panel-diag", async (c) => {
-    const body = await c.req.json().catch(() => null);
-    if (!body || typeof body !== "object") return c.json({ ok: false });
-    const dir = typeof ctx?.dataDir === "string" ? ctx.dataDir : "";
-    if (!dir) return c.json({ ok: false });
-    try {
-      fs.appendFileSync(
-        path.join(dir, "panel-diag.jsonl"),
-        `${JSON.stringify({ at: new Date().toISOString(), ...body })}\n`,
-        "utf8",
-      );
-      return c.json({ ok: true });
-    } catch (error) {
-      return c.json({ ok: false, error: error?.message || String(error) });
-    }
-  });
-
   app.get("/panel-defaults", async (c) => {
     try {
       const all = (await ctx?.config?.getAll?.()) || {};

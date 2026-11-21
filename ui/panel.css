@@ -12,42 +12,37 @@
 
 * { box-sizing: border-box; }
 
-/* 令牌挂在 body 上，不挂 :root：宿主注入的主题变量若有落在 body 上的，
-   写在 :root 的 var() 就取不到它（自定义属性只往下继承）。 */
+/* 颜色不在这一层决定：由 ui/theme-bridge.js 把宿主主题取进来，
+   写成 --ui-* 一套变量；这里只把它们翻译成这张卡自己的 --di-*。
+   好处是换主题、接别的色源都只动那个文件，样式表不用跟着改。 */
 body {
-  --di-ink: var(--hana-text, var(--text, #1f2226));
-  --di-sub: var(--hana-text-light, var(--text-light, #4d545c));
-  --di-muted: var(--hana-text-muted, var(--text-muted, #78818b));
-  --di-accent: var(--hana-accent, var(--accent, #4a6fa5));
-  --di-ok: var(--hana-green, var(--green, #4f8a63));
-  --di-warn: var(--hana-danger, var(--danger, #b06a5e));
-  /* 面与线：宿主的卡片面色与边框色。
-     之前面板只搬了文字色，所以所有「块」只能拿文字色掺透明度当底，
-     那是没有面色时的近似做法。浮层必须是不透明的一层，必须用真面色。 */
-  --di-surface: var(--hana-bg-card, var(--bg-card, #ffffff));
-  --di-edge: var(--hana-border, color-mix(in srgb, var(--di-ink) 16%, transparent));
-  /* accent 上的字单独一份：浅色主题的 accent 偏深，白字；深色主题的 accent 偏亮，
-     白字就糊了，改用近黑。两种主题下都够对比，又不用在别处再引入一个颜色。 */
-  --di-on-accent: #ffffff;
+  --di-ink: var(--ui-text, #1f2226);
+  --di-sub: var(--ui-text-soft, #4d545c);
+  --di-muted: var(--ui-text-muted, #78818b);
+  --di-accent: var(--ui-accent, #5b7089);
+  --di-ok: var(--ui-ok, #4f8a63);
+  --di-warn: var(--ui-warn, #b06a5e);
+  /* 面与线：浮层必须是不透明的一层，所以要有真面色，不能拿文字色掺透明当底。 */
+  --di-surface: var(--ui-surface, #ffffff);
+  --di-edge: var(--ui-border, rgba(0, 0, 0, 0.12));
+  /* accent 上的字：由主题桥按强调色亮度算好。 */
+  --di-on-accent: var(--ui-on-accent, #ffffff);
   /* 分隔线：从 ink 混出来，深浅两套都不用另配灰度。 */
   --di-line: color-mix(in srgb, var(--di-ink) 10%, transparent);
 }
 
-/* 深色一套。每一项都要把无前缀的名字也写进备选链：
-   宿主主题表里真正定义的是 --accent / --text-light / --green / --danger，
-    --hana-* 只给聊天正文用（--hana-text）。只写 --hana-* 的话，
-   强调色会一路掉到兜底的蓝——上一版就是这个原因。 */
+/* 主题桥没跑起来时的深色兜底（老宿主、页面被别处引用）。
+   主题桥一旦生效，这一块会被 --ui-* 盖过。 */
 body.t-dark {
-  --di-ink: var(--hana-text, var(--text, #f2f4f7));
-  --di-sub: var(--hana-text-light, var(--text-light, #c3cad3));
-  --di-muted: var(--hana-text-muted, var(--text-muted, #919aa4));
-  --di-accent: var(--hana-accent, var(--accent, #7794c2));
-  --di-ok: var(--hana-green, var(--green, #6e9c7f));
-  --di-warn: var(--hana-danger, var(--danger, #c07d72));
-  /* 深色下宿主的卡片面色；没注入时用中性深灰蓝，不要白。 */
-  --di-surface: var(--hana-bg-card, var(--bg-card, #232c33));
-  --di-edge: var(--hana-border, color-mix(in srgb, var(--di-ink) 18%, transparent));
-  --di-on-accent: #14181c;
+  --di-ink: var(--ui-text, #f2f4f7);
+  --di-sub: var(--ui-text-soft, #c3cad3);
+  --di-muted: var(--ui-text-muted, #919aa4);
+  --di-accent: var(--ui-accent, #8b9bb0);
+  --di-ok: var(--ui-ok, #6e9c7f);
+  --di-warn: var(--ui-warn, #c07d72);
+  --di-surface: var(--ui-surface, #2a343c);
+  --di-edge: var(--ui-border, rgba(255, 255, 255, 0.12));
+  --di-on-accent: var(--ui-on-accent, #14181c);
 }
 
 html, body {

@@ -8,6 +8,7 @@
 // /reveal（在文件管理器里定位产物）。除此之外不发任何请求。
 
 import { estimateTotalMs, fakePercent } from "./shared/progress.js";
+import { installThemeBridge } from "./theme-bridge.js";
 
 const PANEL_WIDTH = 460;
 /** 折叠区过渡时长，与 panel.css 里的 200ms 对齐；过渡跑完再兜一次上报。 */
@@ -234,19 +235,6 @@ async function resolveHana() {
 }
 
 function startPanel() {
-  // 主题样式表尽早插：地址就在 URL 参数里，不必等 hana 握手。
-  // 晚插会让首帧先按兜底色（蓝）画一下再变粉，那一瞬就是用户说的“怎么是蓝色的”。
-  try {
-    const earlyUrl = new URLSearchParams(globalThis.location?.search || "").get("hana-css");
-    if (earlyUrl && !document.getElementById("di-host-theme")) {
-      const early = document.createElement("link");
-      early.id = "di-host-theme";
-      early.rel = "stylesheet";
-      early.href = earlyUrl;
-      (document.head ?? document.documentElement)?.appendChild(early);
-    }
-  } catch { /* 没有这个参数就靠后面那次补 */ }
-
   const panelEl = document.getElementById("di-panel");
   const sourcesEl = document.getElementById("di-sources");
   const savePathEl = document.getElementById("di-save-path");
@@ -1095,105 +1083,21 @@ function startPanel() {
     }
   }
 
-  // ── 主题变量补救 ────────────────────────────────────────────────────
-  // 实测：卡片里 --hana-accent / --hana-text 取不到（宿主标题栏是主题色，而页面里
-  // 全是兜底值）。说明宿主的主题样式表没进这个 iframe。这里自己补一份：
-  // 先用宿主下发的 cssUrl 插一个 <link>，还不行就 fetch 它把关键变量抠出来写进行内。
-  const HOST_THEME_LINK_ID = "di-host-theme";
-
-  function readThemeUrl() {
-    let url = "";
-    try { url = String(hana?.theme?.getSnapshot?.()?.cssUrl || "").trim(); } catch { url = ""; }
-    if (!url) {
-      // 宿主的初始主题是从 URL 参数带进来的，快照拿不到时还有这一条。
-      try {
-        url = String(new URLSearchParams(globalThis.location?.search || "").get("hana-css") || "").trim();
-      } catch { url = ""; }
-    }
-    return url;
-  }
-
-  function readThemeVars() {
-    try {
-      const style = getComputedStyle(document.body);
-      const pick = (names) => {
-        for (const name of names) {
-          const value = style.getPropertyValue(name).trim();
-          if (value) return value;
-        }
-        return "";
-      };
-      // 主题样式表里真正定义的名字是 --accent / --text / --bg-card，
-      // --hana-* 只有聊天用的那几个；两套都探，日志才看得出到底取到了哪一套。
-      return {
-        accent: pick(["--hana-accent", "--accent"]),
-        text: pick(["--hana-text", "--text"]),
-        surface: pick(["--hana-bg-card", "--bg-card"]),
-        // 最终生效的中转令牌：这几项才是页面真正用到的颜色。
-        diAccent: pick(["--di-accent"]),
-        diInk: pick(["--di-ink"]),
-        diSurface: pick(["--di-surface"]),
-      };
-    } catch { return { accent: "", text: "", surface: "" }; }
-  }
-
-  function injectThemeLink(url) {
-    if (!url || document.getElementById(HOST_THEME_LINK_ID)) return;
-    const link = document.createElement("link");
-    link.id = HOST_THEME_LINK_ID;
-    link.rel = "stylesheet";
-    link.href = url;
-    document.head.appendChild(link);
-    link.addEventListener("load", () => { syncTheme(); reportSize(); });
-  }
-
-  async function fetchThemeVars(url) {
-    if (!url) return false;
-    let css = "";
-    try {
-      const res = await fetch(url, { credentials: "same-origin" });
-      if (!res.ok) return false;
-      css = await res.text();
-    } catch { return false; }
-    const pick = (name) => {
-      const hit = new RegExp(`${name}\\s*:\\s*([^;}]+)`).exec(css);
-      return hit ? hit[1].trim() : "";
-    };
-    const accent = pick("--hana-accent");
-    const text = pick("--hana-text");
-    const surface = pick("--hana-bg-card");
-    if (!accent && !text) return false;
-    if (accent) document.body.style.setProperty("--hana-accent", accent);
-    if (text) document.body.style.setProperty("--hana-text", text);
-    if (surface) document.body.style.setProperty("--hana-bg-card", surface);
-    return true;
-  }
-
-  function sendDiag(payload) {
-    try {
-      void hana?.api?.fetch?.("/panel-diag", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } catch { /* 诊断失败不影响界面 */ }
-  }
-
+  // ── 主题 ────────────────────────────────────────────────────────────
+  // 取色全部交给 ui/theme-bridge.js：它把宿主的主题样式表插进来，按备选链取出
+  // 强调色与正文色，写成 --ui-* 一套变量（panel.css 再把它们翻成 --di-*）。
+  // 这里只负责拿到桥的结果后切深浅档、重新报高。
   async function ensureTheme() {
-    const before = readThemeVars();
-    const url = readThemeUrl();
-    let after = before;
-    if (!before.accent || !before.text) {
-      injectThemeLink(url);
-      await new Promise((done) => setTimeout(done, 150));
-      after = readThemeVars();
-      if (!after.accent || !after.text) {
-        await fetchThemeVars(url);
-        after = readThemeVars();
-      }
-      reportSize();
-    }
-    sendDiag({ kind: "theme", url: url ? url.slice(0, 200) : "missing", before, after });
+    try {
+      const bridge = installThemeBridge({
+        hana,
+        onApply: (palette) => {
+          document.body.classList.toggle("t-dark", palette.theme === "dark");
+          reportSize();
+        },
+      });
+      await bridge.ready;
+    } catch { /* 桥没装上就靠 panel.css 的兜底，界面照常能用 */ }
   }
 
   (async () => {
