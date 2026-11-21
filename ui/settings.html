@@ -36,10 +36,6 @@
 <body>
   <main class="gs" id="gs" aria-busy="true">
     <header class="gs-head">
-      <div class="gs-head__row">
-        <h1>Doc Intake 设置</h1>
-        <button class="gs-btn gs-btn--ghost gs-btn--sm" id="btn-refresh" type="button">重新载入</button>
-      </div>
       <p class="gs-sub">基础项与高级设置改的是插件行为；环境依赖管理检测你填的 Python 环境里库装得怎么样。</p>
     </header>
 
@@ -112,7 +108,19 @@
       </div>
     </section>
 
-    <!-- 4 · 关于（版本与更新说明） -->
+    <!-- 4 · 清理记录（只在开了自动清理时显示） -->
+    <section class="gs-card" id="sec-cleanup-log" hidden>
+      <div class="gs-card__head">
+        <div>
+          <h2 class="gs-card__title">清理记录</h2>
+          <p class="gs-card__desc">只记真的动过手的那几次，最多留 50 条，超了挤掉最旧的；每条只列前 10 个文件名。</p>
+        </div>
+        <button class="gs-btn gs-btn--ghost gs-btn--sm" id="btn-clear-cleanup-log" type="button">清空记录</button>
+      </div>
+      <div class="gs-cleanup" id="cleanup-log-list"></div>
+    </section>
+
+    <!-- 5 · 关于（版本与更新说明） -->
     <section class="gs-card" id="sec-about">
       <div class="gs-card__head">
         <div>
@@ -156,6 +164,7 @@
         <div class="gs-foot__actions">
           <button class="gs-btn" id="btn-save" type="button" disabled>保存</button>
           <button class="gs-btn gs-btn--ghost" id="btn-reload" type="button">放弃改动</button>
+          <button class="gs-btn gs-btn--ghost" id="btn-refresh" type="button">重新载入</button>
           <span class="gs-muted" id="save-state"></span>
         </div>
         <p class="gs-note" id="gs-note" hidden></p>

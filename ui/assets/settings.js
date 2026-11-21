@@ -16,6 +16,8 @@ const API = {
   tokenStatus: "/token-status",
   tokenProbe: "/token-status/probe",
   tokenMute: "/token-status/mute",
+  cleanupLog: "/cleanup-log",
+  cleanupLogClear: "/cleanup-log/clear",
 };
 const STATUS_TIMEOUT_MS = 15000;
 const DEPS_TIMEOUT_MS = 90000;
@@ -48,6 +50,7 @@ const FIELDS = {
     hint: "必填。填 conda 环境或系统 Python 的 python.exe 完整路径，不填则插件无法运行。",
     type: "string",
     wide: true,
+    picker: "file",
     placeholder: "例如 E:\\Miniconda\\envs\\Agent\\python.exe",
   },
   defaultBackend: {
@@ -134,6 +137,27 @@ const FIELDS = {
     wide: true,
     picker: "directory",
     placeholder: "留空 = 文档目录/doc-intake",
+  },
+  cleanupEnabled: {
+    title: "自动清理工作区",
+    hint: "开启后，保存路径里超过保留时长的提取产出会被移到系统回收站。",
+    type: "boolean",
+  },
+  cleanupKeepValue: {
+    title: "保留时长",
+    hint: "超过这个时间的提取产出会被移到系统回收站。太小等于用完就删。",
+    type: "number",
+    int: true,
+    // 和单位并排成一个控件：它们说的是同一件事，拆成两行只是把一句话断成两截。
+    compositeWith: "cleanupKeepUnit",
+    // 没开自动清理时这栏没有意义，跟着开关显隐。单位那栏在同一行里，一起走。
+    when: (values) => values.cleanupEnabled === true,
+  },
+  cleanupKeepUnit: {
+    // 不单独出行，由上面那栏顺手建出来。定义留在这里，读写和判断改动都靠它。
+    title: "时间单位",
+    type: "string",
+    labels: { minute: "分钟", hour: "小时", day: "天" },
   },
 
   // ---- MinerU ----
@@ -282,6 +306,8 @@ const BASIC_KEYS = [
   "saveJson",
   "autoSave",
   "savePath",
+  "cleanupEnabled",
+  "cleanupKeepValue",
 ];
 
 const ADVANCED_GROUPS = [
@@ -341,6 +367,9 @@ const ui = {
   aboutIntervalHint: el("about-interval-hint"),
   aboutCheck: el("about-check"),
   aboutNotes: el("about-notes"),
+  cleanupCard: el("sec-cleanup-log"),
+  cleanupList: el("cleanup-log-list"),
+  cleanupClear: el("btn-clear-cleanup-log"),
 };
 
 let loaded = {};            // 服务端读回的配置（对比用）
@@ -729,7 +758,11 @@ async function openExternal(url) {
 }
 
 // 路径输入 + 「浏览…」：既能手打也能用宿主的文件夹选择器挑。
-// 走 hana.resources.pick（mode: "directory"），需要 manifest 里声明 app/resources.read。
+// 走 hana.resources.pick（mode: "directory" / "file"），需要 manifest 里声明 app/resources.read。
+// 第二个参数把等待时间放宽到 10 分钟：选择框是人在操作，翻目录找某个 exe 很容易超过
+// 请求默认的 10 秒，一起过就报「请求超时」，看着像权限或功能坏了。
+const PICK_TIMEOUT_MS = 10 * 60 * 1000;
+
 function withPicker(input, mode) {
   const wrap = document.createElement("span");
   wrap.className = "gs-inputrow";
@@ -739,7 +772,7 @@ function withPicker(input, mode) {
   pick.textContent = "浏览…";
   pick.addEventListener("click", async () => {
     try {
-      const res = await hana.resources.pick({ mode });
+      const res = await hana.resources.pick({ mode }, { timeoutMs: PICK_TIMEOUT_MS });
       const ref = res && Array.isArray(res.resources) ? res.resources[0] : null;
       const picked = ref && typeof ref.path === "string" ? ref.path.replace(/[\\/]+$/, "") : "";
       if (!picked) return; // 用户取消
@@ -775,8 +808,89 @@ function fillHint(node, text) {
   if (last < raw.length) node.appendChild(document.createTextNode(raw.slice(last)));
 }
 
+// 数字框：把系统给的原生上下箭头换掉。
+// 那个箭头在深色主题下自带一块不透明底色，和卡片风格接不上；整页二十多个
+// 数字框，每个都露出一块浅色方块，看着很脏。自绘一对细箭头，平时只到 38%
+// 的墨色，指上去才实。步长固定为 1，要精确值直接改输入框。
+function buildNumberControl(meta) {
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "gs-input gs-input--num";
+  input.step = meta.int ? "1" : "any";
+  if (meta.placeholder) input.placeholder = meta.placeholder;
+  input.addEventListener("input", onDraftChange);
+
+  const wrap = document.createElement("span");
+  wrap.className = "gs-num";
+
+  const steps = document.createElement("span");
+  steps.className = "gs-num__steps";
+
+  const nudge = (delta) => {
+    const current = Number(input.value);
+    const base = Number.isFinite(current) ? current : 0;
+    input.value = String(base + delta);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  const ARROWS = [
+    { delta: 1, label: "增加", path: "M1 4.2 L4 1.4 L7 4.2" },
+    { delta: -1, label: "减少", path: "M1 1.8 L4 4.6 L7 1.8" },
+  ];
+  for (const arrow of ARROWS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "gs-num__step";
+    btn.tabIndex = -1;
+    btn.setAttribute("aria-label", arrow.label);
+    btn.title = arrow.label;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 8 6");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.3");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", arrow.path);
+    svg.appendChild(path);
+    btn.appendChild(svg);
+    // 用 mousedown 而不是 click：连点时不掉步，也不会先让输入框失焦再抢回来。
+    btn.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      nudge(arrow.delta);
+    });
+    steps.appendChild(btn);
+  }
+
+  wrap.append(input, steps);
+  return { node: wrap, input };
+}
+
 function buildControl(key) {
   const meta = FIELDS[key];
+
+  // 组合控件：数值 + 单位并排。单位那栏不进任何 key 列表，由这里顺手建出来
+  // 并注册进 controls，所以读配置、存配置、判断改动照旧按两个键走，存储格式没变。
+  if (meta.compositeWith) {
+    const { node: numberNode, input } = buildNumberControl(meta);
+
+    const unitBuilt = buildControl(meta.compositeWith);
+    controls.set(meta.compositeWith, unitBuilt);
+
+    const wrap = document.createElement("span");
+    wrap.className = "gs-inputrow gs-inputrow--duration";
+    wrap.append(numberNode, unitBuilt.node);
+
+    return {
+      node: wrap,
+      read: () => input.value,
+      write: (v) => { input.value = v == null ? "" : String(v); },
+      type: meta.type,
+    };
+  }
+
   if (meta.type === "boolean") {
     const label = document.createElement("label");
     label.className = "gs-switch";
@@ -833,17 +947,21 @@ function buildControl(key) {
     };
   }
 
-  const input = document.createElement("input");
   if (meta.type === "number") {
-    input.type = "number";
-    input.className = "gs-input gs-input--num";
-    input.step = meta.int ? "1" : "any";
-  } else {
-    input.type = "text";
-    input.className = "gs-input";
-    input.spellcheck = false;
-    input.autocomplete = "off";
+    const { node, input } = buildNumberControl(meta);
+    return {
+      node,
+      read: () => input.value,
+      write: (v) => { input.value = v == null ? "" : String(v); },
+      type: "number",
+    };
   }
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "gs-input";
+  input.spellcheck = false;
+  input.autocomplete = "off";
   if (meta.placeholder) input.placeholder = meta.placeholder;
   input.addEventListener("input", onDraftChange);
   return {
@@ -1405,6 +1523,14 @@ function onDraftChange() {
   for (const refresh of chainRefreshers) refresh();
   renderDepSource();
   updateBanner();
+  // 自动清理开关一拨，下面那块记录卡片跟着显隐。
+  // 只在从关到开的那一下去拉一次数据，免得每次改数字都打一次接口。
+  if (ui.cleanupCard) {
+    const on = controls.get("cleanupEnabled")?.read?.() === true;
+    const wasHidden = ui.cleanupCard.hidden;
+    ui.cleanupCard.hidden = !on;
+    if (on && wasHidden) void refreshCleanupLog();
+  }
 }
 
 function updateBanner() {
@@ -1477,6 +1603,104 @@ async function muteTokenBar() {
   }
 }
 
+// ---------------------------------------------------------------- 清理记录
+
+// 字节转人话。清理记录的用途是「看得出来清了多少」，不要求精确到字节。
+function humanBytes(n) {
+  const size = Number(n) || 0;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function formatStamp(ms) {
+  const d = new Date(Number(ms) || 0);
+  if (Number.isNaN(d.getTime())) return "—";
+  const pad = (v) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function renderCleanupLog(entries) {
+  const list = ui.cleanupList;
+  if (!list) return;
+  list.textContent = "";
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "gs-cleanup__empty";
+    empty.textContent = "还没有清理记录。开启自动清理后，真的删过东西才会记一条。";
+    list.appendChild(empty);
+    return;
+  }
+
+  // 新的在上：人关心的是「最近有没有动过」，不是最早那次。
+  for (const entry of [...entries].reverse()) {
+    const row = document.createElement("div");
+    row.className = "gs-cleanup__row";
+
+    const head = document.createElement("div");
+    head.className = "gs-cleanup__head";
+
+    const time = document.createElement("span");
+    time.className = "gs-cleanup__time";
+    time.textContent = formatStamp(entry?.at);
+    head.appendChild(time);
+
+    const meta = document.createElement("span");
+    meta.className = "gs-cleanup__meta";
+    const parts = [`释放 ${humanBytes(entry?.freedBytes)}`, `删 ${Number(entry?.removed) || 0} 个条目`];
+    if (Number(entry?.failed) > 0) parts.push(`失败 ${entry.failed} 个`);
+    meta.textContent = parts.join(" · ");
+    head.appendChild(meta);
+
+    row.appendChild(head);
+
+    const files = Array.isArray(entry?.files) ? entry.files : [];
+    if (files.length) {
+      const names = document.createElement("div");
+      names.className = "gs-cleanup__files";
+      const more = Number(entry?.moreFiles) || 0;
+      names.textContent = files.join("、") + (more > 0 ? `，另有 ${more} 个` : "");
+      row.appendChild(names);
+    }
+
+    if (entry?.note) {
+      const note = document.createElement("div");
+      note.className = "gs-cleanup__files";
+      note.textContent = entry.note;
+      row.appendChild(note);
+    }
+
+    list.appendChild(row);
+  }
+}
+
+async function refreshCleanupLog() {
+  const enabled = controls.get("cleanupEnabled")?.read?.() === true;
+  if (ui.cleanupCard) ui.cleanupCard.hidden = !enabled;
+  if (!enabled) return;
+  try {
+    const { data } = await withTimeout(api(API.cleanupLog), STATUS_TIMEOUT_MS, "读取清理记录");
+    renderCleanupLog(data?.entries);
+  } catch {
+    // 读不到就摆一行空状态，不报错：这条信息不影响任何设置的正确性。
+    renderCleanupLog([]);
+  }
+}
+
+async function clearCleanupLog() {
+  try {
+    const { data } = await withTimeout(apiPost(API.cleanupLogClear, {}), STATUS_TIMEOUT_MS, "清空清理记录");
+    if (!data || !data.ok) throw new Error(data?.error || "后端返回失败");
+    renderCleanupLog([]);
+    setNote("清理记录已清空。已经进了回收站的文件不受影响。", "ok");
+  } catch (error) {
+    const why = (error && error.message) || String(error);
+    setNote(`清空记录失败：${why}`, "warn");
+  }
+}
+
 // ---------------------------------------------------------------- 配置读写
 
 async function loadConfig() {
@@ -1488,6 +1712,7 @@ async function loadConfig() {
   ui.saveState.textContent = "";
   updateBanner();
   void refreshTokenBar();
+  void refreshCleanupLog();
 }
 
 async function saveConfig() {
@@ -1902,6 +2127,8 @@ function wire() {
   ui.refresh.addEventListener("click", () => void reloadConfig());
   ui.aboutCheck.addEventListener("click", () => updateNotice?.openManual());
   ui.aboutNotes.addEventListener("click", () => updateNotice?.openCached());
+  // 清空记录只动那个记录文件，不碰已经进了回收站的东西，所以不需要二次确认。
+  ui.cleanupClear?.addEventListener("click", () => void clearCleanupLog());
   ui.aboutEnabled.addEventListener("change", () => void commitAbout());
   ui.aboutInterval.addEventListener("input", () => {
     // 打字时只做一件事：改对了就把红字收回。打到一半不判它错。

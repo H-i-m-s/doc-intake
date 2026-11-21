@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { validateMineruToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
 import { createUpdateCheck, normalizeIntervalMinutes } from "../lib/update-check.mjs";
 import { findJobByCardId, getJob, hasSavedPath } from "../lib/jobs.js";
+import { CLEANUP_LOG_LIMITS, clearCleanupLog, readCleanupLog } from "../lib/cleanup-log.js";
 import {
   combinedFingerprint,
   evaluateTokenStatus,
@@ -103,6 +104,9 @@ const SPEC = {
   xlsxMaxCols: { type: "number", default: 50 },
   autoSave: { type: "boolean", default: false },
   savePath: { type: "string", default: "" },
+  cleanupEnabled: { type: "boolean", default: false },
+  cleanupKeepValue: { type: "number", default: 7 },
+  cleanupKeepUnit: { type: "string", enum: ["minute", "hour", "day"], default: "day" },
 };
 
 // 「环境依赖管理」卡片的依赖清单。id 用于前后端对齐，module 是导入名，
@@ -525,7 +529,28 @@ export default function registerSettingsRoutes(app, ctx) {
     }
   });
 
-  app.get("/config", async (c) => {
+  // 清理记录：只读最近几次，没删东西的那些次不写，所以不会刷满。
+app.get("/cleanup-log", (c) => {
+  try {
+    return c.json({ ok: true, entries: readCleanupLog(), limits: CLEANUP_LOG_LIMITS });
+  } catch (error) {
+    const why = (error && error.message) || String(error);
+    return c.json({ ok: false, error: why, entries: [] }, 200);
+  }
+});
+
+// 清空记录。只动这个记录文件，不碰任何已经删进回收站的东西。
+app.post("/cleanup-log/clear", (c) => {
+  try {
+    clearCleanupLog();
+    return c.json({ ok: true });
+  } catch (error) {
+    const why = (error && error.message) || String(error);
+    return c.json({ ok: false, error: why }, 200);
+  }
+});
+
+app.get("/config", async (c) => {
     try {
       return c.json({ ok: true, config: await readConfig(ctx) });
     } catch (error) {

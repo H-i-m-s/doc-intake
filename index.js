@@ -14,6 +14,7 @@
 
 import { defineApp } from "./sdk/app-contract/server-client.js";
 import { configureJobsStore, loadJobs } from "./lib/jobs.js";
+import { configureCleanupLog } from "./lib/cleanup-log.js";
 import * as toolDocIntake from "./tools/doc_intake.js";
 
 export const name = "doc-intake";
@@ -27,6 +28,8 @@ export default defineApp(async (sdk) => {
   const jobsStore = configureJobsStore({ dataDir: sdk.dataDir, logger: sdk.logger });
   // 读回上一个进程留下的记录；读坏了退成空表，返回值就是真正收下的条数。
   const restoredJobs = loadJobs();
+  // 清理记录跟着 dataDir 走。它不在保存目录里，清理动作碰不到自己。
+  const cleanupLog = configureCleanupLog({ dataDir: sdk.dataDir });
 
   // 启动日志带上两个能力探测结果：Token 健康状态要用存储落盘、偶尔借宿主网络出口探一次，
   // 这两样缺任何一样都会静默退化成"不提示"，所以把它写在启动行里，以后看日志一眼就能排除。
@@ -35,7 +38,8 @@ export default defineApp(async (sdk) => {
     "doc-intake v2 loaded"
     + ` | token-status storage=${typeof sdk?.storage?.global?.set === "function" ? "on" : "MISSING"}`
     + ` net=${typeof sdk?.network?.fetch === "function" ? "on" : "MISSING"}`
-    + ` | jobs-store=${jobsStore.enabled ? "on" : "MISSING"} restored=${restoredJobs}`,
+    + ` | jobs-store=${jobsStore.enabled ? "on" : "MISSING"} restored=${restoredJobs}`
+    + ` | cleanup-log=${cleanupLog.enabled ? "on" : "MISSING"}`,
   );
 
   for (const mod of TOOL_MODULES) {

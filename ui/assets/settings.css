@@ -405,6 +405,10 @@ body { padding: 0 12px; }
 /* 路径输入 + 「浏览…」按钮：输入框占满剩余宽度，按钮不抢空间 */
 .gs-inputrow { display: flex; align-items: center; gap: 8px; width: 100%; }
 .gs-inputrow .gs-input { flex: 1 1 auto; width: auto; min-width: 0; }
+/* 时长控件：数字框窄、单位下拉固定宽，两者紧挨着，读起来是一句话。 */
+.gs-inputrow--duration { width: auto; }
+.gs-inputrow--duration .gs-num { flex: 0 0 auto; width: 88px; }
+.gs-inputrow--duration .gs-selectwrap { flex: 0 0 auto; width: 104px; }
 
 /* ---------- 开关 ---------- */
 .gs-switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
@@ -798,3 +802,55 @@ body { padding: 0 12px; }
 }
 .gs-about__numwrap .gs-input--num { width: 92px; text-align: right; }
 .gs-about__numwrap em { font-style: normal; font-size: 11.5px; color: var(--gs-muted); }
+
+/* ---------- 清理记录 ---------- */
+/* 每条一行：时间、释放空间、删了几个。文件名单独一行跟在下面，
+   不和时间挤在一起，否则长文件名一多就满屏锯歯。 */
+.gs-cleanup { display: flex; flex-direction: column; gap: 10px; }
+.gs-cleanup__row {
+  display: flex; flex-direction: column; gap: 3px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--gs-ink) 8%, transparent);
+}
+.gs-cleanup__row:last-child { padding-bottom: 0; border-bottom: 0; }
+.gs-cleanup__head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.gs-cleanup__time {
+  color: var(--gs-muted); font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.gs-cleanup__meta { color: var(--gs-sub); font-size: 12.5px; }
+.gs-cleanup__files {
+  color: var(--gs-muted); font-size: 12px; line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.gs-cleanup__empty { color: var(--gs-muted); font-size: 12.5px; }
+
+/* ---------- 数字框 ---------- */
+/* 原生上下箭头在深色主题下自带一块不透明底，跟卡片风格接不上；整页二十多个
+   数字框，每个都冒一块浅色方块，看着很脏。这里整块关掉，换成自绘的一对细箭头：
+   平时只到 38% 的墨色，指上去才实。 */
+.gs-input--num {
+  text-align: right; font-variant-numeric: tabular-nums;
+  appearance: textfield; -moz-appearance: textfield;
+}
+.gs-input--num::-webkit-outer-spin-button,
+.gs-input--num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+.gs-num { position: relative; display: inline-flex; align-items: center; width: 220px; }
+.gs-num .gs-input { width: 100%; padding-right: 24px; }
+.gs-num__steps {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.gs-num__step {
+  box-sizing: border-box;
+  width: 18px; height: 12px; padding: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 3px; background: transparent;
+  color: color-mix(in srgb, var(--gs-ink) 38%, transparent);
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s;
+}
+.gs-num__step:hover { color: var(--gs-ink); background: var(--gs-tint); }
+.gs-num__step:active { transform: scale(0.9); }
+.gs-num__step svg { width: 8px; height: 6px; display: block; }

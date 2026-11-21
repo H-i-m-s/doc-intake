@@ -2,6 +2,7 @@ import { extractDocument } from "../lib/service.js";
 import { cardInstanceIdFor, createJob, finishJob, getJob, pruneJobs, updateFile, updateJob } from "../lib/jobs.js";
 import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
 import { getSettings, DEFAULT_PDF_BACKEND_CHAIN } from "../lib/settings.js";
+import { scheduleAutoCleanup } from "../lib/cleanup.js";
 import { Semaphore } from "../lib/semaphore.js";
 import { DocIntakeError } from "../lib/errors.js";
 import {
@@ -811,6 +812,12 @@ export async function execute(input = {}, ctx) {
     if (sources.length === 0) {
       throw new Error("没有找到可解析的文件，或路径无效");
     }
+
+    // 自动清理在提取开头起个头就走，不 await。两个理由：
+    // 一是它和本次提取没有依赖，让主流程等它纯属浪费；
+    // 二是放在开头而不是收尾，是因为这时本次要产出的文件还不存在，
+    // 扫到的都是上一轮留下的，不会把自己刚写的东西当成过期文件带走。
+    scheduleAutoCleanup({ settings, ctx, logger: ctx?.logger });
 
     const enrichedInput = {
       ...input,

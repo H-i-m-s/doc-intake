@@ -359,6 +359,34 @@
             "title": "默认保存路径",
             "default": "",
             "description": "留空就用系统文档目录下的 doc-intake（不写死盘符，按各自的机器算）"
+          },
+          "cleanupEnabled": {
+            "type": "boolean",
+            "title": "自动清理工作区",
+            "default": false,
+            "description": "开启后，保存路径里超过保留时长的提取产出会被移到系统回收站"
+          },
+          "cleanupKeepValue": {
+            "type": "number",
+            "title": "保留时长",
+            "default": 7,
+            "description": "搭配下面的单位使用，例如 7 天、12 小时、30 分钟"
+          },
+          "cleanupKeepUnit": {
+            "type": "string",
+            "title": "时间单位",
+            "default": "day",
+            "enum": [
+              "minute",
+              "hour",
+              "day"
+            ],
+            "enumNames": [
+              "分钟",
+              "小时",
+              "天"
+            ],
+            "description": "保留时长的单位"
           }
         }
       }
