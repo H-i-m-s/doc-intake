@@ -323,6 +323,12 @@ doc-intake/
 | Excel（旧版） | `.xls` | Local（Office COM → `.xlsx`） | 转换后复用 XLSX 提取器；宏不保留，复杂对象需验证 |
 | HTML | `.html` / `.htm` | Local | 元数据/链接/代码块/远程媒体 |
 | 图片 | `.jpg` `.jpeg` `.png` `.bmp` `.tiff` `.tif` `.webp` `.gif` | OXR → PaddleOCR → PaddleOCR 本地 | 自动长图分割 |
+| 电子书（EPUB） | `.epub` | Local | 章节成标题层级、目录取 nav 或 ncx、图片按原始字节落盘；字体混淆照常解，内容加密直接报 |
+| 电子书（FB2） | `.fb2` / `.fbz` | Local | section 嵌套深度成标题层级，图片从 `<binary>` 的 base64 解出 |
+| 漫画 | `.cbz` | Local | 按页名自然序出图（`page2` 在 `page10` 前），不主动 OCR |
+| Kindle | `.mobi` `.azw` `.azw3` `.prc` | Local + 可选依赖 `mobi` | 先看 PalmDB 头的加密类型，有 DRM 直接拒；未装依赖时给出安装提示 |
+
+电子书一律本地解析，不进降级链——云端那几档做不了。CBZ 默认只出图不 OCR；MOBI/AZW 要的可选依赖是 GPL-3.0，插件本身不打包它，由用户在自己的 Python 环境里装。
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: doc-intake
 description: >
-  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格、图片内容或图片/文档里的二维码、条形码（QR、Data Matrix、一维条码）时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。
+  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML、图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）或电子书（EPUB、FB2、FBZ、CBZ、MOBI、AZW、AZW3、PRC）。当用户发送文档/图片/电子书、提到 Word、Excel、PowerPoint、PDF、电子书、EPUB、Kindle、漫画、扫描件、截图文字、公式、表格、图片内容或图片/文档里的二维码、条形码（QR、Data Matrix、一维条码）时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。
 compatibility: "需要 Python 环境（用户需在 App 设置面板填 pythonPath）和可选的 MinerU / OXR / PaddleOCR Token"
 metadata:
   default-enabled: true
@@ -15,7 +15,7 @@ metadata:
 
 以下情况直接调用 `doc_intake`：
 
-- 用户发送或指定 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML、HTM 或图片文件。
+- 用户发送或指定 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML、HTM、图片文件，或电子书（EPUB / FB2 / FBZ / CBZ / MOBI / AZW / AZW3 / PRC）。
 - 用户要求读取、查看、解析、提取、识别、OCR、转 Markdown、总结或分析文件内容。
 - 用户询问文档中的文字、表格、公式、图片、视频、音频或链接。
 - 用户询问图片或文档里的二维码、条码内容（这个码是什么、二维码指向哪个链接、扫一下这张图）。
@@ -65,6 +65,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - 图片：默认 oxr > paddleocr > paddleocr-local，同样可被用户设置覆盖。
 - `oxr` 指 SoMark（云端），没填 OXR Token 时这一档会被自动跳过，不会报错。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM、HTML：走本地 Python 解析；旧版 DOC/XLS/PPT 会先由配置的转换层转为 OOXML，再复用对应现代格式适配器。
+- 电子书（EPUB / FB2 / FBZ / CBZ / MOBI / AZW / AZW3 / PRC）：**永远走本地**，不进降级链。云端几档做不了电子书，即使设置里的默认后端是 oxr 也照本地解析，并在 `warnings` 里说一句。CBZ（漫画）默认只按页序出图、不主动 OCR；要文字就让用户明确要走图片链。MOBI/AZW 需要可选依赖 `mobi`（GPL-3.0，插件不打包它），没装时返回的是可读的安装提示，把原话转给用户，别自己去 pip install。有 DRM 的书会被明确拒绝，不要尝试绕过。
 - 用户要求不上传 PDF 或只用本地解析时传 `backend="local"`。
 - 不要因为本地解析失败就自行改写参数；根据返回的 `warnings` 判断是否需要建议用户改用其他后端。
 - 本地部署时可用 `mineru-local` / `paddleocr-local`，需先在设置里填本地服务地址。

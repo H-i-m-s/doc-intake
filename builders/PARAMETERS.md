@@ -12,7 +12,7 @@
 |------|------|:---:|--------|------|
 | `source` | `string[]` | 是 | — | 文件或目录路径列表。目录会被展开成里面所有支持格式的文件；也容忍单个字符串。 |
 | `outputDir` | `string` | 否 | 由自动保存与保存路径决定 | 保存目录。不传时按设置里的自动保存、保存路径与 `summaryOnly` 规则裁决，见「输出与自动保存」。 |
-| `backend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "paddleocr-local" \| "local"` | 否 | `"auto"` | 解析后端。`auto` 按文件类型走默认降级链；显式给一档时**链上就只有这一档**，不再向后降级，且该档需要的凭证或地址没配时直接报错。 |
+| `backend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "paddleocr-local" \| "local"` | 否 | `"auto"` | 解析后端。`auto` 按文件类型走默认降级链；显式给一档时**链上就只有这一档**，不再向后降级，且该档需要的凭证或地址没配时直接报错。电子书（EPUB / FB2 / CBZ / MOBI 等）不受它影响，一律本地解析，只在 `warnings` 里提一句。 |
 | `pageRange` | `string` | 否 | 全部页 | PDF 页码范围，形如 `"1-5,10,15-20"`，1-based。其他格式忽略。 |
 | `language` | `string` | 否 | 设置里的默认语言（出厂 `zh`） | 文档语言，透传给 OCR 与云端 API，影响识别语种。 |
 | `includeMedia` | `boolean` | 否 | `true` | 是否提取并保存图片/视频/音频。只有用户明确说不要媒体时才传 `false`；「保存 JSON」「正文可省略」「只返回摘要」都不等于不要媒体。 |
@@ -68,6 +68,21 @@
 本地档会检测方正特征乱码（Unicode U+7280–U+72FF）并写进 `warnings`，建议改用云端 OCR 后端重提取。看到这条警告就把 `backend` 换成 `mineru`、`oxr` 或 `paddleocr`。
 
 **本地档的图片按位置插入。** 每页内嵌图片按 `page.get_image_info()` 给出的 y 坐标插到对应文字 block 前后，输出 Markdown 时按视觉顺序拼接：同一 y 行的多张图按 x0 升序（左到右），容忍 ±5px 浮点误差；同一 xref 在一页内只引用一次；inline image（xref=0）跳过，PyMuPDF 不暴露它的原始 bytes；只出现在 `get_images` 而 `get_image_info` 没显示的资源引用不抽。
+
+### 电子书（不进降级链）
+
+电子书不参与上面那两条链：云端几档都只吃 PDF 和图片，做不了容器格式。四类一律本地解析，若 `backend` 显式指定了云端档，会在 `warnings` 里说一句「电子书只能本地解析，已忽略 backend=xxx」，不报错——设置页的默认后端是全局的，把它设成 oxr 的人不该因此一本书都读不了。
+
+| 扩展名 | 细类型 | 提取器做什么 |
+|---|---|---|
+| `.epub` | `epub` | 解 zip → 找 OPF → spine 定阅读顺序 → nav/ncx 取目录 → XHTML 转 Markdown；图片按原始字节落盘。字体混淆（IDPF / Adobe font）照常解，内容加密（ADEPT 等）直接报错 |
+| `.fb2` / `.fbz` | `fb2` | 单个 XML；`<binary>` 里的 base64 解成图片，section 嵌套深度成标题层级，`body name="notes"` 挪到文末 |
+| `.cbz` | `cbz` | zip 装图，按页名自然序（`page2` 在 `page10` 前）出图；不主动 OCR，要文字得显式走图片链 |
+| `.mobi` `.azw` `.azw3` `.prc` | `mobi` | 先看 PalmDB 记录头的加密类型，有 DRM 直接拒；再交给可选依赖 `mobi` 解包，解出 epub 就复用 EPUB 提取器，解出 html 走 HTML 转 Markdown，解出 pdf 是 Print Replica，报错请用户先转 PDF |
+
+MOBI/AZW 那条依赖是 GPL-3.0，插件不打包它，由用户在设置页「环境依赖」里一键装进自己的 Python 环境。没装时返回的是可读的安装提示，不是 traceback。
+
+`pageRange` 对电子书无效（它们没有页的概念，CBZ 的页是图片顺序）；`language` 也只当提示，真正的语言取自书籍自身的元数据。
 
 ### MinerU
 
