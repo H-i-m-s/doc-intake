@@ -991,8 +991,9 @@ def _run(args) -> dict:
             return barcode_only
 
     # 电子书只能本地解析：不进后端链，也不按 defaultBackend 去挑云端档。云端那几档
-    # 做不了 EPUB，进去了只会把进度、超时、返回体按错的那套走。
-    ebook_local_only = file_type == "epub"
+    # 做不了电子书，进去了只会把进度、超时、返回体按错的那套走。
+    # 判据用格式清单里的粗类，而不是写死类型名：以后再加一种电子书格式，这里不用改。
+    ebook_local_only = formats.category_of(Path(args.source).suffix.lower()) == "ebook"
     backend_chain = ["local"] if ebook_local_only else select_backend_chain(file_type, backend, settings)
     include_images = settings.get("includeMedia", settings.get("includeImages", True))
 
@@ -1027,7 +1028,7 @@ def _run(args) -> dict:
     # 设置页的默认后端是全局的：把它设成 oxr 的人不该突然一本电子书都读不了，
     # 但显式传入的意图需要被看见，所以用 warning，不用 error。
     if ebook_local_only and backend and backend not in ("auto", "local"):
-        result.warnings.append(f"EPUB 只能本地解析，已忽略 backend={backend}")
+        result.warnings.append(f"电子书只能本地解析，已忽略 backend={backend}")
 
     prefetched_codes = _take_barcode_prefetch(barcode_future, barcode_pool) or probe_codes
     return _finalize_single_result(

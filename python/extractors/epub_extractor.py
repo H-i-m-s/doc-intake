@@ -31,6 +31,11 @@ from xml.etree import ElementTree as ET
 
 from .base import BaseExtractor, ExtractionResult
 from .emf_converter import extract_and_convert_media
+from ._media_placeholders import (
+    MediaPlaceholders,
+    build_media_map,
+    drop_unresolved_media,
+)
 from ._utils import markdown_table
 from logger import get_logger
 
@@ -54,8 +59,6 @@ FONT_OBFUSCATION_ALGORITHMS = {
 # zip bomb 的两道门槛：单条目解压后 200 MB、单章 20 MB。
 MAX_ENTRY_BYTES = 200 * 1024 * 1024
 MAX_CHAPTER_BYTES = 20 * 1024 * 1024
-
-MEDIA_PLACEHOLDER_PREFIX = "docintake-media-"
 
 _XML_DECL_RE = re.compile(r"<\?xml[^>]*\?>", re.IGNORECASE)
 _DOCTYPE_RE = re.compile(r"<!DOCTYPE(?:[^>\[]|\[[\s\S]*?\])*>", re.IGNORECASE)
@@ -163,38 +166,6 @@ def _convert_output_text(convert_result) -> str:
     return str(convert_result)
 
 
-class _MediaState:
-    """一次提取里的占位符账本。
-
-    同一个 zip 内路径只发一个占位符：同一张图被两处引用时复用，否则
-    extract_and_convert_media 会把它解两遍、编号也翻倍。
-    """
-
-    def __init__(self) -> None:
-        self.placeholder_by_path: dict[str, str] = {}
-        self.path_by_placeholder: dict[str, str] = {}
-        self.order: list[str] = []
-        self.counter = 0
-
-    def add_path(self, zip_path: str) -> str:
-        """登记一个要解出来的媒体（不产生正文引用），返回空串。"""
-        if zip_path not in self.placeholder_by_path:
-            self.placeholder_by_path[zip_path] = ""
-            self.order.append(zip_path)
-        return ""
-
-    def placeholder_for(self, zip_path: str) -> str:
-        existing = self.placeholder_by_path.get(zip_path)
-        if existing:
-            return existing
-        self.counter += 1
-        placeholder = f"{MEDIA_PLACEHOLDER_PREFIX}{self.counter}"
-        self.placeholder_by_path[zip_path] = placeholder
-        self.path_by_placeholder[placeholder] = zip_path
-        self.order.append(zip_path)
-        return placeholder
-
-
 class EpubExtractor(BaseExtractor):
     """EPUB 提取器：spine 顺序 -> 一份 Markdown，媒体落到 `{stem}_media/`。"""
 
@@ -236,7 +207,7 @@ class EpubExtractor(BaseExtractor):
 
             nav_titles = self._read_nav_titles(zf, package, manifest, names, result)
 
-            media = _MediaState()
+            media = MediaPlaceholders()
             blocks: list[str] = []
             if info["title"]:
                 blocks.append(f"# {info['title']}")
@@ -259,12 +230,12 @@ class EpubExtractor(BaseExtractor):
 
             cover_path = self._find_cover(package, manifest)
             if include_images and cover_path:
-                media.add_path(cover_path)
+                media.reserve(cover_path)
 
             media_map = self._extract_media(zf, media, output_dir, stem, include_images, result)
 
             markdown = "\n\n".join(block for block in blocks if block.strip())
-            markdown = self._drop_unresolved_media(markdown, media, media_map)
+            markdown = drop_unresolved_media(markdown, media, media_map)
             result.markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip() + "\n"
 
         fixed_layout = self._is_fixed_layout(package)
@@ -579,7 +550,7 @@ class EpubExtractor(BaseExtractor):
         zf: zipfile.ZipFile,
         doc_path: str,
         names: set[str],
-        media: _MediaState,
+        media: MediaPlaceholders,
         include_images: bool,
         result: ExtractionResult,
     ) -> tuple[Optional[str], bool]:
@@ -645,7 +616,7 @@ class EpubExtractor(BaseExtractor):
         html_text: str,
         doc_path: str,
         names: set[str],
-        media: _MediaState,
+        media: MediaPlaceholders,
         include_images: bool,
         result: ExtractionResult,
     ) -> tuple[str, dict[str, str]]:
@@ -729,7 +700,7 @@ class EpubExtractor(BaseExtractor):
     def _extract_media(
         self,
         zf: zipfile.ZipFile,
-        media: _MediaState,
+        media: MediaPlaceholders,
         output_dir: Optional[str],
         stem: str,
         include_images: bool,
@@ -751,7 +722,7 @@ class EpubExtractor(BaseExtractor):
                     f"{zip_path} 解压后 {size} 字节，超过单条目上限 200 MB，已跳过"
                 )
                 oversized.append(zip_path)
-        # 超限的不进解包列表；占位符账本保留，好让 _drop_unresolved_media 把正文引用清掉。
+        # 超限的不进解包列表；占位符账本保留，好让 drop_unresolved_media 把正文引用清掉。
         for zip_path in oversized:
             media.order.remove(zip_path)
         if not media.order:
@@ -763,38 +734,9 @@ class EpubExtractor(BaseExtractor):
             result.warnings.append(f"媒体解包失败：{exc}")
             return {}
 
-        by_original = {item.original_path: item for item in extracted}
-        media_map: dict[str, dict] = {}
-        for placeholder, zip_path in media.path_by_placeholder.items():
-            item = by_original.get(zip_path)
-            if item is None:
-                continue
-            # 交给 main.py 的 save_result：它按 local_path 的文件名重写成 {stem}_media/xxx.ext。
-            media_map[placeholder] = {
-                "local_path": item.local_path,
-                "original_path": item.original_path,
-                "kind": item.kind,
-                "ext": item.ext,
-            }
+        media_map = build_media_map(extracted, media)
         result.images = [item.local_path for item in extracted]
         return media_map
-
-    @staticmethod
-    def _drop_unresolved_media(
-        markdown: str,
-        media: _MediaState,
-        media_map: dict[str, dict],
-    ) -> str:
-        """占位符没换成真媒体（包内缺图、解包失败）时清掉引用，别让占位符漏进正文。"""
-        unresolved = [
-            placeholder for placeholder in media.path_by_placeholder
-            if placeholder not in media_map
-        ]
-        for placeholder in unresolved:
-            escaped = re.escape(placeholder)
-            markdown = re.sub(rf"!\[[^\]]*\]\(\s*{escaped}\s*\)", "", markdown)
-            markdown = re.sub(rf"<img\b[^>]*\bsrc=\"{escaped}\"[^>]*>", "", markdown)
-        return markdown
 
     @staticmethod
     def _find_cover(package: ET.Element, manifest: dict[str, dict]) -> str:

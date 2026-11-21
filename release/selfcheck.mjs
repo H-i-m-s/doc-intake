@@ -310,15 +310,15 @@ if (!py) {
     }
   }
 
-  // 6b) 库自测：那五个脚本要 olefile 才能 import。装了就跑，没装就跳过 ——
+  // 6b) 库自测：那六个脚本要 olefile 才能 import。装了就跑，没装就跳过 ——
   // 这一步不该让「换台机器没装依赖」变成出不了包，但也绝不在装齐的机器上放水。
-  const SELFTESTS = ["selftest_v3_parse.py", "selftest_v3_render.py", "selftest_v5_parse.py", "selftest_v5_render.py", "selftest_v6_epub.py"];
+  const SELFTESTS = ["selftest_v3_parse.py", "selftest_v3_render.py", "selftest_v5_parse.py", "selftest_v5_render.py", "selftest_v6_epub.py", "selftest_v7_fb2.py"];
   const depsReady = (() => {
     const r = runPy(["-c", "import olefile"]);
     return !r.error && r.status === 0;
   })();
   if (!depsReady) {
-    note("当前环境 import 不到 olefile，已跳过 test/ 的五个库自测（在装齐依赖的环境里跑就会自动带上）");
+    note("当前环境 import 不到 olefile，已跳过 test/ 的六个库自测（在装齐依赖的环境里跑就会自动带上）");
   } else if (!existsSync(join(ROOT, "test"))) {
     note("没找到 test/ 目录，跳过库自测");
   } else {

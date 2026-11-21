@@ -26,6 +26,8 @@
     ".htm": "html"
   },
   "ebook": {
-    ".epub": "epub"
+    ".epub": "epub",
+    ".fb2": "fb2",
+    ".fbz": "fb2"
   }
 }
