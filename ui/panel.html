@@ -60,16 +60,32 @@
       </button>
       <div class="di-adv__body" id="di-adv-body" aria-hidden="true">
         <div class="di-adv__inner" id="di-adv-inner">
-          <div class="di-row">
-            <label class="di-row__label" for="di-backend">解析后端</label>
-            <select class="di-input di-select" id="di-backend">
-              <option value="auto">自动</option>
-              <option value="mineru">MinerU</option>
-              <option value="paddleocr">PaddleOCR</option>
-              <option value="mineru-local">MinerU 本地</option>
-              <option value="paddleocr-local">PaddleOCR 本地</option>
-              <option value="local">本地</option>
-            </select>
+          <!-- 自绘列表，不用原生 select：原生弹层在 WebView 里跟着系统配色走，
+               深色卡片下会变成白底浅字，选项根本读不清。
+               列表走普通流布局而不是绝对定位——卡片高度由内容决定，绝对定位会被卡片边界裁掉。 -->
+          <div class="di-row di-row--combo">
+            <span class="di-row__label" id="di-backend-label">解析后端</span>
+            <div class="di-combo" id="di-backend" data-value="auto">
+              <button class="di-combo__field" id="di-backend-field" type="button"
+                      role="combobox" aria-haspopup="listbox" aria-expanded="false"
+                      aria-labelledby="di-backend-label di-backend-value"
+                      aria-controls="di-backend-list">
+                <span class="di-combo__value" id="di-backend-value">自动</span>
+                <svg class="di-combo__chevron" viewBox="0 0 12 12" aria-hidden="true">
+                  <path d="M2.6 4.4 L6 7.8 L9.4 4.4" fill="none" stroke="currentColor"
+                        stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <ul class="di-combo__list" id="di-backend-list" role="listbox"
+                  aria-labelledby="di-backend-label" hidden>
+                <li class="di-combo__option" role="option" data-value="auto" aria-selected="true">自动</li>
+                <li class="di-combo__option" role="option" data-value="mineru" aria-selected="false">MinerU</li>
+                <li class="di-combo__option" role="option" data-value="paddleocr" aria-selected="false">PaddleOCR</li>
+                <li class="di-combo__option" role="option" data-value="mineru-local" aria-selected="false">MinerU 本地</li>
+                <li class="di-combo__option" role="option" data-value="paddleocr-local" aria-selected="false">PaddleOCR 本地</li>
+                <li class="di-combo__option" role="option" data-value="local" aria-selected="false">本地</li>
+              </ul>
+            </div>
           </div>
           <div class="di-row">
             <label class="di-row__label" for="di-page-range">页码范围</label>

@@ -266,6 +266,111 @@ function startPanel() {
   let hana = null;
   let expanded = false;
 
+  // ── 自绘下拉 ──────────────────────────────────────────────────────────
+  // 原生 select 的弹层在 WebView 里按系统配色渲染，深色卡片下就是白底浅字，
+  // 连选项都读不清。所以控件和列表都自己画：按钮 + 列表，键盘也能用
+  // （上下移动、回车选中、Esc 收起、Tab 收起）。
+  // 列表占普通流：卡片高度由内容决定，绝对定位的弹层会被卡片边界裁掉。
+  function createCombo(rootEl) {
+    if (!rootEl) return null;
+    const fieldEl = rootEl.querySelector(".di-combo__field");
+    const valueEl = rootEl.querySelector(".di-combo__value");
+    const listEl = rootEl.querySelector(".di-combo__list");
+    const optionEls = Array.from(listEl ? listEl.querySelectorAll(".di-combo__option") : []);
+    let activeIndex = -1;
+
+    const optionValue = (el) => el?.getAttribute("data-value") || "";
+    const isOpen = () => rootEl.classList.contains("is-open");
+
+    function highlight(index) {
+      if (!optionEls.length) return;
+      const next = (index + optionEls.length) % optionEls.length;
+      activeIndex = next;
+      optionEls.forEach((el, i) => el.classList.toggle("is-active", i === next));
+    }
+
+    function openList() {
+      if (!listEl || isOpen()) return;
+      listEl.hidden = false;
+      rootEl.classList.add("is-open");
+      fieldEl?.setAttribute("aria-expanded", "true");
+      const index = optionEls.findIndex((el) => optionValue(el) === (rootEl.getAttribute("data-value") || ""));
+      highlight(index >= 0 ? index : 0);
+      reportSize();
+    }
+
+    function closeList() {
+      if (!listEl || !isOpen()) return;
+      listEl.hidden = true;
+      rootEl.classList.remove("is-open");
+      fieldEl?.setAttribute("aria-expanded", "false");
+      optionEls.forEach((el) => el.classList.remove("is-active"));
+      activeIndex = -1;
+      reportSize();
+    }
+
+    // 只认列表里真实存在的值：后端将来多出一个档位时，不显示一个选不中的空项。
+    function setValue(next) {
+      const value = typeof next === "string" ? next : "";
+      const picked = optionEls.find((el) => optionValue(el) === value);
+      if (!picked) return;
+      rootEl.setAttribute("data-value", value);
+      if (valueEl) valueEl.textContent = (picked.textContent || "").trim();
+      optionEls.forEach((el) => el.setAttribute("aria-selected", optionValue(el) === value ? "true" : "false"));
+    }
+
+    function pick(index) {
+      const el = optionEls[index];
+      if (!el) return;
+      setValue(optionValue(el));
+      closeList();
+      fieldEl?.focus();
+    }
+
+    fieldEl?.addEventListener("click", () => {
+      if (isOpen()) closeList(); else openList();
+    });
+
+    fieldEl?.addEventListener("keydown", (event) => {
+      const key = event.key;
+      if (key === "Escape") {
+        if (isOpen()) { event.preventDefault(); closeList(); }
+        return;
+      }
+      if (key === "ArrowDown" || key === "ArrowUp") {
+        event.preventDefault();
+        if (!isOpen()) openList();
+        else highlight(activeIndex + (key === "ArrowDown" ? 1 : -1));
+        return;
+      }
+      if (key === "Enter" || key === " ") {
+        event.preventDefault();
+        if (isOpen()) pick(activeIndex);
+        else openList();
+        return;
+      }
+      if (key === "Tab") closeList();
+    });
+
+    optionEls.forEach((el, index) => {
+      el.addEventListener("click", () => pick(index));
+      el.addEventListener("mouseenter", () => highlight(index));
+    });
+
+    // 点到外面就收：卡片里只有这一个浮层，不需要更复杂的关法。
+    document.addEventListener("click", (event) => {
+      if (isOpen() && !rootEl.contains(event.target)) closeList();
+    });
+
+    return {
+      get value() { return rootEl.getAttribute("data-value") || ""; },
+      set value(next) { setValue(next); },
+      has: (value) => optionEls.some((el) => optionValue(el) === value),
+    };
+  }
+
+  const backendCombo = createCombo(backendEl);
+
   // ── 作业与进度状态 ────────────────────────────────────────────────────
   /** 当前作业号。空串表示这次面板上没有在跑的作业。 */
   let jobId = "";
@@ -367,9 +472,9 @@ function startPanel() {
     if (savePathEl) savePathEl.value = savePath;
 
     const backend = typeof defaults?.defaultBackend === "string" ? defaults.defaultBackend.trim() : "";
-    // 只认下拉里真实存在的 value：后端将来多出一个档位时，面板不该显示一个选不中的空项。
-    const known = backend && Array.from(backendEl?.options || []).some((option) => option.value === backend);
-    if (backendEl) backendEl.value = known ? backend : FALLBACK_DEFAULTS.defaultBackend;
+    // 只认列表里真实存在的 value：后端将来多出一个档位时，面板不该显示一个选不中的空项。
+    const known = backend && backendCombo?.has(backend);
+    if (backendCombo) backendCombo.value = known ? backend : FALLBACK_DEFAULTS.defaultBackend;
 
     const language = typeof defaults?.language === "string" ? defaults.language.trim() : "";
     if (languageEl) languageEl.value = language || FALLBACK_DEFAULTS.language;
@@ -869,7 +974,7 @@ function startPanel() {
     const payload = {
       sources,
       outputDir: savePathEl?.value.trim() || "",
-      backend: backendEl?.value || FALLBACK_DEFAULTS.defaultBackend,
+      backend: backendCombo?.value || FALLBACK_DEFAULTS.defaultBackend,
       pageRange: pageRangeEl?.value.trim() || "",
       language: languageEl?.value.trim() || "",
       includeMedia: includeMediaEl?.checked === true,
