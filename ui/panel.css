@@ -33,13 +33,17 @@ body {
   --di-line: color-mix(in srgb, var(--di-ink) 10%, transparent);
 }
 
+/* 深色一套。每一项都要把无前缀的名字也写进备选链：
+   宿主主题表里真正定义的是 --accent / --text-light / --green / --danger，
+    --hana-* 只给聊天正文用（--hana-text）。只写 --hana-* 的话，
+   强调色会一路掉到兜底的蓝——上一版就是这个原因。 */
 body.t-dark {
-  --di-ink: var(--hana-text, #f2f4f7);
-  --di-sub: var(--hana-text-light, #c3cad3);
-  --di-muted: var(--hana-text-muted, #919aa4);
-  --di-accent: var(--hana-accent, #7794c2);
-  --di-ok: var(--hana-green, #6e9c7f);
-  --di-warn: var(--hana-danger, #c07d72);
+  --di-ink: var(--hana-text, var(--text, #f2f4f7));
+  --di-sub: var(--hana-text-light, var(--text-light, #c3cad3));
+  --di-muted: var(--hana-text-muted, var(--text-muted, #919aa4));
+  --di-accent: var(--hana-accent, var(--accent, #7794c2));
+  --di-ok: var(--hana-green, var(--green, #6e9c7f));
+  --di-warn: var(--hana-danger, var(--danger, #c07d72));
   /* 深色下宿主的卡片面色；没注入时用中性深灰蓝，不要白。 */
   --di-surface: var(--hana-bg-card, var(--bg-card, #232c33));
   --di-edge: var(--hana-border, color-mix(in srgb, var(--di-ink) 18%, transparent));

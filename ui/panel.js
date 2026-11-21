@@ -234,6 +234,19 @@ async function resolveHana() {
 }
 
 function startPanel() {
+  // 主题样式表尽早插：地址就在 URL 参数里，不必等 hana 握手。
+  // 晚插会让首帧先按兜底色（蓝）画一下再变粉，那一瞬就是用户说的“怎么是蓝色的”。
+  try {
+    const earlyUrl = new URLSearchParams(globalThis.location?.search || "").get("hana-css");
+    if (earlyUrl && !document.getElementById("di-host-theme")) {
+      const early = document.createElement("link");
+      early.id = "di-host-theme";
+      early.rel = "stylesheet";
+      early.href = earlyUrl;
+      (document.head ?? document.documentElement)?.appendChild(early);
+    }
+  } catch { /* 没有这个参数就靠后面那次补 */ }
+
   const panelEl = document.getElementById("di-panel");
   const sourcesEl = document.getElementById("di-sources");
   const savePathEl = document.getElementById("di-save-path");
@@ -1116,6 +1129,10 @@ function startPanel() {
         accent: pick(["--hana-accent", "--accent"]),
         text: pick(["--hana-text", "--text"]),
         surface: pick(["--hana-bg-card", "--bg-card"]),
+        // 最终生效的中转令牌：这几项才是页面真正用到的颜色。
+        diAccent: pick(["--di-accent"]),
+        diInk: pick(["--di-ink"]),
+        diSurface: pick(["--di-surface"]),
       };
     } catch { return { accent: "", text: "", surface: "" }; }
   }
