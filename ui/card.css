@@ -10,24 +10,28 @@
 
 * { box-sizing: border-box; }
 
-:root {
-  --di-ink: var(--hana-text, var(--text, #2f2a24));
-  --di-sub: var(--hana-text-light, var(--text-light, #6f6659));
-  --di-muted: var(--hana-text-muted, var(--text-muted, #8d8274));
-  /* 取不到宿主 accent 时用一个中性蓝：进度条是唯一需要「有颜色」的元素，
-     没有强调色也得有一条第几眼能看出在走的条子。 */
-  --di-accent: var(--hana-accent, var(--accent, #4a6fa5));
-  --di-ok: var(--hana-green, var(--green, #4f8a63));
-  --di-warn: var(--hana-danger, var(--danger, #b06a5e));
+/* 颜色不在这一层决定：由 ui/theme-bridge.js 把宿主主题取进来，写成 --ui-*；
+   这里只把它们翻成这张卡自己的 --di-*。主题换了、接别的色源，都只动那个文件。 */
+body {
+  --di-ink: var(--ui-text, #1f2226);
+  --di-sub: var(--ui-text-soft, #4d545c);
+  --di-muted: var(--ui-text-muted, #78818b);
+  /* 进度条是唯一需要「有颜色」的元素：没拿到强调色时也得有一条看得出在走的条子。 */
+  --di-accent: var(--ui-accent, #5b7089);
+  --di-ok: var(--ui-ok, #4f8a63);
+  --di-warn: var(--ui-warn, #b06a5e);
+  --di-surface: var(--ui-surface, #ffffff);
 }
 
+/* 主题桥没跑起来时的深色兜底；桥一旦生效，这一块会被 --ui-* 盖过。 */
 body.t-dark {
-  --di-ink: var(--hana-text, #e6e2da);
-  --di-sub: var(--hana-text-light, #b6aea2);
-  --di-muted: var(--hana-text-muted, #8f877c);
-  --di-accent: var(--hana-accent, #7794c2);
-  --di-ok: var(--hana-green, #6e9c7f);
-  --di-warn: var(--hana-danger, #c07d72);
+  --di-ink: var(--ui-text, #f2f4f7);
+  --di-sub: var(--ui-text-soft, #c3cad3);
+  --di-muted: var(--ui-text-muted, #919aa4);
+  --di-accent: var(--ui-accent, #8b9bb0);
+  --di-ok: var(--ui-ok, #6e9c7f);
+  --di-warn: var(--ui-warn, #c07d72);
+  --di-surface: var(--ui-surface, #2a343c);
 }
 
 html, body {

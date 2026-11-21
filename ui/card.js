@@ -9,6 +9,7 @@
 // 条子走到 100% 只有两种情况：文件真的 done，或整个作业 state 变成 done。
 
 import { estimateTotalMs, fakeAcceleration, fakePercent, fakeVelocity } from "./shared/progress.js";
+import { installThemeBridge } from "./theme-bridge.js";
 
 /** 卡片宽度固定，宿主卡片壳按这个值给列宽。 */
 export const CARD_WIDTH = 460;
@@ -759,6 +760,18 @@ function startCard() {
     try { hana.ready?.(); } catch { /* 老宿主没有这一步 */ }
     syncTheme();
     try { hana.theme?.subscribe?.(() => syncTheme()); } catch { /* 订阅不可用就只保留首帧 */ }
+    // 取色交给主题桥：它把宿主的主题表插进来、按备选链读变量、写出一套 --ui-*，
+    // card.css 再把它们翻成 --di-*。上面那次 syncTheme 只是首帧的兜底。
+    try {
+      const bridge = installThemeBridge({
+        hana,
+        onApply: (palette) => {
+          document.body.classList.toggle("t-dark", palette.theme === "dark");
+          reportSize();
+        },
+      });
+      await bridge.ready;
+    } catch { /* 桥装不上就只看首帧，颜色走 card.css 的兜底 */ }
     // 只绑一次。这两个按钮一直在 DOM 里，不随轮询重建；
     // 若是每次渲染重绑，监听器会越叠越多。
     headEl?.addEventListener("click", () => { setExpanded(!expanded); });

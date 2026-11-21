@@ -10,21 +10,24 @@
    · 正文/次要文字/描边都按“任意底色上可读”取值，深色主题同样成立。
    ========================================================================== */
 
-:root {
+/* 颜色不在这一层决定：由 ../theme-bridge.js 把宿主主题取进来（插表、贴 data-theme、读变量），
+   写成 --ui-* 一套；这里只把它们翻成本页的 --gs-*。
+   令牌挂在 body 上：自定义属性只往下继承，写在根元素上就取不到挂在 body 的 --ui-*。 */
+body {
   --gs-gap: 16px;
 
-  --gs-bg: var(--hana-bg, var(--bg, #faf7f2));
-  --gs-surface: var(--hana-bg-card, var(--bg-card, #ffffff));
+  --gs-bg: var(--ui-bg, #faf7f2);
+  --gs-surface: var(--ui-surface, #ffffff);
   --gs-soft: color-mix(in srgb, var(--gs-ink) 7%, transparent);
-  --gs-ink: var(--hana-text, var(--text, #2f2a24));
-  --gs-sub: var(--hana-text-light, var(--text-light, #6f6659));
-  --gs-muted: var(--hana-text-muted, var(--text-muted, #8d8274));
-  --gs-accent: var(--hana-accent, var(--accent, #c2703d));
-  --gs-tint: var(--hana-accent-light, var(--accent-light, rgba(194, 112, 61, 0.08)));
-  --gs-line: color-mix(in srgb, var(--hana-border, var(--border, rgba(0, 0, 0, 0.12))) 78%, var(--gs-surface));
-  --gs-danger: var(--hana-danger, var(--danger, #b8544a));
-  --gs-green: var(--hana-green, var(--green, #3d9a63));
-  --gs-mono: var(--hana-font-mono, var(--font-mono, ui-monospace, "Cascadia Mono", Consolas, monospace));
+  --gs-ink: var(--ui-text, #1f2226);
+  --gs-sub: var(--ui-text-soft, #4d545c);
+  --gs-muted: var(--ui-text-muted, #78818b);
+  --gs-accent: var(--ui-accent, #c2703d);
+  --gs-tint: var(--ui-accent-soft, rgba(194, 112, 61, 0.08));
+  --gs-line: color-mix(in srgb, var(--ui-border, rgba(0, 0, 0, 0.12)) 78%, var(--gs-surface));
+  --gs-danger: var(--ui-warn, #b8544a);
+  --gs-green: var(--ui-ok, #3d9a63);
+  --gs-mono: var(--ui-mono, var(--hana-font-mono, var(--font-mono, ui-monospace, "Cascadia Mono", Consolas, monospace)));
 
   --gs-radius-base: var(--hana-corner-radius-scale, var(--corner-radius-scale, 1));
   --gs-radius: calc(12px * var(--gs-radius-base));
@@ -52,7 +55,13 @@
   scrollbar-color: rgba(128, 128, 128, 0.32) transparent;
 }
 
-html, body {
+html {
+  margin: 0;
+  min-height: 100%;
+  background: transparent;
+}
+
+body {
   margin: 0;
   min-height: 100%;
   background: transparent;

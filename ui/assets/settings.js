@@ -4,6 +4,7 @@
 // 容错：任何请求失败都在页内显式报出原因，绝不让页面无声地停在「检测中」。
 // 注意：页面跑在沙箱 iframe 里，window.confirm 被禁 —— 安装确认走页内确认条。
 import { hana } from "./sdk.js";
+import { installThemeBridge } from "../theme-bridge.js";
 import { createUpdateApi } from "./update-api.mjs";
 import { installUpdateNotice } from "./update-notice.mjs";
 import { chainShiftOffsets, chainDragTo } from "./chain-shift.mjs";
@@ -2174,6 +2175,19 @@ async function reloadConfig() {
   wire();
   syncTheme();
   try { hana.theme?.subscribe?.(() => syncTheme()); } catch {}
+  // 取色交给主题桥：插主题表、按备选链读变量、写出 --ui-*；settings.css 再把它们翻成 --gs-*。
+  // 上面那次 syncTheme 只是首帧的兜底（主题表还没到时先决定 color-scheme）。
+  try {
+    const bridge = installThemeBridge({
+      hana,
+      onApply: (palette) => {
+        // 只挂在内层容器上：根元素一旦声明深色，Chromium 会把 iframe 画布刷成纯黑，
+        // 盖掉宿主透出来的主题底色。
+        if (ui.root) ui.root.style.colorScheme = palette.theme;
+      },
+    });
+    await bridge.ready;
+  } catch {}
   ui.root.setAttribute("aria-busy", "true");
   try { await withTimeout(hana.ready(), READY_TIMEOUT_MS, "SDK 就绪"); } catch {}
   try {

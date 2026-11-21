@@ -209,17 +209,23 @@ export function installThemeBridge(options = {}) {
     } catch { return ""; }
   }
 
-  /** 把当前生效的主题表插进页面（重复调用不会插第二张）。 */
+  /** 把当前生效的主题表插进页面（重复调用不会插第二张）。
+   *  页面自己已经提前插过一张时（比如设置页在 head 里先插好用首帧），直接收编它，
+   *  不再重复加一张。 */
   function ensureStylesheet(url) {
     if (!url) return Promise.resolve(false);
-    const existing = doc.getElementById(LINK_ID);
+    let existing = doc.getElementById(LINK_ID);
+    if (!existing && typeof doc.querySelector === "function") {
+      existing = doc.querySelector("link[data-host-theme]");
+      if (existing && existing.id !== LINK_ID) existing.id = LINK_ID;
+    }
     if (existing) {
-      if (existing.dataset.loaded === "1") return Promise.resolve(true);
+      if (existing.dataset?.loaded === "1") return Promise.resolve(true);
       return new Promise((done) => {
-        const finish = (ok) => { existing.dataset.loaded = ok ? "1" : "0"; done(ok); };
+        const finish = (ok) => { if (existing.dataset) existing.dataset.loaded = ok ? "1" : "0"; done(ok); };
         existing.addEventListener("load", () => finish(true), { once: true });
         existing.addEventListener("error", () => finish(false), { once: true });
-        setTimeout(() => finish(existing.dataset.loaded === "1"), 800);
+        setTimeout(() => finish(true), 800);
       });
     }
     return new Promise((done) => {
