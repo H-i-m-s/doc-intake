@@ -189,8 +189,13 @@ body { padding: 0 12px; }
 .gs-tip:focus-within .gs-tip__bubble { opacity: 1; visibility: visible; }
 
 /* ---------- 卡片 ---------- */
+/* 卡片是这一页唯一的「面」。底色用主题的玻璃色，后面叠一层背景模糊：
+   设置窗底透上来一点，又不至于让字发虚。没接到主题桥时退回不透明的 surface，
+   宁可没玻璃，也不要半透不明的底。 */
 .gs-card {
-  background: var(--gs-surface);
+  background: var(--ui-bg-alt, var(--gs-surface));
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
   border: 1px solid var(--gs-line);
   border-radius: var(--gs-radius);
   padding: 14px 16px 8px;

@@ -276,13 +276,17 @@ body.t-dark .di-input { color-scheme: dark; }
 }
 
 /* 面色用宿主的卡片面色，不自己调。没注入时按主题给一套中性兜底，
-   深浅两套都不一样——白底配暖色字正是上一版读不清的原因。 */
+   深浅两套都不一样——白底配暖色字正是上一版读不清的原因。
+   浮层是真正「浮起来」的那一块，所以用主题的玻璃色 + 背景模糊：
+   底下的表单会被模糊推开，选项自己读得清。 */
 .di-combo__list {
   list-style: none;
   margin: 0;
   padding: 4px;
   border-radius: 9px;
-  background: var(--di-surface);
+  background: var(--ui-bg-alt, var(--di-surface));
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
   box-shadow:
     inset 0 0 0 1px var(--di-edge),
     0 10px 24px -14px rgba(0, 0, 0, 0.55);
@@ -482,10 +486,16 @@ body.t-dark .di-input { color-scheme: dark; }
 }
 
 /* ---------- 结果区 ---------- */
+/* 从一条分隔线改成一快到浮起来的玻璃井：跑完之后这块是读的重点，
+   用主题的半透明卡底 + 模糊，让它从表单里浮出来，又不遮背后的内容。 */
 .di-result {
   margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--di-line);
+  padding: 10px 12px 11px;
+  border-radius: 10px;
+  background: var(--ui-bg-alt, var(--di-surface));
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: inset 0 0 0 1px var(--di-edge);
 }
 
 .di-result[hidden] { display: none; }
