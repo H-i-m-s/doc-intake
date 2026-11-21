@@ -24,5 +24,8 @@
   "html": {
     ".html": "html",
     ".htm": "html"
+  },
+  "ebook": {
+    ".epub": "epub"
   }
 }

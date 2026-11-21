@@ -842,6 +842,11 @@ def format_result(result: ExtractionResult):
         "usedBackendInChain": meta.get("usedBackendInChain"),
         "authFailures": auth_failures,
     }
+    # 电子书这类本地提取器会带书名、作者、章节数。compact_meta 是白名单，不转发
+    # 就等于白读了——调用方只看到“epub”三个字母，看不到读到的是哪本书。
+    for key in ("title", "author", "chapterCount", "epubVersion", "fixedLayout"):
+        if meta.get(key) not in (None, ""):
+            compact_meta[key] = meta[key]
     if meta.get("barcodeCodes"):
         compact_meta["barcodeCodes"] = meta["barcodeCodes"]
     if meta.get("barcodeOnlyDocument"):

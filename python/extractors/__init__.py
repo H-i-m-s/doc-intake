@@ -13,6 +13,7 @@ from .pptx_extractor import PptxExtractor
 from .xlsx_extractor import XlsxExtractor
 from .html_extractor import HtmlExtractor
 from .pdf_extractor import PdfExtractor
+from .epub_extractor import EpubExtractor
 
 __all__ = [
     "BaseExtractor",
@@ -22,6 +23,7 @@ __all__ = [
     "XlsxExtractor",
     "HtmlExtractor",
     "PdfExtractor",
+    "EpubExtractor",
 ]
 
 
@@ -38,6 +40,7 @@ def get_extractor(file_type: str, settings: dict) -> BaseExtractor:
         "html": HtmlExtractor,
         "htm": HtmlExtractor,
         "pdf": PdfExtractor,
+        "epub": EpubExtractor,
     }
     extractor_cls = extractors.get(file_type)
     if not extractor_cls:
