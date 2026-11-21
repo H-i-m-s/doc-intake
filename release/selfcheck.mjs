@@ -23,7 +23,10 @@
 //      连 ui/*.html 里的内联脚本一起查
 //   4) 第一方代码里每个相对 import 都指得到实处（路径写错 = App 起不来）
 //   5) routes/ 同一个文件里没有重复注册的同方法同路径（后者会被前者吞掉）
-//   6) python/ 下所有 .py 能过语法编译；环境里装了 olefile 时还会跑 test/ 的四个库自测
+//   6) python/ 下所有 .py 能过语法编译；环境里装了 olefile 时还会跑 test/ 的五个库自测
+//   7) builders/ 下给开发者的两份文档存在、非空，且不命中出包排除规则（少一份就不许出包）
+//   8) formats.json 自身合法；登记了的扩展名都有本地提取器接着；Python 与 JS 两侧
+//      派生出来的清单都与它一致（清单只有一份，漂了就没意义）
 //
 // 用法：
 //   node release/selfcheck.mjs          # 人类可读，失败以非零码退出
@@ -307,15 +310,15 @@ if (!py) {
     }
   }
 
-  // 6b) 库自测：那四个脚本要 olefile 才能 import。装了就跑，没装就跳过 ——
+  // 6b) 库自测：那五个脚本要 olefile 才能 import。装了就跑，没装就跳过 ——
   // 这一步不该让「换台机器没装依赖」变成出不了包，但也绝不在装齐的机器上放水。
-  const SELFTESTS = ["selftest_v3_parse.py", "selftest_v3_render.py", "selftest_v5_parse.py", "selftest_v5_render.py"];
+  const SELFTESTS = ["selftest_v3_parse.py", "selftest_v3_render.py", "selftest_v5_parse.py", "selftest_v5_render.py", "selftest_v6_epub.py"];
   const depsReady = (() => {
     const r = runPy(["-c", "import olefile"]);
     return !r.error && r.status === 0;
   })();
   if (!depsReady) {
-    note("当前环境 import 不到 olefile，已跳过 test/ 的四个库自测（在装齐依赖的环境里跑就会自动带上）");
+    note("当前环境 import 不到 olefile，已跳过 test/ 的五个库自测（在装齐依赖的环境里跑就会自动带上）");
   } else if (!existsSync(join(ROOT, "test"))) {
     note("没找到 test/ 目录，跳过库自测");
   } else {
@@ -335,6 +338,295 @@ if (!py) {
       }
     }
   }
+}
+
+// ── 7) builders 文档必须随包发布 ────────────────────────────────────────────
+// 采集规则是「从仓库根递归收，只跳过排除项」，新建目录默认就会被打进 zip。但「默认会带上」
+// 不是保证：往 excludeDirs 里加一行 builders，或者文件名撞上 excludePrefixes / excludeSuffixes，
+// 包照样出得来，只是给开发者的文档偷偷没了。所以这里按 pack.mjs 的同一套判据把
+// 「真会被收进 zip 吗」重算一遍，而不是相信默认行为。
+const BUILDERS_DIR = join(ROOT, "builders");
+const REQUIRED_BUILDER_DOCS = ["SERVICE-API.md", "PARAMETERS.md"];
+
+const packRules = (() => {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(join(RELEASE_DIR, "config.json"), "utf8"));
+  } catch (e) {
+    fail(`读不到 release/config.json，无法判定 builders/ 会不会被打进包：${(e && e.message) || e}`);
+    return null;
+  }
+  const pack = raw && typeof raw.pack === "object" && raw.pack ? raw.pack : {};
+  const strings = (value) => (Array.isArray(value) ? value.filter((v) => typeof v === "string" && v) : []);
+  return {
+    excludeDirs: new Set(strings(pack.excludeDirs)),
+    excludeNames: new Set(strings(pack.excludeNames)),
+    excludePrefixes: strings(pack.excludePrefixes),
+    excludeSuffixes: strings(pack.excludeSuffixes),
+    excludeExtensions: new Set(strings(pack.excludeExtensions).map((e) => e.replace(/^\./, "").toLowerCase())),
+  };
+})();
+
+/** 一个包内路径会不会被过滤掉：命中就返回那条规则，没命中返回 null。判据与 pack.mjs 对齐。 */
+function exclusionReason(entryPath) {
+  const parts = entryPath.split("/");
+  const fileName = parts[parts.length - 1];
+  for (const dir of parts.slice(0, -1)) {
+    if (packRules.excludeDirs.has(dir)) return `目录 ${dir}/ 在 pack.excludeDirs 里`;
+  }
+  if (packRules.excludeNames.has(fileName)) return "文件名在 pack.excludeNames 里";
+  const prefix = packRules.excludePrefixes.find((p) => fileName.startsWith(p));
+  if (prefix) return `文件名命中 pack.excludePrefixes 的 ${JSON.stringify(prefix)}`;
+  const suffix = packRules.excludeSuffixes.find((s) => fileName.endsWith(s));
+  if (suffix) return `文件名命中 pack.excludeSuffixes 的 ${JSON.stringify(suffix)}`;
+  const dot = fileName.lastIndexOf(".");
+  if (dot > 0 && packRules.excludeExtensions.has(fileName.slice(dot + 1).toLowerCase())) {
+    return `扩展名 ${JSON.stringify(fileName.slice(dot))} 在 pack.excludeExtensions 里`;
+  }
+  return null;
+}
+
+if (packRules) {
+  const present = existsSync(BUILDERS_DIR) && statSync(BUILDERS_DIR).isDirectory();
+  if (!present) {
+    fail(`builders/ 目录不存在：给开发者的文档（${REQUIRED_BUILDER_DOCS.join("、")}）要放在这里并随包发布`);
+  } else if (packRules.excludeDirs.has("builders")) {
+    fail("pack.excludeDirs 里有 builders：整个目录连同给开发者的文档都不会进包，把这一行去掉");
+  } else {
+    let shipped = 0;
+    for (const name of REQUIRED_BUILDER_DOCS) {
+      const entry = `builders/${name}`;
+      const abs = join(BUILDERS_DIR, name);
+      if (!existsSync(abs)) {
+        fail(`${entry} 不存在：这份文档要随包发布，缺了调用方只能去翻源码`);
+        continue;
+      }
+      const st = statSync(abs);
+      if (!st.isFile()) {
+        fail(`${entry} 不是普通文件，打不进包`);
+        continue;
+      }
+      if (st.size === 0) {
+        fail(`${entry} 是 0 字节的空文件，等于没给`);
+        continue;
+      }
+      const reason = exclusionReason(entry);
+      if (reason) {
+        fail(`${entry} 不会进包：${reason}；这两份文档必须随包发布`);
+        continue;
+      }
+      shipped += 1;
+    }
+    if (shipped === REQUIRED_BUILDER_DOCS.length) info(`builders/ ${shipped} 份开发者文档会随包发布`);
+  }
+}
+
+// ── 8) 格式清单：formats.json 是唯一来源，Python / JS 都从它派生 ─────────
+// 这一节管的是「清单只有一份」这件事能不能立住。以前扩展名抄在四处（目录准入、Python
+// 细类型、JS 粗类型、describe 回给调用方的格式表），改一处漏三处且不报错：目录里静默
+// 丢掉、类型落到 unknown。现在只认 formats.json，所以这里逐项验：json 自身合法、
+// 登记了的扩展名真有本地提取器接着、Python 派生出来的集合与 json 相同、JS 镜像与 json 相同。
+const FORMATS_PATH = join(ROOT, "formats.json");
+// 这两个粗类走云端后端，不要求本地提取器；其余粗类必须有。
+const CLOUD_CATEGORIES = new Set(["pdf", "image"]);
+const formatErrorsBefore = errors.length;
+
+let formatTable = null;
+try {
+  formatTable = JSON.parse(readFileSync(FORMATS_PATH, "utf8"));
+} catch (e) {
+  fail(`formats.json 无法解析：${(e && e.message) || e}`);
+}
+
+if (formatTable) {
+  if (typeof formatTable !== "object" || Array.isArray(formatTable)) {
+    fail("formats.json 的外层不是对象：应当是「粗类 -> {扩展名: 细类型}」");
+    formatTable = null;
+  } else if (Object.keys(formatTable).length === 0) {
+    fail("formats.json 是空对象：一个扩展名都没登记，等于什么都不支持");
+    formatTable = null;
+  }
+}
+
+/** 扩展名 -> 出现过它的粗类列表。 */
+const extOwners = new Map();
+if (formatTable) {
+  for (const [category, table] of Object.entries(formatTable)) {
+    if (!table || typeof table !== "object" || Array.isArray(table)) {
+      fail(`formats.json 里粗类 ${category} 的值不是对象：应当是「扩展名 -> 细类型」`);
+      continue;
+    }
+    const entries = Object.entries(table);
+    if (entries.length === 0) fail(`formats.json 里粗类 ${category} 下一个扩展名都没有`);
+    for (const [ext, typeName] of entries) {
+      if (!ext.startsWith(".")) fail(`formats.json 里粗类 ${category} 下的 ${JSON.stringify(ext)} 不以点开头`);
+      if (ext !== ext.toLowerCase()) fail(`formats.json 里 ${ext} 不是小写：清单里的扩展名一律小写`);
+      if (typeof typeName !== "string" || !typeName.trim()) {
+        fail(`formats.json 里 ${category} -> ${ext} 的细类型为空`);
+      }
+      if (!extOwners.has(ext)) extOwners.set(ext, []);
+      extOwners.get(ext).push(category);
+    }
+  }
+  for (const [ext, owners] of extOwners) {
+    if (owners.length > 1) {
+      fail(`formats.json 里 ${ext} 同时登记在 ${owners.join("、")} 下面：一个扩展名只能属于一个粗类`);
+    }
+  }
+}
+
+// 8b) 写了扩展名就必须有落地：非云端粗类的细类型要能在本地提取器注册表里找到。
+// 用正则抽注册表的键而不是 import Python：自检不该为了看一眼字典就起解释器、装依赖。
+const EXTRACTORS_INIT = join(ROOT, "python", "extractors", "__init__.py");
+const extractorTypes = (() => {
+  let src;
+  try {
+    src = readFileSync(EXTRACTORS_INIT, "utf8");
+  } catch {
+    return null;
+  }
+  const block = src.match(/def\s+get_extractor\b[\s\S]*?\bextractors\s*=\s*\{([\s\S]*?)\n\s*\}/);
+  if (!block) return null;
+  const keys = new Set();
+  for (const m of block[1].matchAll(/["']([^"']+)["']\s*:/g)) keys.add(m[1]);
+  return keys.size ? keys : null;
+})();
+
+if (!extractorTypes) {
+  fail(
+    "读不出 python/extractors/__init__.py 里 get_extractor 的注册表，" +
+      "无法判定「formats.json 登记了扩展名就必须有本地提取器」",
+  );
+} else if (formatTable) {
+  for (const [category, table] of Object.entries(formatTable)) {
+    if (CLOUD_CATEGORIES.has(category)) continue;
+    for (const [ext, typeName] of Object.entries(table)) {
+      if (typeof typeName !== "string" || extractorTypes.has(typeName)) continue;
+      fail(
+        `formats.json 里登记了 ${ext}（粗类 ${category}，细类型 ${JSON.stringify(typeName)}），` +
+          `但 python/extractors/__init__.py 的注册表里没有对应的本地提取器；` +
+          `要么补提取器，要么把它从清单里去掉`,
+      );
+    }
+  }
+}
+
+// 8c) Python 侧一致：让 python/formats.py 自己报一遍它派生的集合，和 json 逐项比。
+if (!py) {
+  note("找不到可用的 Python 解释器，已跳过「Python 侧格式清单与 formats.json 一致」这一项");
+} else if (formatTable) {
+  const script =
+    'import json,sys;sys.path.insert(0,"python");import formats;' +
+    'print(json.dumps({"exts": sorted(formats.SUPPORTED_EXTS), "types": formats.TYPE_BY_EXT}, ensure_ascii=False))';
+  const r = spawnSync(py.cmd, [...py.pre, "-c", script], {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 120000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (r.error || r.status !== 0) {
+    // conda 的报错报告很长，真正的原因（运行时异常那一行）常常被尾巴淹没，先挑它。
+    const lines = `${r.stdout || ""}${r.stderr || ""}`.split("\n").map((l) => l.trimEnd());
+    const exceptionLines = lines.filter((l) => /^[A-Za-z_][\w.]*(?:Error|Exception):/.test(l.trim()));
+    const out = (exceptionLines.length ? exceptionLines : lines.filter((l) => l.trim())).slice(-4);
+    fail(
+      `python/formats.py 没能报出格式清单（退出码 ${r.status ?? "?"}）：` +
+        `Python 侧无法与 json 比对${out.length ? "\n    " + out.join("\n    ") : ""}`,
+    );
+  } else {
+    let reported = null;
+    try {
+      reported = JSON.parse(r.stdout.trim().split("\n").pop() || "null");
+    } catch {
+      reported = null;
+    }
+    if (!reported || !Array.isArray(reported.exts) || typeof reported.types !== "object") {
+      fail(`python/formats.py 的输出看不懂，无法比对：${JSON.stringify((r.stdout || "").slice(0, 200))}`);
+    } else {
+      const expectedExts = new Set(Object.keys(Object.assign({}, ...Object.values(formatTable))));
+      const gotExts = new Set(reported.exts);
+      const missing = [...expectedExts].filter((e) => !gotExts.has(e));
+      const extra = [...gotExts].filter((e) => !expectedExts.has(e));
+      if (missing.length) fail(`Python 侧的 SUPPORTED_EXTS 少了 formats.json 里登记的：${missing.join("、")}`);
+      if (extra.length) fail(`Python 侧的 SUPPORTED_EXTS 多出 formats.json 里没有的：${extra.join("、")}`);
+      const typeDiffs = [];
+      for (const ext of expectedExts) {
+        const want = Object.assign({}, ...Object.values(formatTable))[ext];
+        if (gotExts.has(ext) && reported.types[ext] !== want) {
+          typeDiffs.push(`${ext}（json 是 ${JSON.stringify(want)}，Python 是 ${JSON.stringify(reported.types[ext] ?? null)}）`);
+        }
+      }
+      if (typeDiffs.length) fail(`Python 侧的 TYPE_BY_EXT 与 formats.json 不一致：${typeDiffs.join("；")}`);
+    }
+  }
+}
+
+// 8d) JS 侧一致：lib/formats.js 的内联镜像必须与 json 逐项相同。
+// 镜像只在读不到 json 时才生效，所以「平时跑不到」不等于「可以漂移」——漂了就是在
+// 换一台机器、换一次打包之后再也不会有人发现的分叉。
+/** 把「粗类 -> {扩展名: 细类型}」的差异说成人话。 */
+function formatTableDiff(expected, actual, actualLabel) {
+  const diffs = [];
+  const categories = new Set([...Object.keys(expected), ...Object.keys(actual)]);
+  for (const category of categories) {
+    const want = expected[category];
+    const got = actual[category];
+    if (!got || typeof got !== "object") {
+      diffs.push(`${actualLabel}里没有粗类 ${category}`);
+      continue;
+    }
+    if (!want) {
+      diffs.push(`${actualLabel}里多出粗类 ${category}`);
+      continue;
+    }
+    const exts = new Set([...Object.keys(want), ...Object.keys(got)]);
+    for (const ext of exts) {
+      if (!(ext in got)) diffs.push(`${actualLabel}的 ${category} 下缺 ${ext}`);
+      else if (!(ext in want)) diffs.push(`${actualLabel}的 ${category} 下多出 ${ext}`);
+      else if (want[ext] !== got[ext]) {
+        diffs.push(`${category} 下 ${ext} 的细类型：json 是 ${JSON.stringify(want[ext])}，${actualLabel}是 ${JSON.stringify(got[ext])}`);
+      }
+    }
+  }
+  return diffs;
+}
+
+if (formatTable) {
+  const FORMATS_JS = join(ROOT, "lib", "formats.js");
+  const MIRROR_RE = /const FORMAT_MIRROR = (\{[\s\S]*?\n\});/;
+  let mirrorText = null;
+  try {
+    const m = readFileSync(FORMATS_JS, "utf8").match(MIRROR_RE);
+    mirrorText = m ? m[1] : null;
+  } catch (e) {
+    fail(`读不到 lib/formats.js，无法比对 JS 镜像：${(e && e.message) || e}`);
+  }
+  if (mirrorText === null) {
+    fail(
+      "lib/formats.js 里读不出内联镜像：找的是 `const FORMAT_MIRROR = { ... };` 这一整段字面量，" +
+        "自检靠它跟 formats.json 比对，所以它必须保持可被完整捕获的对象字面量写法",
+    );
+  } else {
+    let mirror = null;
+    try {
+      mirror = JSON.parse(mirrorText);
+    } catch (e) {
+      fail(`lib/formats.js 的内联镜像不是合法 JSON 字面量（自检按 JSON 解析它）：${(e && e.message) || e}`);
+    }
+    if (mirror) {
+      const diffs = formatTableDiff(formatTable, mirror, "JS 镜像");
+      if (diffs.length) {
+        fail(
+          `lib/formats.js 的内联镜像与 formats.json 不一致：${diffs.slice(0, 8).join("；")}` +
+            (diffs.length > 8 ? `（共 ${diffs.length} 处）` : ""),
+        );
+      }
+    }
+  }
+}
+
+if (errors.length === formatErrorsBefore && formatTable) {
+  info(`格式清单 formats.json ${extOwners.size} 个扩展名，Python 侧与 JS 镜像都跟它一致`);
 }
 
 // ── 输出 ───────────────────────────────────────────────────────────────────

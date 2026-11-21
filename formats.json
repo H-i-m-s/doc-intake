@@ -1,0 +1,28 @@
+{
+  "pdf": {
+    ".pdf": "pdf"
+  },
+  "image": {
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".png": "image",
+    ".bmp": "image",
+    ".tiff": "image",
+    ".tif": "image",
+    ".webp": "image",
+    ".gif": "image"
+  },
+  "office": {
+    ".doc": "doc",
+    ".docx": "docx",
+    ".ppt": "ppt",
+    ".pptx": "pptx",
+    ".xls": "xls",
+    ".xlsx": "xlsx",
+    ".xlsm": "xlsm"
+  },
+  "html": {
+    ".html": "html",
+    ".htm": "html"
+  }
+}

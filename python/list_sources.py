@@ -13,11 +13,9 @@ import json
 import sys
 from pathlib import Path
 
-SUPPORTED_EXTS = {
-    ".pdf", ".doc", ".docx", ".pptx", ".ppt", ".xls", ".xlsx", ".xlsm",
-    ".html", ".htm",
-    ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif",
-}
+# 支持的扩展名只有一份，在仓库根的 formats.json 里（本脚本作为脚本被 spawn 时
+# sys.path[0] 就是 python/，所以这行裸 import 就够了）。
+from formats import SUPPORTED_EXTS
 
 
 def expand(paths: object) -> list[str]:
