@@ -1,20 +1,39 @@
 // ui/panel.js — 文档提取面板卡
 //
-// 这张卡只做界面：选文件、定目录、把设置里的默认值铺到表单上。
-// 点「开始提取」暂时只给一行提示 —— 真正把文件送进解析作业是下一张工单的事，
-// 所以本文件里没有任何提取请求。唯一的出宿主动作是 hana.resources.pick
-// （用户自己按下按钮才弹系统对话框）和一次 GET /panel-defaults（只读配置）。
+// 这张卡：选文件、定目录、摆好默认值，按下「开始提取」后起一次后台作业，
+// 自己轮询进度，把每个文件的状态和一条总进度画出来。作业本身在后端跑
+// （lib/job-runner.js），这里只负责发起和呈现。
+//
+// 只碰四条路由：/panel-defaults（读默认值）、/run（发起）、/job-status（轮询）、
+// /reveal（在文件管理器里定位产物）。除此之外不发任何请求。
+
+import { estimateTotalMs, fakePercent } from "./shared/progress.js";
 
 const PANEL_WIDTH = 460;
 /** 折叠区过渡时长，与 panel.css 里的 200ms 对齐；过渡跑完再兜一次上报。 */
 const FOLD_MS = 200;
 /** 用户可能停在系统文件对话框里很久，超时给足 10 分钟，别半路把选择收走。 */
 const PICK_TIMEOUT_MS = 600000;
+/** 轮询间隔。作业快照本来就是秒级更新，更密只是白烧 CPU。 */
+const POLL_MS = 1000;
+/** 轮询连续失败多少次才认定记录没了。单次抖动不该让面板停在半路。 */
+const MAX_POLL_FAILURES = 5;
+/** 收尾补满的时长：按剩余百分点给，并夹在这个区间里。 */
+const FILL_MIN_MS = 300;
+const FILL_MAX_MS = 1200;
+const FILL_MS_PER_PERCENT = 30;
+
+/** 作业里的文件状态 → 界面上的字。 */
+const FILE_STATE_TEXT = {
+  pending: "排队",
+  running: "解析中",
+  done: "完成",
+  failed: "失败",
+};
 
 /**
  * 后端默认值回来之前，表单先按设置 schema 的默认值站着（manifest 里的 default）。
  * 这样即使 /panel-defaults 失败，看到的是「和设置一致的默认」，而不是一片空框。
- * 语言不在这份表里：它也跟着 schema 默认的 zh。
  */
 const FALLBACK_DEFAULTS = {
   savePath: "",
@@ -24,7 +43,7 @@ const FALLBACK_DEFAULTS = {
   saveJson: false,
 };
 
-// ── 纯函数：路径处理 ──────────────────────────────────────────────────────
+// ── 纯函数：路径与视图 ────────────────────────────────────────────────────
 // 这几条不碰 DOM，行为要能被单独说清楚，所以拎出来。
 
 /**
@@ -70,6 +89,43 @@ export function mergePathLines(current, incoming) {
   return lines.join("\n");
 }
 
+/** 取路径最后一段。作业里已经有 name，但从 source 兜底时得自己切一刀。 */
+export function baseNameOf(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return "";
+  const parts = text.split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : text;
+}
+
+/**
+ * 单个文件在总进度里占的份额（0~1）。
+ * 完成算满；还在跑就按它自己跑了多久去逼一条渐近曲线；排队与失败都算 0。
+ *
+ * 失败算 0 而不是算满，是这张条的诚实之处：有一个文件没成，总进度就永远到不了 100，
+ * 条子停在缺口上，和下面那行「成功 1/2」说的是同一件事。
+ * 收敛条件交给后端估的那个总耗时（estimateTotalMs），和进度卡用的是同一套。
+ */
+export function fileFraction(file, now, fallbackBackend) {
+  const status = file?.status;
+  if (status === "done") return 1;
+  if (status !== "running") return 0;
+  const startedAt = Number(file?.startedAt);
+  const elapsedMs = Number.isFinite(startedAt) && startedAt > 0 ? Math.max(0, now - startedAt) : 0;
+  const backend = typeof file?.backend === "string" && file.backend ? file.backend : fallbackBackend;
+  const total = estimateTotalMs(file?.pages, backend);
+  return fakePercent(elapsedMs, total) / 100;
+}
+
+/** 整卡那一条总的百分比：各文件份额之和除以总数。 */
+export function overallPercentOf(job, now, fallbackBackend) {
+  const files = Array.isArray(job?.files) ? job.files : [];
+  if (!files.length) return 0;
+  const sum = files.reduce((acc, file) => acc + fileFraction(file, now, fallbackBackend), 0);
+  const percent = (sum / files.length) * 100;
+  if (!Number.isFinite(percent)) return 0;
+  return Math.min(100, Math.max(0, percent));
+}
+
 // ── 浏览器部分 ────────────────────────────────────────────────────────────
 // 下面只在真有 DOM 时执行：Node 里 import 本文件是为了取上面的纯函数。
 
@@ -100,20 +156,46 @@ function startPanel() {
   const pickDirEl = document.getElementById("di-pick-dir");
   const pickSaveEl = document.getElementById("di-pick-save");
   const runEl = document.getElementById("di-run");
-  const runHintEl = document.getElementById("di-run-hint");
+  const hintEl = document.getElementById("di-run-hint");
   const advHeadEl = document.getElementById("di-adv-toggle");
   const advChevronEl = document.getElementById("di-adv-chevron");
   const advBodyEl = document.getElementById("di-adv-body");
   const advInnerEl = document.getElementById("di-adv-inner");
   const backendEl = document.getElementById("di-backend");
+  const pageRangeEl = document.getElementById("di-page-range");
   const languageEl = document.getElementById("di-language");
   const includeMediaEl = document.getElementById("di-include-media");
   const saveJsonEl = document.getElementById("di-save-json");
+  const resultEl = document.getElementById("di-result");
+  const overallTextEl = document.getElementById("di-overall-text");
+  const overallPercentEl = document.getElementById("di-overall-percent");
+  const barFillEl = document.getElementById("di-bar-fill");
+  const filesEl = document.getElementById("di-files");
+  const summaryEl = document.getElementById("di-summary");
 
-  if (!panelEl || !sourcesEl || !advBodyEl || !advInnerEl) return;
+  if (!panelEl || !sourcesEl || !advBodyEl || !advInnerEl || !resultEl) return;
 
   let hana = null;
   let expanded = false;
+
+  // ── 作业与进度状态 ────────────────────────────────────────────────────
+  /** 当前作业号。空串表示这次面板上没有在跑的作业。 */
+  let jobId = "";
+  /** 最近一次拿到的作业快照（getJob 的深拷贝）。 */
+  let job = null;
+  /** 进过终态（或记录失效）之后不再轮询、不再推进。 */
+  let stopped = true;
+  /** 发起请求在进行中：按钮禁用，连点不会起两个作业。 */
+  let busy = false;
+  let pollTimer = 0;
+  let animId = 0;
+  /** 上一次写进条子的百分比。收尾补满要从这个值接着跑，不能重新算。 */
+  let lastPercent = 0;
+  /** 收尾补满的接缝：起点、时长、开始时刻。null 表示没在补。 */
+  let fillState = null;
+  let pollFailures = 0;
+  /** 结果区的行，按文件下标对齐；结构建一次就不再动。 */
+  const rows = [];
 
   function syncTheme() {
     let snap = null;
@@ -139,8 +221,8 @@ function startPanel() {
     try { window.parent?.postMessage({ type: "hana.card-resize", height }, "*"); } catch { /* 同上 */ }
   }
 
-  // 折叠区展开时卡片在 200ms 里逐帧长高，只报起点和终值的话宿主会先跳到终值，看着更硬。
-  // 观察根节点把这些帧全报出去，宿主高度就跟得上了。
+  // 折叠区展开时卡片在 200ms 里逐帧长高，只报起点和终值会让宿主先跳到终值，看着更硬。
+  // 观察根节点把这些帧全报出去，宿主高度就跟得上了。结果区逐行出现时同理。
   if (typeof ResizeObserver !== "undefined") {
     try {
       let reportedH = 0;
@@ -173,6 +255,23 @@ function startPanel() {
     setTimeout(reportSize, FOLD_MS + 20);
   }
 
+  // ── 提示行 ────────────────────────────────────────────────────────────
+  /** 一张面板上只有这一处会说话。warn 用于需要人处理的那几句。 */
+  function showHint(text, kind) {
+    if (!hintEl) return;
+    hintEl.textContent = text;
+    hintEl.classList.toggle("di-hint--warn", kind === "warn");
+    hintEl.hidden = false;
+    reportSize();
+  }
+
+  function clearHint() {
+    if (!hintEl) return;
+    hintEl.textContent = "";
+    hintEl.classList.remove("di-hint--warn");
+    hintEl.hidden = true;
+  }
+
   // ── 默认值 ────────────────────────────────────────────────────────────
   function applyDefaults(defaults) {
     const savePath = typeof defaults?.savePath === "string" ? defaults.savePath.trim() : "";
@@ -180,8 +279,7 @@ function startPanel() {
     if (savePathEl) savePathEl.value = savePath;
 
     const backend = typeof defaults?.defaultBackend === "string" ? defaults.defaultBackend.trim() : "";
-    // 只认下拉里真实存在的 value：后端将来多出一个档位时，面板不该静默地显示成「自动」，
-    // 但也不该显示一个选不中的空项，所以两个都不满意时就退回 schema 默认。
+    // 只认下拉里真实存在的 value：后端将来多出一个档位时，面板不该显示一个选不中的空项。
     const known = backend && Array.from(backendEl?.options || []).some((option) => option.value === backend);
     if (backendEl) backendEl.value = known ? backend : FALLBACK_DEFAULTS.defaultBackend;
 
@@ -219,10 +317,9 @@ function startPanel() {
    * 用户取消时宿主回一个空列表（或空 payload），这里什么都不做、也不提示：
    * 取消不是错误，弹一句「没有选择文件」只是噪音。
    */
-  async function pickSources(mode, idleButton) {
+  async function pickSources(mode, button) {
     if (!hasPanelApi(hana)) return;
     const isDirectory = mode === "directory";
-    const button = idleButton;
     const label = button ? button.textContent : "";
     if (button) {
       // 按钮禁用是防连点：系统对话框没关之前再点一次会叠出第二个框。
@@ -282,6 +379,358 @@ function startPanel() {
     reportSize();
   }
 
+  // ── 结果区 ────────────────────────────────────────────────────────────
+  /** 结果区的行按需建，建过就复用：每帧刷状态时不去碰 DOM 结构。 */
+  function ensureRow(index) {
+    while (rows.length <= index) {
+      const el = document.createElement("div");
+      el.className = "di-file";
+      el.dataset.state = "pending";
+      const name = document.createElement("span");
+      name.className = "di-file__name";
+      const state = document.createElement("span");
+      state.className = "di-file__state";
+      const reveal = document.createElement("button");
+      reveal.type = "button";
+      reveal.className = "di-mini di-file__reveal";
+      reveal.textContent = "打开文件夹";
+      reveal.hidden = true;
+      const error = document.createElement("span");
+      error.className = "di-file__error";
+      error.hidden = true;
+      el.append(name, state, reveal, error);
+      filesEl.append(el);
+      const row = { el, name, state, reveal, error };
+      reveal.addEventListener("click", () => { void revealPath(row); });
+      rows.push(row);
+    }
+    return rows[index];
+  }
+
+  /** 用 /run 回来的文件名先把行摆出来，状态从「排队」起。 */
+  function seedRows(names) {
+    names.forEach((name, index) => {
+      const row = ensureRow(index);
+      row.el.hidden = false;
+      row.el.dataset.state = "pending";
+      row.name.textContent = baseNameOf(name) || name || "未命名文件";
+      row.name.title = name || "";
+      row.state.textContent = FILE_STATE_TEXT.pending;
+      row.error.hidden = true;
+      row.error.textContent = "";
+      row.reveal.hidden = true;
+      delete row.reveal.dataset.path;
+    });
+    if (overallTextEl) overallTextEl.textContent = `0/${names.length} 完成`;
+  }
+
+  /**
+   * 快照 → 每一行。
+   * revealReady 表示已经进终态：「打开文件夹」只在有产物、且不会再变的时候才给。
+   */
+  function renderRows(snapshot, revealReady) {
+    const files = Array.isArray(snapshot?.files) ? snapshot.files : [];
+    files.forEach((file, index) => {
+      const row = ensureRow(index);
+      row.el.hidden = false;
+      const status = Object.hasOwn(FILE_STATE_TEXT, file?.status) ? file.status : "pending";
+      row.el.dataset.state = status;
+      row.name.textContent = baseNameOf(file?.name) || baseNameOf(file?.source) || "未命名文件";
+      row.name.title = file?.source || file?.name || "";
+      row.state.textContent = FILE_STATE_TEXT[status];
+      const errorText = status === "failed"
+        ? (typeof file?.error === "string" && file.error.trim() ? file.error.trim() : "解析失败")
+        : "";
+      row.error.hidden = !errorText;
+      row.error.textContent = errorText;
+      const mdPath = typeof file?.mdPath === "string" ? file.mdPath : "";
+      row.reveal.hidden = !(revealReady && mdPath);
+      if (mdPath) row.reveal.dataset.path = mdPath;
+      else delete row.reveal.dataset.path;
+    });
+    if (overallTextEl) {
+      const done = files.filter((file) => file?.status === "done").length;
+      overallTextEl.textContent = `${done}/${files.length} 完成`;
+    }
+  }
+
+  /** 条子画到某个百分比。除了这里，没有别处写宽度。 */
+  function paint(percent) {
+    const value = Math.min(100, Math.max(0, Number.isFinite(percent) ? percent : 0));
+    lastPercent = value;
+    if (barFillEl) barFillEl.style.width = `${value.toFixed(2)}%`;
+    if (overallPercentEl) overallPercentEl.textContent = `${value.toFixed(1)}%`;
+  }
+
+  function fallbackBackend() {
+    return backendEl?.value || FALLBACK_DEFAULTS.defaultBackend;
+  }
+
+  /**
+   * 每帧推进一次条子。
+   * 总进度是「已经跑了多久」的函数，本地就能连续算；轮询只负责作业状态与各文件起点。
+   * 收尾补满时切成一条 easeOutCubic：起步快、收尾慢，和「跑完了」这个事件的节奏一致。
+   */
+  function frame() {
+    animId = requestAnimationFrame(frame);
+    if (fillState) {
+      const elapsed = Date.now() - fillState.startedAt;
+      const t = fillState.ms > 0 ? Math.min(1, Math.max(0, elapsed / fillState.ms)) : 1;
+      const eased = 1 - (1 - t) ** 3;
+      paint(fillState.from + (100 - fillState.from) * eased);
+      if (t >= 1) {
+        fillState = null;
+        stopAnimation();
+        paint(100);
+      }
+      return;
+    }
+    if (job) paint(overallPercentOf(job, Date.now(), fallbackBackend()));
+  }
+
+  function startAnimation() {
+    if (animId) return;
+    animId = requestAnimationFrame(frame);
+  }
+
+  function stopAnimation() {
+    if (!animId) return;
+    cancelAnimationFrame(animId);
+    animId = 0;
+  }
+
+  // ── 轮询 ──────────────────────────────────────────────────────────────
+  // 用 setTimeout 串下一次，不用 setInterval：一个作业只有一条链，
+  // 隐藏页面时能干净地掐掉，切回来也不会留下一串还在跑的空转。
+  function clearPoll() {
+    if (!pollTimer) return;
+    clearTimeout(pollTimer);
+    pollTimer = 0;
+  }
+
+  function schedulePoll() {
+    clearPoll();
+    if (stopped || !jobId) return;
+    if (document.visibilityState === "hidden") return;
+    pollTimer = setTimeout(() => { void tick(); }, POLL_MS);
+  }
+
+  async function tick() {
+    pollTimer = 0;
+    if (stopped || !jobId) return;
+    let data = null;
+    let threw = false;
+    try {
+      const res = await hana.api.fetch(`/job-status?id=${encodeURIComponent(jobId)}`);
+      data = await res.json();
+    } catch {
+      threw = true;
+      data = null;
+    }
+    if (stopped) return;
+
+    if (threw) {
+      // 单次失败不终止：网络抖一下就让面板停在半路，比慢一点更糟。
+      pollFailures += 1;
+      if (pollFailures >= MAX_POLL_FAILURES) {
+        failResult("与解析任务的连接已断开");
+        return;
+      }
+      schedulePoll();
+      return;
+    }
+    pollFailures = 0;
+    // 后端明确说查不到（进程重启、过了保留期）：这是结论，不是抖动，不再等。
+    if (!data || data.ok !== true || !data.job) {
+      failResult("解析记录已失效");
+      return;
+    }
+
+    job = data.job;
+    renderRows(job, false);
+    if (job.state === "done" || job.state === "failed") {
+      finalize(job);
+      return;
+    }
+    reportSize();
+    schedulePoll();
+  }
+
+  /** 记录没了、通道断了：停在原地，按钮还给人，一句话说清楚。 */
+  function failResult(text) {
+    stopped = true;
+    clearPoll();
+    stopAnimation();
+    setBusy(false);
+    if (summaryEl) {
+      summaryEl.textContent = text;
+      summaryEl.classList.add("di-summary--warn");
+      summaryEl.hidden = false;
+    }
+    reportSize();
+  }
+
+  /** 终态：停轮询，画结论，成功就把条子补满。 */
+  function finalize(snapshot) {
+    stopped = true;
+    clearPoll();
+    renderRows(snapshot, true);
+    setBusy(false);
+    resultEl.dataset.state = snapshot.state === "done" ? "done" : "failed";
+    if (summaryEl) {
+      const total = Array.isArray(snapshot.files) ? snapshot.files.length : 0;
+      const success = (snapshot.files || []).filter((file) => file?.status === "done").length;
+      summaryEl.textContent = `成功 ${success}/${total}`;
+      summaryEl.classList.toggle("di-summary--warn", snapshot.state !== "done");
+      summaryEl.hidden = false;
+    }
+    if (snapshot.state === "done") {
+      // 从这里接着跑到 100，而不是重新算：终态快照里所有文件都已结束，
+      // 重算会直接得到 100，条子就是一帧跳满。
+      const remaining = Math.max(0, 100 - lastPercent);
+      if (remaining <= 0.5) {
+        stopAnimation();
+        paint(100);
+      } else {
+        const ms = Math.round(Math.min(FILL_MAX_MS, Math.max(FILL_MIN_MS, remaining * FILL_MS_PER_PERCENT)));
+        fillState = { from: lastPercent, ms, startedAt: Date.now() };
+        startAnimation();
+      }
+    } else {
+      // 失败：条子停在原地（并换成 warn 色），不给「快好了」的暗示。
+      stopAnimation();
+    }
+    reportSize();
+  }
+
+  /** 在系统文件管理器里定位到那个产物。真正动手的是 App 进程。 */
+  async function revealPath(row) {
+    const path = row?.reveal?.dataset.path || "";
+    if (!path) return;
+    row.reveal.disabled = true;
+    try {
+      const res = await hana.api.fetch("/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!data || data.ok !== true) {
+        showHint(data?.error || "打开文件夹失败", "warn");
+        return;
+      }
+      clearHint();
+    } catch {
+      showHint("打开文件夹失败：连接不上应用进程", "warn");
+    } finally {
+      row.reveal.disabled = false;
+    }
+  }
+
+  // ── 发起一次提取 ──────────────────────────────────────────────────────
+  function setBusy(next) {
+    busy = !!next;
+    if (!runEl) return;
+    runEl.disabled = busy;
+    runEl.textContent = busy ? "解析中…" : "开始提取";
+  }
+
+  /** 清掉上一次的残留：行、结论、条子、作业号、定时器。新一次从白纸开始。 */
+  function resetResult() {
+    stopped = true;
+    clearPoll();
+    stopAnimation();
+    jobId = "";
+    job = null;
+    fillState = null;
+    pollFailures = 0;
+    rows.forEach((row) => row.el.remove());
+    rows.length = 0;
+    paint(0);
+    if (overallTextEl) overallTextEl.textContent = "";
+    if (summaryEl) {
+      summaryEl.textContent = "";
+      summaryEl.classList.remove("di-summary--warn");
+      summaryEl.hidden = true;
+    }
+    resultEl.hidden = true;
+    delete resultEl.dataset.state;
+  }
+
+  async function startRun() {
+    if (busy) return;
+    if (typeof hana?.api?.fetch !== "function") {
+      showHint("应用接口不可用，现在发不了解析请求", "warn");
+      return;
+    }
+    const sources = sourcesEl.value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!sources.length) {
+      showHint("先选文件或填一个路径，空白发起没有意义", "warn");
+      return;
+    }
+
+    // 提示行与结果区成套清：不能上一轮的结论还挂在新一次请求下面。
+    clearHint();
+    resetResult();
+    setBusy(true);
+
+    const payload = {
+      sources,
+      outputDir: savePathEl?.value.trim() || "",
+      backend: backendEl?.value || FALLBACK_DEFAULTS.defaultBackend,
+      pageRange: pageRangeEl?.value.trim() || "",
+      language: languageEl?.value.trim() || "",
+      includeMedia: includeMediaEl?.checked === true,
+      saveJson: saveJsonEl?.checked === true,
+    };
+
+    let data = null;
+    try {
+      const res = await hana.api.fetch("/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+
+    if (!data) {
+      setBusy(false);
+      showHint("发起解析失败：连接不上应用进程", "warn");
+      return;
+    }
+    if (data.ok !== true) {
+      setBusy(false);
+      // 后端已经把那几句话写成人话了，原样显示，不自己再编一句。
+      showHint(data.error || "发起解析失败", "warn");
+      return;
+    }
+    if (typeof data.jobId !== "string" || !data.jobId) {
+      setBusy(false);
+      showHint("发起解析失败：没有拿到作业号", "warn");
+      return;
+    }
+
+    jobId = data.jobId;
+    stopped = false;
+    job = null;
+    lastPercent = 0;
+    pollFailures = 0;
+    const names = Array.isArray(data.files) ? data.files : [];
+    seedRows(names);
+    resultEl.hidden = false;
+    resultEl.dataset.state = "running";
+    paint(0);
+    startAnimation();
+    reportSize();
+    await tick();
+  }
+
   // ── 绑事件 ────────────────────────────────────────────────────────────
   // 只绑一次。这些节点一直在 DOM 里，不随渲染重建；绑两次就会连着触发两次。
   let bound = false;
@@ -296,14 +745,18 @@ function startPanel() {
     pickDirEl?.addEventListener("click", () => { void pickSources("directory", pickDirEl); });
     pickSaveEl?.addEventListener("click", () => { void pickSaveDir(); });
 
-    // 本工单不干活：只把「还没接通」这句话露出来。不弹窗、不发请求。
-    runEl?.addEventListener("click", () => {
-      if (runHintEl) runHintEl.hidden = false;
-      reportSize();
+    runEl?.addEventListener("click", () => { void startRun(); });
+
+    // 页面藏起来就停轮询（刷出来的画面没人看），回来立刻补一次，
+    // 不然切回来会先看到一秒前的旧状态。
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        clearPoll();
+        return;
+      }
+      if (jobId && !stopped) void tick();
     });
 
-    // 高级选项里改了内容不影响折叠区高度（控件高度固定），但这个监听留着没有代价，
-    // 等下一工单往里加会变高的内容时不用再想起来补。
     if (typeof ResizeObserver !== "undefined") {
       try {
         new ResizeObserver(() => { if (expanded) applyAdvHeight(); }).observe(advInnerEl);
@@ -314,7 +767,6 @@ function startPanel() {
   (async () => {
     hana = await resolveHana().catch(() => null);
     // 宿主接口拿不到也照样把界面画出来：表单是给人填的，主题与默认值只是加分项。
-    // 所以这里不提前 return。
     syncTheme();
     try { hana?.theme?.subscribe?.(() => syncTheme()); } catch { /* 订阅不可用就只保留首帧 */ }
     bindOnce();

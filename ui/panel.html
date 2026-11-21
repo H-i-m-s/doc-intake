@@ -42,8 +42,9 @@
     </div>
 
     <button class="di-run" id="di-run" type="button">开始提取</button>
-    <!-- 本工单不接提取，点了只在这里现身一句话，位置贴着按钮，不压下面的折叠区。 -->
-    <p class="di-hint" id="di-run-hint" hidden>还没接通（下一步接入真实提取）</p>
+    <!-- 提示行：本工单起由 panel.js 填。校验提示、发起失败、打开文件夹失败都落在这里，
+         一张面板上只留一处会说话的浅色行，不同时开第二块告示区。 -->
+    <p class="di-hint" id="di-run-hint" hidden></p>
 
     <!-- 第四块：高级选项，默认收起。标题行整行可点，键盘 Enter / 空格也认得，
          所以它是个 button 而不是 div + 监听。
@@ -96,8 +97,19 @@
       </div>
     </div>
 
-    <!-- 结果区：本工单保持隐藏，下一步填内容。占位放在这里是为了下一工单只改 JS。 -->
-    <div class="di-result" id="di-result" hidden></div>
+    <!-- 结果区：跑起来之后才有。上面是整卡唯一的一条总进度，中间每文件一行，
+         最后一行收尾结论。占位一直在 DOM 里，跑之前 hidden。 -->
+    <div class="di-result" id="di-result" hidden>
+      <div class="di-overall">
+        <div class="di-overall__head">
+          <span class="di-overall__count" id="di-overall-text"></span>
+          <span class="di-overall__percent" id="di-overall-percent">0.0%</span>
+        </div>
+        <div class="di-bar"><div class="di-bar__fill" id="di-bar-fill"></div></div>
+      </div>
+      <div class="di-files" id="di-files"></div>
+      <p class="di-summary" id="di-summary" hidden></p>
+    </div>
   </div>
   <script type="module" src="./panel.js"></script>
 </body>

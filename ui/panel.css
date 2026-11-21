@@ -17,6 +17,8 @@
   --di-sub: var(--hana-text-light, var(--text-light, #6f6659));
   --di-muted: var(--hana-text-muted, var(--text-muted, #8d8274));
   --di-accent: var(--hana-accent, var(--accent, #4a6fa5));
+  --di-ok: var(--hana-green, var(--green, #4f8a63));
+  --di-warn: var(--hana-danger, var(--danger, #b06a5e));
   /* accent 上的字单独一份：浅色主题的 accent 偏深，白字；深色主题的 accent 偏亮，
      白字就糊了，改用近黑。两种主题下都够对比，又不用在别处再引入一个颜色。 */
   --di-on-accent: #ffffff;
@@ -29,6 +31,8 @@ body.t-dark {
   --di-sub: var(--hana-text-light, #b6aea2);
   --di-muted: var(--hana-text-muted, #8f877c);
   --di-accent: var(--hana-accent, #7794c2);
+  --di-ok: var(--hana-green, #6e9c7f);
+  --di-warn: var(--hana-danger, #c07d72);
   --di-on-accent: #14181c;
 }
 
@@ -212,6 +216,13 @@ body.t-dark .di-input { color-scheme: dark; }
   transform: translateY(0.5px);
 }
 
+/* 解析中：按钮留在原地但压暗，不再响应悬停 —— 它这时候不是可点的东西，
+   却也不能消失，消失会让整张卡的高度跳一下。 */
+.di-run:disabled {
+  cursor: default;
+  box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--di-ink) 12%, transparent);
+}
+
 /* ---------- 提示行 ---------- */
 .di-hint {
   margin: 6px 0 0;
@@ -219,6 +230,10 @@ body.t-dark .di-input { color-scheme: dark; }
   line-height: 1.45;
   color: var(--di-muted);
 }
+
+/* 需要人处理的一句话才转 warn 色：校验没过、发起失败、打开失败。
+   普通提示保持中间灰，不然一出提示就像出错了。 */
+.di-hint--warn { color: var(--di-warn); }
 
 .di-hint[hidden] { display: none; }
 
@@ -339,16 +354,125 @@ body.t-dark .di-input { color-scheme: dark; }
   cursor: pointer;
 }
 
-/* ---------- 结果区（本工单保持隐藏） ---------- */
+/* ---------- 结果区 ---------- */
 .di-result {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--di-line);
+}
+
+.di-result[hidden] { display: none; }
+
+/* 总进度头一行：左边完成计数，右边百分比。
+   百分比用等宽字且定宽，从 9.9% 进位到 10.0% 时不会把左边的字数推着走。 */
+.di-overall__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.di-overall__count {
+  font-size: 11.5px;
+  color: var(--di-sub);
+  white-space: nowrap;
+}
+
+.di-overall__percent {
+  flex: 0 0 auto;
+  width: 3.9em;
+  text-align: right;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Segoe UI", monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--di-ink);
+}
+
+/* 整卡只有这一条进度条，5px：比文字轻，但一眼看得出在走。 */
+.di-bar {
+  position: relative;
+  height: 5px;
+  border-radius: 999px;
+  overflow: hidden;
+  color: var(--di-ink);
+  background: color-mix(in srgb, currentColor 9%, transparent);
+}
+
+.di-bar__fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--di-accent);
+  /* 宽度由 JS 每帧直接写，不要过渡：两边都参与就是一顿一顿的。 */
+  transition: background-color 240ms linear;
+}
+
+/* 收尾时条子本身带出结论：全成 → 绿，有失败 → warn。 */
+.di-result[data-state="done"] .di-bar__fill { background: var(--di-ok); }
+.di-result[data-state="failed"] .di-bar__fill { background: var(--di-warn); }
+
+/* 每文件一行：名字占满剩下的宽度并省略，状态字定在右边。
+   行间用一条极淡的分隔线，不每行包一张小卡，否则一层套一层。 */
+.di-files { margin-top: 8px; }
+
+.di-file {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  padding: 5px 0;
+}
+
+.di-file + .di-file {
+  border-top: 1px solid color-mix(in srgb, var(--di-ink) 7%, transparent);
+}
+
+.di-file__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--di-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.di-file__state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--di-muted);
+  white-space: nowrap;
+}
+
+.di-file[data-state="done"] .di-file__state { color: var(--di-ok); }
+.di-file[data-state="failed"] .di-file__state { color: var(--di-warn); }
+
+/* 失败原因单独占一行：文件名会被省略，而这句是这一行唯一必须读全的东西。 */
+.di-file__error {
+  flex: 1 0 100%;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--di-warn);
+  word-break: break-word;
+}
+
+.di-file__error[hidden] { display: none; }
+
+.di-file__reveal { flex: 0 0 auto; }
+.di-file__reveal[hidden] { display: none; }
+
+/* 收尾那一行：成功 x/y。 */
+.di-summary {
+  margin: 8px 0 0;
   font-size: 11.5px;
   color: var(--di-sub);
 }
 
-.di-result[hidden] { display: none; }
+.di-summary--warn { color: var(--di-warn); }
+
+.di-summary[hidden] { display: none; }
 
 /* ---------- 键盘可达 ---------- */
 .di-mini:focus-visible,
