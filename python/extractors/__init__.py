@@ -16,6 +16,7 @@ from .pdf_extractor import PdfExtractor
 from .epub_extractor import EpubExtractor
 from .fb2_extractor import Fb2Extractor
 from .cbz_extractor import CbzExtractor
+from .mobi_extractor import MobiExtractor
 
 __all__ = [
     "BaseExtractor",
@@ -28,6 +29,7 @@ __all__ = [
     "EpubExtractor",
     "Fb2Extractor",
     "CbzExtractor",
+    "MobiExtractor",
 ]
 
 
@@ -47,6 +49,7 @@ def get_extractor(file_type: str, settings: dict) -> BaseExtractor:
         "epub": EpubExtractor,
         "fb2": Fb2Extractor,
         "cbz": CbzExtractor,
+        "mobi": MobiExtractor,
     }
     extractor_cls = extractors.get(file_type)
     if not extractor_cls:

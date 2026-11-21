@@ -29,6 +29,10 @@
     ".epub": "epub",
     ".fb2": "fb2",
     ".fbz": "fb2",
-    ".cbz": "cbz"
+    ".cbz": "cbz",
+    ".mobi": "mobi",
+    ".azw": "mobi",
+    ".azw3": "mobi",
+    ".prc": "mobi"
   }
 }

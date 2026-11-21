@@ -619,10 +619,12 @@ def _annotate_chain_result(
         used_backend and used_backend in backend_chain
     )
     # 降级原因合并到 warnings，统一警告输出。避免 fallbackReasons 与 warnings 重叠。
+    # 全链失败时 extract_with_chain 已经把同一批原因记过一次，这里只补没记过的：
+    # 同一条失败理由在 warnings 里出现两遍，读的人会以为是两次不同的失败。
     for att in failed_atts:
-        result.warnings.append(
-            f"  {att['backend']}: {_redact_runtime_secret(att['reason'], settings)}"
-        )
+        line = f"  {att['backend']}: {_redact_runtime_secret(att['reason'], settings)}"
+        if line not in result.warnings:
+            result.warnings.append(line)
 
 
 def _extract_with_backend(
@@ -854,6 +856,7 @@ def format_result(result: ExtractionResult):
         "fixedLayout",
         "series",
         "number",
+        "containerFormat",
     ):
         if meta.get(key) not in (None, ""):
             compact_meta[key] = meta[key]

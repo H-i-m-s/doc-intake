@@ -160,6 +160,15 @@ const DEP_CATALOG = [
     pip: "html-to-markdown>=0.5.0",
   },
   {
+    id: "mobi",
+    module: "mobi",
+    dists: ["mobi"],
+    name: "mobi",
+    purpose: "解析 Kindle 电子书（.mobi/.azw/.azw3/.prc）时才需要；GPL-3.0 许可，插件本身不打包它",
+    level: "optional",
+    pip: "mobi>=0.4.1",
+  },
+  {
     id: "zxing-cpp",
     module: "zxingcpp",
     dists: ["zxing-cpp"],
