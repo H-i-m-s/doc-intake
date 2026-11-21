@@ -276,8 +276,13 @@ function startPanel() {
     const fieldEl = rootEl.querySelector(".di-combo__field");
     const valueEl = rootEl.querySelector(".di-combo__value");
     const listEl = rootEl.querySelector(".di-combo__list");
+    const popEl = rootEl.querySelector(".di-combo__pop");
+    // 折叠区为了做出收起动画把 overflow 钉成了 hidden，浮层会被它直接裁掉。
+    // 浮层打开时临时改成 visible，关上再恢复。
+    const clipEl = rootEl.closest(".di-adv__body");
     const optionEls = Array.from(listEl ? listEl.querySelectorAll(".di-combo__option") : []);
     let activeIndex = -1;
+    let clipTimer = 0;
 
     const optionValue = (el) => el?.getAttribute("data-value") || "";
     const isOpen = () => rootEl.classList.contains("is-open");
@@ -290,22 +295,39 @@ function startPanel() {
     }
 
     function openList() {
-      if (!listEl || isOpen()) return;
-      listEl.hidden = false;
+      if (!popEl || !listEl || isOpen()) return;
+      // 先把列表真实高度量出来：浮层高度从 0 走到这个值，收起时再走回去，两个方向都有动画。
+      const listH = Math.ceil(listEl.scrollHeight || 0);
+      rootEl.style.setProperty("--di-list-h", `${listH}px`);
+      clearTimeout(clipTimer);
       rootEl.classList.add("is-open");
+      popEl.setAttribute("aria-hidden", "false");
+      clipEl?.classList.add("is-unclipped");
       fieldEl?.setAttribute("aria-expanded", "true");
       const index = optionEls.findIndex((el) => optionValue(el) === (rootEl.getAttribute("data-value") || ""));
       highlight(index >= 0 ? index : 0);
+      // 浮层是绝对定位，不占位，超出卡片的部分会被 body 的 overflow:hidden 裁掉。
+      // 量一次它需要多少底部留白，写进 --di-combo-room，卡片靠 padding 的过渡长高，
+      // 下面那些行一动不动。
+      const panelRect = panelEl.getBoundingClientRect();
+      const comboRect = rootEl.getBoundingClientRect();
+      const needed = (comboRect.bottom - panelRect.top) + 4 + listH - panelEl.offsetHeight;
+      panelEl.style.setProperty("--di-combo-room", `${Math.max(0, Math.ceil(needed) + 8)}px`);
       reportSize();
     }
 
     function closeList() {
-      if (!listEl || !isOpen()) return;
-      listEl.hidden = true;
+      if (!popEl || !isOpen()) return;
       rootEl.classList.remove("is-open");
+      popEl.setAttribute("aria-hidden", "true");
+      // 收起动画跑完再恢复裁剪，否则关闭那一刻就被折叠区硬切掉，看起来又没有动画。
+      clearTimeout(clipTimer);
+      clipTimer = setTimeout(() => clipEl?.classList.remove("is-unclipped"), 220);
       fieldEl?.setAttribute("aria-expanded", "false");
       optionEls.forEach((el) => el.classList.remove("is-active"));
       activeIndex = -1;
+      // 留白和浮层一起收，两边都是 180ms，看不出先后。
+      panelEl.style.setProperty("--di-combo-room", "0px");
       reportSize();
     }
 

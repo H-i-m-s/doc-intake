@@ -19,6 +19,11 @@
   --di-accent: var(--hana-accent, var(--accent, #4a6fa5));
   --di-ok: var(--hana-green, var(--green, #4f8a63));
   --di-warn: var(--hana-danger, var(--danger, #b06a5e));
+  /* 面与线：宿主的卡片面色与边框色。
+     之前面板只搬了文字色，所以所有「块」只能拿文字色掺透明度当底，
+     那是没有面色时的近似做法。浮层必须是不透明的一层，必须用真面色。 */
+  --di-surface: var(--hana-bg-card, var(--bg-card, #ffffff));
+  --di-edge: var(--hana-border, color-mix(in srgb, var(--di-ink) 16%, transparent));
   /* accent 上的字单独一份：浅色主题的 accent 偏深，白字；深色主题的 accent 偏亮，
      白字就糊了，改用近黑。两种主题下都够对比，又不用在别处再引入一个颜色。 */
   --di-on-accent: #ffffff;
@@ -33,6 +38,9 @@ body.t-dark {
   --di-accent: var(--hana-accent, #7794c2);
   --di-ok: var(--hana-green, #6e9c7f);
   --di-warn: var(--hana-danger, #c07d72);
+  /* 深色下宿主的卡片面色；没注入时用中性深灰蓝，不要白。 */
+  --di-surface: var(--hana-bg-card, var(--bg-card, #232c33));
+  --di-edge: var(--hana-border, color-mix(in srgb, var(--di-ink) 18%, transparent));
   --di-on-accent: #14181c;
 }
 
@@ -60,6 +68,9 @@ body {
   width: 460px;
   max-width: 100%;
   padding: 12px 15px 14px;
+  /* 下拉浮层打开时，靠这块底部留白给它腾地方；过渡成对，所以卡片变高也是渐变的。 */
+  padding-bottom: calc(14px + var(--di-combo-room, 0px));
+  transition: padding-bottom 180ms ease-out;
   display: flex;
   flex-direction: column;
 }
@@ -182,11 +193,12 @@ body.t-dark .di-input { color-scheme: dark; }
 /* 自绘下拉。原生 select 的弹层不吃页面配色，深色卡片下是白底浅字，
    在 WebView 里连选项都读不清，所以控件和列表都自己画。 */
 .di-combo {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
 }
 
 .di-combo__field {
@@ -239,35 +251,61 @@ body.t-dark .di-input { color-scheme: dark; }
 
 .di-combo.is-open .di-combo__chevron { transform: rotate(180deg); }
 
-/* 列表占普通流：卡片高度由内容决定，绝对定位的弹层会被卡片边界裁掉。 */
+/* 列表做成浮层：要盖住下面的行，不能把它们顶下去。
+   但浮层会超出卡片边界，而 body 是 overflow:hidden（不许内容把卡片撑宽），
+   所以展开时给面板底部补一块等高的留白（--di-combo-room），浮层才有地方落。
+   留白是动画的，所以卡片变高也是渐变的，不是一跳。 */
+.di-combo__pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: height 180ms ease-out, opacity 140ms ease-out, transform 180ms ease-out;
+}
+
+.di-combo.is-open .di-combo__pop {
+  height: var(--di-list-h, 0px);
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 面色用宿主的卡片面色，不自己调。没注入时按主题给一套中性兜底，
+   深浅两套都不一样——白底配暖色字正是上一版读不清的原因。 */
 .di-combo__list {
   list-style: none;
   margin: 0;
-  padding: 3px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--di-ink) 6%, var(--di-surface, #fff));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--di-ink) 10%, transparent);
+  padding: 4px;
+  border-radius: 9px;
+  background: var(--di-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--di-edge),
+    0 10px 24px -14px rgba(0, 0, 0, 0.55);
 }
 
-.di-combo__list[hidden] { display: none; }
-
+/* 选项一律用正文色：底是宿主的，字也得是宿主给的正文色，
+   旧版的浅灰字叠在白底上就是读不清的那一半原因。 */
 .di-combo__option {
-  padding: 5px 7px;
+  padding: 6px 8px;
   border-radius: 6px;
   font-size: 11.5px;
-  color: var(--di-sub);
+  color: var(--di-ink);
   cursor: pointer;
+  transition: background-color 120ms linear;
 }
 
 .di-combo__option:hover,
 .di-combo__option.is-active {
-  color: var(--di-ink);
-  background: color-mix(in srgb, var(--di-ink) 9%, transparent);
+  background: color-mix(in srgb, var(--di-ink) 10%, transparent);
 }
 
 .di-combo__option[aria-selected="true"] {
-  color: var(--di-ink);
-  background: color-mix(in srgb, var(--di-ink) 12%, transparent);
+  /* 选中态不用强调色：这一页的强调色只留给主按钮。 */
+  background: color-mix(in srgb, var(--di-ink) 14%, transparent);
 }
 
 /* ---------- 主按钮：这一页唯一的强调色 ---------- */
@@ -364,23 +402,25 @@ body.t-dark .di-input { color-scheme: dark; }
 
 .di-adv__chevron.is-open { transform: rotate(90deg); }
 
-/* 收起用 max-height:0 而不是 display:none：硬切看不出下面还有东西，
-   也做不出过渡。展开高度由 panel.js 写进 --di-adv-h，多留 1px 免得小数舍入
-   把最后一行切掉一条边。 */
+/* 用 height 而不是 max-height：展开和收起都从一个真实像素值走到 0，
+   两个方向都真的会动。高度由 panel.js 写进 --di-adv-h。 */
 .di-adv__body {
   overflow: hidden;
-  /* 折叠区是 flex 子项，自动最小尺寸在部分引擎上会跟 max-height 拧着，
+  /* 折叠区是 flex 子项，自动最小尺寸在部分引擎上会跟 height 拧着，
      钉死这一项才能保证收起时高度真是 0。 */
   min-height: 0;
-  max-height: 0;
+  height: 0;
   margin-top: 0;
-  transition: max-height 200ms ease-out, margin-top 200ms ease-out;
+  transition: height 220ms ease-out, margin-top 220ms ease-out;
 }
 
 .di-adv__body.is-open {
-  max-height: calc(var(--di-adv-h, 0px) + 1px);
+  height: calc(var(--di-adv-h, 0px) + 1px);
   margin-top: 10px;
 }
+
+/* 下拉浮层打开期间临时放开裁剪（见 panel.js 的 clipEl），收完再恢复。 */
+.di-adv__body.is-unclipped { overflow: visible; }
 
 .di-adv__inner {
   display: flex;
