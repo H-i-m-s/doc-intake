@@ -1,9 +1,15 @@
-import { extractDocument } from "../lib/service.js";
-import { cardInstanceIdFor, createJob, finishJob, getJob, pruneJobs, updateFile, updateJob } from "../lib/jobs.js";
+import { cardInstanceIdFor, getJob } from "../lib/jobs.js";
+import {
+  entryBackendKind,
+  expandSourcesWithPython,
+  LEGACY_OFFICE_EXTS,
+  processFiles,
+  toFileOutput,
+} from "../lib/extract-batch.js";
+import { startJob } from "../lib/job-runner.js";
 import { toToolError, toToolResult, toToolResultWithContent } from "../lib/tool-output.js";
-import { getSettings, DEFAULT_PDF_BACKEND_CHAIN } from "../lib/settings.js";
+import { getSettings } from "../lib/settings.js";
 import { scheduleAutoCleanup } from "../lib/cleanup.js";
-import { Semaphore } from "../lib/semaphore.js";
 import { DocIntakeError } from "../lib/errors.js";
 import {
   buildTokenNotice,
@@ -15,89 +21,13 @@ import {
   shouldBackgroundProbe,
   writeStatus,
 } from "../lib/token-status.js";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { basename, dirname, extname, isAbsolute, join, normalize, parse, resolve } from "node:path";
-
-const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
+import { basename, extname } from "node:path";
 
 /** 进度卡在宿主里显示的名字，与 manifest 的 id 一起构成卡片身份。 */
 const CARD_TITLE = "文档解析";
-/** 宿主任务回执里附全文的阈值（字符数）。超过就只给摘要和落盘路径。 */
-const INLINE_MARKDOWN_LIMIT = 8000;
-
-// v2 App 的 JS 进程跑在 Node Permission Model 下，裸 fs 读许可根以外的路径会被拒。
-// 路径展开（目录枚举、存在性、后缀过滤）交给被 spawn 的 Python 子进程完成；
-// 语义与 v1 的 expandPaths 一致：无效路径与不支持的后缀静默跳过。
-function expandSourcesWithPython(pythonExe, paths) {
-  const scriptPath = join(CURRENT_DIR, "..", "python", "list_sources.py");
-  return new Promise((resolve, reject) => {
-    const child = spawn(pythonExe, [scriptPath], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, PYTHONUTF8: "1" },
-      windowsHide: true,
-      timeout: 60000,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
-    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
-    child.on("error", (error) => {
-      reject(new Error(`展开路径失败: ${error.message}`));
-    });
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`展开路径失败(退出码 ${code}): ${(stderr || stdout).slice(0, 300)}`));
-        return;
-      }
-      try {
-        const parsed = JSON.parse(stdout);
-        resolve(Array.isArray(parsed?.sources) ? parsed.sources : []);
-      } catch {
-        reject(new Error(`展开路径输出解析失败: ${stdout.slice(0, 300)}`));
-      }
-    });
-    child.stdin.end(JSON.stringify(Array.isArray(paths) ? paths : []));
-  });
-}
-
-const LEGACY_OFFICE_EXTS = new Set([".doc", ".xls", ".ppt"]);
 
 function isLegacyOfficeSource(source) {
   return LEGACY_OFFICE_EXTS.has(extname(source).toLowerCase());
-}
-
-function entryBackendKind(source, input, settings) {
-  const explicit = input?.backend;
-  const ext = extname(source).toLowerCase();
-  if (explicit && explicit !== "auto") {
-    if (explicit === "local" && LEGACY_OFFICE_EXTS.has(ext)) return "legacy";
-    return explicit === "local" ? "local" : "api";
-  }
-
-  if (LEGACY_OFFICE_EXTS.has(ext)) {
-    return "legacy";
-  }
-  if (ext === ".pdf") {
-    // 留空按自动档理解：mineru > paddleocr > local
-  const chain = settings?.pdfBackendChain?.length
-    ? settings.pdfBackendChain
-    : DEFAULT_PDF_BACKEND_CHAIN;
-    return chain[0] === "local" ? "local" : "api";
-  }
-  if ([".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif"].includes(ext)) {
-    return "api";
-  }
-  return "local";
-}
-
-async function runOne(source, input, ctx) {
-  try {
-    const result = await extractDocument({ ...input, source }, ctx);
-    return { ok: true, source, result };
-  } catch (error) {
-    return { ok: false, source, error };
-  }
 }
 
 const DEFAULT_MEDIA_PATH_RETURN_LIMIT = 20;
@@ -106,71 +36,6 @@ function normalizeMediaPathReturnLimit(settings = {}) {
   const configured = Number(settings.mediaPathReturnLimit);
   if (!Number.isFinite(configured)) return DEFAULT_MEDIA_PATH_RETURN_LIMIT;
   return Math.max(0, Math.floor(configured));
-}
-
-function absolutePath(value) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const normalized = normalize(value);
-  return isAbsolute(normalized) ? normalized : resolve(normalized);
-}
-
-function normalizeMediaPaths(paths, mediaDir) {
-  if (!Array.isArray(paths)) return [];
-  const absoluteDir = absolutePath(mediaDir);
-  return paths
-    .map((value) => {
-      if (typeof value !== "string" || !value.trim()) return null;
-      const normalized = normalize(value);
-      if (isAbsolute(normalized)) return normalized;
-      return absoluteDir ? join(absoluteDir, basename(normalized)) : null;
-    })
-    .filter(Boolean);
-}
-
-function inferMediaDir(mediaPaths) {
-  const firstAbsolutePath = mediaPaths.find((value) => isAbsolute(value));
-  return firstAbsolutePath ? dirname(firstAbsolutePath) : null;
-}
-
-function deriveMediaDir({ outputDir, mdPath, source }) {
-  const absoluteMarkdownPath = absolutePath(mdPath);
-  if (absoluteMarkdownPath) {
-    const markdownName = basename(absoluteMarkdownPath);
-    const sourceFilename = markdownName.endsWith(".md")
-      ? markdownName.slice(0, -3)
-      : markdownName;
-    const stem = parse(sourceFilename).name;
-    if (stem) return join(dirname(absoluteMarkdownPath), `${stem}_media`);
-  }
-
-  const absoluteOutputDir = absolutePath(outputDir);
-  const sourceStem = typeof source === "string" ? parse(basename(source)).name : "";
-  if (absoluteOutputDir && sourceStem) {
-    return join(absoluteOutputDir, `${sourceStem}_media`);
-  }
-  return null;
-}
-
-async function processFiles(sources, input, ctx, settings) {
-  const apiSem = new Semaphore(input._apiConcurrency ?? 4);
-  const localSem = new Semaphore(input._localConcurrency ?? 8);
-  const legacySem = new Semaphore(input._legacyConversionConcurrency ?? 1);
-
-  const tasks = sources.map((source) => {
-    const kind = entryBackendKind(source, input, settings);
-    const sem = kind === "api" ? apiSem : kind === "legacy" ? legacySem : localSem;
-    return sem.run(() => runOne(source, input, ctx));
-  });
-
-  const settled = await Promise.allSettled(tasks);
-  return settled.map((item, index) => {
-    if (item.status === "fulfilled") return item.value;
-    return {
-      ok: false,
-      source: sources[index],
-      error: item.reason instanceof Error ? item.reason : new Error(String(item.reason)),
-    };
-  });
 }
 
 // ── 异步作业：云端后端可能跑几分钟，宿主 RPC 只有 30 秒 ────────────────────
@@ -190,125 +55,13 @@ function cardDescription(sources) {
   return sources.length === 1 ? basename(sources[0]) : `${sources.length} 个文件`;
 }
 
-/** 进度行按文件名回指到作业里的那一行。同名文件按「还没结束的第一个」认。 */
-function resolveJobFileIndex(files, name) {
-  if (!name) return -1;
-  let fallback = -1;
-  for (let index = 0; index < files.length; index += 1) {
-    if (files[index].name !== name) continue;
-    if (fallback < 0) fallback = index;
-    if (files[index].status === "pending" || files[index].status === "running") return index;
-  }
-  return fallback;
-}
-
-function makeJobProgressHandler(jobId) {
-  return (event) => {
-    if (!event || typeof event !== "object") return;
-    const snapshot = getJob(jobId);
-    if (!snapshot) return;
-    const index = resolveJobFileIndex(snapshot.files, event.file);
-    if (index < 0) return;
-    const file = snapshot.files[index];
-    const patch = { status: "running" };
-    if (typeof event.backend === "string" && event.backend) {
-      patch.backend = event.backend;
-      // 降级链会反复经过同一个后端，记过的就不再追加，否则列表会长成一串重复。
-      if (!file.triedBackends.includes(event.backend)) {
-        patch.triedBackends = [...file.triedBackends, event.backend];
-      }
-    }
-    if (typeof event.stage === "string") patch.stage = event.stage;
-    if (Number.isFinite(event.attempt)) patch.attempt = event.attempt;
-    if (Number.isFinite(event.pages)) patch.pages = event.pages;
-    if (Number.isFinite(event.durationMs)) patch.durationMs = event.durationMs;
-    updateFile(jobId, index, patch);
-  };
-}
-
-function jobSummaryLine(file) {
-  const name = basename(String(file.name ?? "")) || String(file.name ?? "");
-  if (file.status !== "success") {
-    return `❌ ${name}：${file.error ?? file.warnings?.[0] ?? "解析失败"}`;
-  }
-  const parts = [`✅ ${name}`];
-  if (file.usedBackend) parts.push(`后端 ${file.usedBackend}`);
-  if (file.mdPath) parts.push(`已保存：${file.mdPath}`);
-  return parts.join(" · ");
-}
-
-function buildJobReport(filesOut) {
-  const successCount = filesOut.filter((file) => file.status === "success").length;
-  const lines = [
-    `文档解析完成：${successCount}/${filesOut.length} 个文件成功`,
-    "",
-    ...filesOut.map(jobSummaryLine),
-  ];
-  // 全文只在总量不大时附上，否则一条宿主任务消息会被正文撑爆；mdPath 已经能拿到全文。
-  const totalChars = filesOut.reduce((sum, file) => sum + String(file.markdown ?? "").length, 0);
-  if (totalChars > 0 && totalChars <= INLINE_MARKDOWN_LIMIT) {
-    const body = filesOut.length === 1
-      ? String(filesOut[0].markdown ?? "")
-      : filesOut
-        .map((file) => `## ${basename(String(file.name ?? ""))}\n\n${file.markdown ?? ""}`)
-        .join("\n\n");
-    lines.push("", "---", "", body);
-  }
-  return lines.join("\n");
-}
-
-async function runJobInBackground({ jobId, sources, input, ctx, settings, enrichedInput, sdk, taskId }) {
-  const jobCtx = { ...ctx, onProgress: makeJobProgressHandler(jobId) };
-  let results;
-  try {
-    results = await processFiles(sources, enrichedInput, jobCtx, settings);
-  } catch (error) {
-    // processFiles 内部已经 allSettled，这里兜的是更外层的意外（比如信号量配置炸了）。
-    const failure = error instanceof Error ? error : new Error(String(error));
-    results = sources.map((source) => ({ ok: false, source, error: failure }));
-  }
-
-  results.forEach((item, index) => {
-    const ok = item.ok === true;
-    // 卡片的「打开文件夹」靠这个路径。只取落盘后的 mdPath，没保存就没有可开的文件。
-    const saved = ok ? toFileOutput(item) : null;
-    updateFile(jobId, index, {
-      status: ok ? "done" : "failed",
-      stage: ok ? "ok" : "fail",
-      error: ok ? null : (item.error?.message ?? "未知错误"),
-      mdPath: saved?.mdPath ?? null,
-    });
-  });
-
-  const filesOut = results.map(toFileOutput);
-  const firstError = filesOut.find((file) => file.status !== "success")?.error ?? null;
-  const state = firstError ? "failed" : "done";
-  const text = buildJobReport(filesOut);
-  finishJob(jobId, { state, error: firstError });
-
-  if (taskId) {
-    try {
-      if (state === "done") {
-        await sdk.tasks.complete(taskId, { text });
-      } else {
-        await sdk.tasks.fail(taskId, text);
-      }
-    } catch (error) {
-      await ctx?.logger?.error?.(`宿主任务回执失败：${error?.message || error}`);
-    }
-  }
-  pruneJobs();
-}
-
 async function startAsyncJob({ sources, input, ctx, settings, enrichedInput }) {
-  const jobId = createJob({
-    files: sources.map((source) => ({ source, name: basename(source) })),
-  });
   const sdk = ctx?.sdk ?? null;
   const callToken = ctx?.invocation?.callToken ?? null;
 
   // 宿主任务必须在这次 execute 里建好并在返回前拿到 taskId：callToken 只在本次
   // 调用窗口内有效，等后台跑完再 create 就再也建不出来，结果只能闷在作业表里。
+  // 顺序上先建任务再建作业：作业一落地就开始跑，回执要拿 taskId 认人。
   let taskId = null;
   if (callToken && typeof sdk?.tasks?.create === "function") {
     try {
@@ -323,12 +76,27 @@ async function startAsyncJob({ sources, input, ctx, settings, enrichedInput }) {
     }
   }
 
-  // 不 await：execute 要立刻返回。挂 catch 是因为没有其他人在等它的拒绝。
-  runJobInBackground({ jobId, sources, input, ctx, settings, enrichedInput, sdk, taskId })
-    .catch((error) => {
-      finishJob(jobId, { state: "failed", error: error?.message || String(error) });
-      void ctx?.logger?.error?.(`后台解析作业异常：${error?.message || error}`);
-    });
+  // 作业本身（建、跑、逐文件落状态、收尾、清理）全在 lib/job-runner.js。
+  // 这里只留着宿主任务那一段：建已在上头，回执在这里。
+  const { jobId } = await startJob({
+    sources,
+    input: enrichedInput,
+    ctx,
+    settings,
+    runBatch: processFiles,
+    onFinish: async ({ state, text }) => {
+      if (!taskId) return;
+      try {
+        if (state === "done") {
+          await sdk.tasks.complete(taskId, { text });
+        } else {
+          await sdk.tasks.fail(taskId, text);
+        }
+      } catch (error) {
+        await ctx?.logger?.error?.(`宿主任务回执失败：${error?.message || error}`);
+      }
+    },
+  });
 
   const text = [
     `已开始后台解析：${cardDescription(sources)}`,
@@ -362,88 +130,6 @@ async function startAsyncJob({ sources, input, ctx, settings, enrichedInput }) {
       },
       job: getJob(jobId),
     },
-  };
-}
-
-function toFileOutput(item) {
-  if (!item.ok) {
-    const errorMessage = item.error?.message ?? "未知错误";
-    return {
-      name: item.source,
-      status: "failed",
-      error: errorMessage,
-      warnings: [errorMessage],
-      markdown: `❌ 解析失败: ${errorMessage}`,
-    };
-  }
-
-  const result = item.result;
-  const metadata = result.metadata ?? {};
-  const rawMediaPaths = Array.isArray(metadata.mediaPaths) ? metadata.mediaPaths : [];
-  let mediaDir = absolutePath(metadata.mediaDir);
-  let mediaPaths = normalizeMediaPaths(rawMediaPaths, mediaDir);
-  if (!mediaDir && mediaPaths.length > 0) {
-    mediaDir = inferMediaDir(mediaPaths);
-  }
-  if (!mediaDir && rawMediaPaths.length > 0) {
-    mediaDir = deriveMediaDir({
-      outputDir: result.outputDir,
-      mdPath: metadata.mdPath,
-      source: item.source,
-    });
-  }
-  if (mediaDir) {
-    mediaPaths = normalizeMediaPaths(rawMediaPaths, mediaDir);
-  }
-  const rawMediaCount = rawMediaPaths.filter((value) => {
-    if (typeof value === "string") return Boolean(value.trim());
-    return value !== null && value !== undefined;
-  }).length;
-  const unresolvedMediaCount = Math.max(0, rawMediaCount - mediaPaths.length);
-  const saveFailed = metadata.saveStatus === "failed";
-  const conversionFailed = metadata.conversionStatus === "failed";
-  const warnings = Array.isArray(result.warnings)
-    ? [...result.warnings]
-    : (Array.isArray(metadata.warnings) ? [...metadata.warnings] : []);
-  if (unresolvedMediaCount > 0) {
-    warnings.push("部分媒体路径缺少可用的绝对路径基准，未返回这些媒体的路径");
-  }
-  const saveError = saveFailed
-    ? warnings.find((warning) => String(warning).startsWith("保存失败")) ?? "保存失败"
-    : null;
-  const conversionError = conversionFailed
-    ? warnings.at(-1) ?? metadata.conversionErrorCode ?? "旧格式转换失败"
-    : null;
-  return {
-    name: item.source,
-    status: saveFailed || conversionFailed ? "failed" : "success",
-    ...((saveError || conversionError)
-      ? { error: saveError ?? conversionError }
-      : {}),
-    outputDir: absolutePath(result.outputDir),
-    mdPath: absolutePath(metadata.mdPath),
-    mediaDir,
-    jsonPath: absolutePath(metadata.jsonPath),
-    mediaPaths,
-    unresolvedMediaCount,
-    format: metadata.format ?? null,
-    reader: metadata.reader ?? null,
-    backendChain: metadata.backendChain ?? null,
-    originalFormat: metadata.originalFormat ?? null,
-    convertedFormat: metadata.convertedFormat ?? null,
-    conversionProvider: metadata.conversionProvider ?? null,
-    conversionStatus: metadata.conversionStatus ?? null,
-    conversionErrorCode: metadata.conversionErrorCode ?? null,
-    conversionWarnings: metadata.conversionWarnings ?? [],
-    conversionDurationMs: metadata.conversionDurationMs ?? null,
-    warnings,
-    usedBackendInChain: metadata.usedBackendInChain ?? null,
-    usedBackend: metadata.usedBackend ?? null,
-    usedBackends: metadata.usedBackends ?? [],
-    // 码内容属于提取结果，不是路径；空数组表示没扫到或不适用。
-    barcodeCodes: Array.isArray(metadata.barcodeCodes) ? metadata.barcodeCodes : [],
-    barcodeOnlyDocument: metadata.barcodeOnlyDocument === true,
-    markdown: result.markdown ?? "",
   };
 }
 
