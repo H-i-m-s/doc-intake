@@ -146,9 +146,14 @@ function parseThemeHeader(css) {
   }
 
   // 衣橱导出的皮肤：/* 衣橱导出 · <名字> · [appearance ·] <日期> */
+  // 名字本身可能带『·』（比如「DeepSeek · 深海女仆」），所以从尾部拆日期和明暗，
+  // 不能按第一个分隔点切开。
   const wardrobe = /^衣橱导出\s*[·:：]\s*(.+)$/.exec(lines[0] || "");
   if (wardrobe) {
-    const name = wardrobe[1].split("·")[0].trim();
+    const name = wardrobe[1]
+      .replace(/\s*·\s*\d{4}-\d{2}-\d{2}\s*$/, "")
+      .replace(/\s*·\s*(dark|light)\s*$/i, "")
+      .trim();
     return { name, description: "衣橱导出的皮肤" };
   }
 
