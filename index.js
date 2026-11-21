@@ -15,6 +15,8 @@
 import { defineApp } from "./sdk/app-contract/server-client.js";
 import { configureJobsStore, loadJobs } from "./lib/jobs.js";
 import { configureCleanupLog } from "./lib/cleanup-log.js";
+import { getSettings } from "./lib/settings.js";
+import { createServiceHandlers } from "./lib/service-api.js";
 import * as toolDocIntake from "./tools/doc_intake.js";
 
 export const name = "doc-intake";
@@ -87,4 +89,39 @@ export default defineApp(async (sdk) => {
 
   // 后端路由只能有一个来源：宿主扫描 routes/*.js，与 sdk.routes.register 互斥。
   // 进度的 /job-status 因此在 routes/settings.js 里注册，这里不再另开一条。
+
+  // ---- 对外开放的服务 ----------------------------------------------------
+  // 别的 App 可以直接调这四个方法（宿主把完整名固定成 app:doc-intake/<方法名>），
+  // 不经过模型。它们不建宿主任务、不往会话投东西、不弹卡片、不写全局存储。
+  //
+  // 注册需要用户已授予 app/services.provide（默认关闭）。没授予时 handle 会抛
+  // APP_CAPABILITY_DENIED：这里逐条接住并记一条日志，绝不让 App 启动失败 ——
+  // 工具与卡片照常可用，只是外部调不到。授权之后要重载 App，注册才会重新走一遍。
+  const serviceHandlers = createServiceHandlers({
+    // 读配置的写法与工具入口保持同一套：原始配置 + getSettings 归一。
+    readSettings: async () => {
+      const raw = (await sdk.config.getAll()) || {};
+      const settings = getSettings({ config: { get: (key) => raw[key] } });
+      // getSettings 是提取用的规范化视图，里面没有 serviceReadRoots：那一条只对服务入口有意义，
+      // 提取侧用不到。服务要靠它做路径准入，所以在这里就地补上，
+      // 不去改 lib/settings.js —— 那会把一个用不到的字段塞给全部调用方。
+      return {
+        ...settings,
+        serviceReadRoots: typeof raw.serviceReadRoots === "string" ? raw.serviceReadRoots : "",
+      };
+    },
+    logger: sdk.logger,
+  });
+  for (const [method, handler] of Object.entries(serviceHandlers)) {
+    try {
+      // allowCrossApp：别的 App 也能调。不给这一项就只本 App 自己能用，
+      // 而对一个对外服务来说「只有自己能调」等于没开。
+      await sdk.bus.handle(method, handler, { allowCrossApp: true });
+    } catch (error) {
+      // 记日志本身也不允许把启动带崩，两层各管一层。
+      try {
+        await sdk.logger.info(`服务未注册（${method}）：${error?.message || error}；授权后需重载 App`);
+      } catch { /* 日志都失败就只能放弃了，但启动照旧继续 */ }
+    }
+  }
 });

@@ -138,6 +138,13 @@ const FIELDS = {
     picker: "directory",
     placeholder: "留空 = 文档目录/doc-intake",
   },
+  serviceReadRoots: {
+    title: "允许其它插件读取的目录",
+    hint: "分号或换行分隔；留空则服务一律拒收外部路径。只影响其它 App 调服务，卡片与工具不受限制。",
+    type: "string",
+    wide: true,
+    placeholder: "D:\\Docs;E:\\扫描件",
+  },
   cleanupEnabled: {
     title: "自动清理工作区",
     hint: "开启后，保存路径里超过保留时长的提取产出会被移到系统回收站。",
@@ -306,6 +313,7 @@ const BASIC_KEYS = [
   "saveJson",
   "autoSave",
   "savePath",
+  "serviceReadRoots",
   "cleanupEnabled",
   "cleanupKeepValue",
 ];

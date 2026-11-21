@@ -104,6 +104,7 @@ const SPEC = {
   xlsxMaxCols: { type: "number", default: 50 },
   autoSave: { type: "boolean", default: false },
   savePath: { type: "string", default: "" },
+  serviceReadRoots: { type: "string", default: "" },
   cleanupEnabled: { type: "boolean", default: false },
   cleanupKeepValue: { type: "number", default: 7 },
   cleanupKeepUnit: { type: "string", enum: ["minute", "hour", "day"], default: "day" },
