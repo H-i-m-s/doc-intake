@@ -58,7 +58,7 @@ const FIELDS = {
     title: "默认解析后端",
     hint: "调用工具时未指定后端就按它走。一般保持「自动」。",
     type: "string",
-    labels: { auto: "自动", mineru: "MinerU", paddleocr: "PaddleOCR", "mineru-local": "MinerU（本地）", "paddleocr-local": "PaddleOCR（本地）", local: "本地（PyMuPDF）" },
+    labels: { auto: "自动", mineru: "MinerU", oxr: "OXR（SoMark）", paddleocr: "PaddleOCR", "mineru-local": "MinerU（本地）", "paddleocr-local": "PaddleOCR（本地）", local: "本地（PyMuPDF）" },
   },
   // options = 降级链的候选后端：勾选决定启用，拖拽决定先后，存回去仍是 "a>b" 这种字符串。
   // endpoint 指到对应的服务地址字段：地址没填时那一行的备注会换成「会被跳过」。
@@ -69,6 +69,7 @@ const FIELDS = {
     wide: true,
     options: [
       { value: "mineru", label: "MinerU", note: "云端" },
+      { value: "oxr", label: "OXR（SoMark）", note: "云端" },
       { value: "paddleocr", label: "PaddleOCR", note: "云端" },
       { value: "mineru-local", label: "MinerU（本地）", note: "需填服务地址", endpoint: "mineruLocalEndpoint" },
       { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
@@ -81,6 +82,7 @@ const FIELDS = {
     type: "chain",
     wide: true,
     options: [
+      { value: "oxr", label: "OXR（SoMark）", note: "云端" },
       { value: "paddleocr", label: "PaddleOCR", note: "云端" },
       { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
     ],
@@ -94,6 +96,16 @@ const FIELDS = {
     lines: true,
     placeholder: "token1\ntoken2",
     validate: { field: "mineruCredentials", probe: "MinerU" },
+  },
+  oxrTokens: {
+    title: "OXR Token",
+    hint: "一行一个。获取地址：https://somark.cn/workbench",
+    type: "string",
+    wide: true,
+    textarea: true,
+    lines: true,
+    placeholder: "token1\ntoken2",
+    validate: { field: "oxrTokens", probe: "OXR" },
   },
   paddleTokens: {
     title: "PaddleOCR Token",
@@ -233,7 +245,7 @@ const FIELDS = {
   splitImageMinBlank: { title: "最小连续空白行数", hint: "连续多少行空白才作为切割点。", type: "number", int: true },
 
   // ---- 并发与重试 ----
-  maxConcurrent: { title: "云端 API 并发限", hint: "MinerU / PaddleOCR。", type: "number", int: true },
+  maxConcurrent: { title: "云端 API 并发限", hint: "MinerU / OXR / PaddleOCR。", type: "number", int: true },
   maxConcurrentLocal: { title: "本地解析并发限", hint: "DOCX / PPTX / HTML 等；旧版 Office 转换另有独立并发限。", type: "number", int: true },
   maxRetries: { title: "API 临时错误最大重试次数", hint: "429 / 5xx / 网络抖动。", type: "number", int: true },
   retryBaseDelayMs: { title: "重试基础退避（毫秒）", hint: "5xx/网络按 base × 2^attempt；429 独立用 8s base。", type: "number", int: true },
@@ -307,6 +319,7 @@ const BASIC_KEYS = [
   "pdfBackendChain",
   "imageBackendChain",
   "mineruCredentials",
+  "oxrTokens",
   "paddleTokens",
   "defaultLanguage",
   "includeMedia",
@@ -741,7 +754,7 @@ window.addEventListener("resize", () => closeAllPickers());
 
 // ---------------------------------------------------------------- 表单构建
 
-// 多 token 字段（MinerU / PaddleOCR）在配置文件里可能还是 "a;b" 这种老写法，
+// 多 token 字段（MinerU / OXR / PaddleOCR）在配置文件里可能还是 "a;b" 这种老写法，
 // 控件里统一拆成一行一个：挤在一行既难读也难改。
 const LIST_SPLIT = /[;\n]+/;
 function normalizeLines(value) {
@@ -1308,7 +1321,7 @@ function buildField(key) {
 
 // ------------------------------------------------- 字段内的 Token 检测
 
-// 挂在 MinerU / PaddleOCR 两个多值字段下面：一个「检测」按钮 + 逐把结果。
+// 挂在 MinerU / OXR / PaddleOCR 三个多值字段下面：一个「检测」按钮 + 逐把结果。
 // 测的是输入框里当前的内容，不要求先保存——填完就能验。
 // 一行一个 Token，结果按行号回报，所以「哪个失效了」是说得清的。
 function buildValidateBlock(key, built) {

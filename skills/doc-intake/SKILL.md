@@ -2,7 +2,7 @@
 name: doc-intake
 description: >
   必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML 或图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）。当用户发送文档/图片、提到 Word、Excel、PowerPoint、PDF、扫描件、截图文字、公式、表格、图片内容或图片/文档里的二维码、条形码（QR、Data Matrix、一维条码）时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。
-compatibility: "需要 Python 环境（用户需在 App 设置面板填 pythonPath）和可选的 MinerU / PaddleOCR Token"
+compatibility: "需要 Python 环境（用户需在 App 设置面板填 pythonPath）和可选的 MinerU / OXR / PaddleOCR Token"
 metadata:
   default-enabled: true
 ---
@@ -23,7 +23,7 @@ metadata:
 
 ### 验证 Token 不走工具
 
-MinerU / PaddleOCR 的凭证是否有效，由用户在 App 设置页（设置 → 应用 → Doc Intake）点 Token 字段旁的「检测」自己看，不提供工具。
+MinerU / OXR（SoMark）/ PaddleOCR 的凭证是否有效，由用户在 App 设置页（设置 → 应用 → Doc Intake）点 Token 字段旁的「检测」自己看，不提供工具。
 
 - 用户问「我的 Token 还有效吗」「帮我验证一下凭证」「刚配的 Token 对不对」：引导他去设置页点检测，不要假装自己查过。
 - 不要为了判断凭证状态去跑一次 `doc_intake`。提取失败有无数种原因，一次失败不能推出 Token 失效。
@@ -36,7 +36,7 @@ MinerU / PaddleOCR 的凭证是否有效，由用户在 App 设置页（设置 �
 |---|---|---|
 | `source` | `string[]` | 必填。传文件路径、多个文件路径或文件夹路径。 |
 | `outputDir` | `string` | 只有用户明确要求保存到特定位置时传；用户未指定时不传。 |
-| `backend` | `string` | 只有用户指定后端时传：`auto`、`mineru`、`paddleocr`、`mineru-local`、`paddleocr-local`、`local`。 |
+| `backend` | `string` | 只有用户指定后端时传：`auto`、`mineru`、`oxr`、`paddleocr`、`mineru-local`、`paddleocr-local`、`local`。 |
 | `pageRange` | `string` | 用户指定 PDF 页码时传，例如 `1-5,10`。 |
 | `language` | `string` | 用户指定 OCR/识别语言时传；否则不传。 |
 | `includeMedia` | `boolean` | 默认就是 `true`，通常不要传。只有用户明确说“不要提取媒体”“不要保存图片/视频/音频”“只要纯文本”时才传 `false`。用户说“保存 JSON”“正文可省略”“只返回摘要”时仍然提取媒体，不能据此传 `false`。 |
@@ -61,8 +61,9 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 默认不传 `backend`，应用会自行按文件类型和设置中的降级链处理（即若用户无明确的特殊要求，你无须传递backend，不得自作主张选择用哪个backend）。以下信息仅作为工具调用阐述，极少数情况才会用到
 
-- PDF：默认mineru > paddleocr > mineru-local > paddleocr-local > local（云端优先、自建服务居中、本地解析兜底）；用户设置中存在自行配置项
-- 图片：默认走 PaddleOCR 配置链。
+- PDF：默认 mineru > oxr > paddleocr > mineru-local > paddleocr-local > local（云端优先、自建服务居中、本地解析兜底）；用户设置中存在自行配置项
+- 图片：默认 oxr > paddleocr > paddleocr-local，同样可被用户设置覆盖。
+- `oxr` 指 SoMark（云端），没填 OXR Token 时这一档会被自动跳过，不会报错。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM、HTML：走本地 Python 解析；旧版 DOC/XLS/PPT 会先由配置的转换层转为 OOXML，再复用对应现代格式适配器。
 - 用户要求不上传 PDF 或只用本地解析时传 `backend="local"`。
 - 不要因为本地解析失败就自行改写参数；根据返回的 `warnings` 判断是否需要建议用户改用其他后端。
@@ -98,7 +99,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - `SPAWN_FAILED`、`PYTHON_ERROR`：说明 Python 环境或依赖启动失败，不要编造提取结果。
 - `CONVERTER_NOT_AVAILABLE`、`CONVERSION_FAILED`、`CONVERSION_OUTPUT_INVALID`、`CONVERSION_TIMEOUT`：说明旧版 Office 转换阶段失败；不要把它描述成现代 DOCX/XLSX 解析失败。优先检查 Office/pywin32 或显式配置的 LibreOffice provider。
 - 后端全部失败：展示实际错误和 `warnings`，建议用户检查配置或更换后端。
-- 云端后端报鉴权错误（401/403）：说明是哪个后端鉴权没过，并提示去设置页用「检测」确认凭证，不要回显完整 Token。
+- 云端后端报鉴权错误（401/403 或 SoMark 的 code 1107/1108/1123）：说明是哪个后端鉴权没过，并提示去设置页用「检测」确认凭证，不要回显完整 Token。
 
 ## 7. 禁止行为
 

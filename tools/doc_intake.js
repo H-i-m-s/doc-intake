@@ -435,9 +435,9 @@ export function buildResult(sources, results, settings = {}, options = {}) {
 
 export const name = "doc_intake";
 export const description =
-  "提取文档/图片内容，输出 Markdown。支持 PDF（MinerU）、图片（PaddleOCR）、Office 文档（本地解析，含 DOC/XLS/PPT 旧格式转换）。"
+  "提取文档/图片内容，输出 Markdown。支持 PDF（MinerU / SoMark）、图片（SoMark / PaddleOCR）、Office 文档（本地解析，含 DOC/XLS/PPT 旧格式转换）。"
   + "图片和文档里的二维码、条码会随提取一并解出，不需要额外参数或另找工具。"
-  + "若返回里带 tokenNotice 字段，说明用户的云端 Token（MinerU / PaddleOCR）有问题，需要按它里面的 text 提醒用户。";
+  + "若返回里带 tokenNotice 字段，说明用户的云端 Token（MinerU / OXR / PaddleOCR）有问题，需要按它里面的 text 提醒用户。";
 
 export const parameters = {
   type: "object",
@@ -453,7 +453,7 @@ export const parameters = {
     },
     backend: {
       type: "string",
-      enum: ["auto", "mineru", "paddleocr", "mineru-local", "paddleocr-local", "local"],
+      enum: ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"],
       description: "解析后端（可选，默认 auto）",
     },
     pageRange: {

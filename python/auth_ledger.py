@@ -18,7 +18,7 @@ def record(provider: str, index: int, label: str, reason: str) -> None:
     """记录一次鉴权拒绝。同一个 (provider, index) 只保留第一次。
 
     Args:
-        provider: "mineru" 或 "paddleocr"。
+        provider: "mineru" / "oxr" / "paddleocr"。
         index: 这把 Token 在用户配置列表里的序号（从 1 开始）。
         label: 已脱敏的 Token（掩码由调用方算好），绝不能含完整 Token。
         reason: 一句简短人话（已脱敏），如 "Token 已过期"。

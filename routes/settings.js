@@ -7,7 +7,7 @@
 //   POST /config   校验后写回（只认 SPEC 里的键）
 //   GET  /deps     用已配置的 pythonPath 探测 Python 依赖是否安装
 //   POST /install 对缺失依赖执行 pip install（只允许装 DEP_CATALOG 里列出的包）
-//   POST /validate 探测 MinerU / PaddleOCR 的 Token 是否有效（纯 Node，不 spawn Python）
+//   POST /validate 探测 MinerU / OXR / PaddleOCR 的 Token 是否有效（纯 Node，不 spawn Python）
 //   GET  /token-status       读 Token 健康状态（纯读，不出网）
 //   POST /token-status/probe 主动探一次已保存的 Token，并落盘结论
 //   POST /token-status/mute  开启「改动 Token 前不再提示」
@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateMineruToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
+import { validateMineruToken, validateOxrToken, validatePaddleToken, validateTokenList } from "../lib/validate.js";
 import { createUpdateCheck, normalizeIntervalMinutes } from "../lib/update-check.mjs";
 import { findJobByCardId, getJob, hasSavedPath } from "../lib/jobs.js";
 import { CLEANUP_LOG_LIMITS, clearCleanupLog, readCleanupLog } from "../lib/cleanup-log.js";
@@ -46,7 +46,7 @@ const SPEC = {
   pythonPath: { type: "string", default: "" },
   pipIndexMode: { type: "string", enum: ["inherit", "official", "tuna", "aliyun", "custom"], default: "inherit" },
   pipIndexUrl: { type: "string", default: "" },
-  defaultBackend: { type: "string", enum: ["auto", "mineru", "paddleocr", "mineru-local", "paddleocr-local", "local"], default: "auto" },
+  defaultBackend: { type: "string", enum: ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"], default: "auto" },
   pdfBackendChain: { type: "string", default: "" },
   imageBackendChain: { type: "string", default: "" },
   mineruCredentials: { type: "string", default: "" },
@@ -55,6 +55,7 @@ const SPEC = {
   mineruEnableFormula: { type: "boolean", default: true },
   mineruEnableTable: { type: "boolean", default: true },
   paddleTokens: { type: "string", default: "" },
+  oxrTokens: { type: "string", default: "" },
   mineruLocalEndpoint: { type: "string", default: "" },
   mineruLocalApiKey: { type: "string", default: "" },
   mineruLocalTier: { type: "string", enum: ["", "flash", "standard"], default: "" },
@@ -660,24 +661,29 @@ app.get("/config", async (c) => {
     try {
       const hasMineru = typeof body?.mineruCredentials === "string";
       const hasPaddle = typeof body?.paddleTokens === "string";
-      if (!hasMineru && !hasPaddle) {
+      const hasOxr = typeof body?.oxrTokens === "string";
+      if (!hasMineru && !hasPaddle && !hasOxr) {
         return c.json({ ok: false, message: "没有收到要检测的 Token。" });
       }
 
       const mineruList = hasMineru ? tokenListOf("mineruCredentials", body.mineruCredentials) : [];
       const paddleList = hasPaddle ? tokenListOf("paddleTokens", body.paddleTokens) : [];
+      const oxrList = hasOxr ? tokenListOf("oxrTokens", body.oxrTokens) : [];
 
       // 本进程没有网络权限（Permission Model 未给 --allow-net），出网必须走宿主代发的出口。
       // 它受 manifest 顶层 network.allowedHosts 约束；未声明时 fetch 会抛结构化错误。
       const hostFetch = ctx?.network?.fetch;
       const fetchImpl = typeof hostFetch === "function" ? hostFetch.bind(ctx.network) : null;
 
-      const [mineruResult, paddleResult] = await Promise.all([
+      const [mineruResult, paddleResult, oxrResult] = await Promise.all([
         hasMineru
           ? validateTokenList(mineruList.map((item) => item.token), (token) => validateMineruToken(token, fetchImpl))
           : Promise.resolve(null),
         hasPaddle
           ? validateTokenList(paddleList.map((item) => item.token), (token) => validatePaddleToken(token, fetchImpl))
+          : Promise.resolve(null),
+        hasOxr
+          ? validateTokenList(oxrList.map((item) => item.token), (token) => validateOxrToken(token, fetchImpl))
           : Promise.resolve(null),
       ]);
 
@@ -688,12 +694,16 @@ app.get("/config", async (c) => {
       const paddleRows = hasPaddle
         ? (paddleResult || []).map((row, i) => ({ ...row, index: paddleList[i]?.index ?? row.index }))
         : null;
+      const oxrRows = hasOxr
+        ? (oxrResult || []).map((row, i) => ({ ...row, index: oxrList[i]?.index ?? row.index }))
+        : null;
       rememberRows(ctx, "mineruCredentials", body.mineruCredentials, mineruRows);
       rememberRows(ctx, "paddleTokens", body.paddleTokens, paddleRows);
+      rememberRows(ctx, "oxrTokens", body.oxrTokens, oxrRows);
 
       // 键名与请求体、与设置页的字段名保持一致：
       // 前端拿到响应后会按 meta.validate.field 取结果，两边不同名就会静默取到空数组。
-      return c.json({ ok: true, mineruCredentials: mineruRows, paddleTokens: paddleRows });
+      return c.json({ ok: true, mineruCredentials: mineruRows, paddleTokens: paddleRows, oxrTokens: oxrRows });
     } catch (error) {
       return c.json({ ok: false, message: `检测失败：${error?.message || error}` });
     }

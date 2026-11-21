@@ -23,7 +23,7 @@ import { startJob } from "../lib/job-runner.js";
 import { getSettings } from "../lib/settings.js";
 
 /** 后端档位。面板的下拉给的就是这几个，其余一律回落到设置里的默认档。 */
-const BACKENDS = new Set(["auto", "mineru", "paddleocr", "mineru-local", "paddleocr-local", "local"]);
+const BACKENDS = new Set(["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"]);
 
 /**
  * 规整入参里的 sources：去空、去首尾空白、去重。

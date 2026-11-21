@@ -24,6 +24,8 @@ from logger import configure_logging, get_logger, log
 from pdf_splitter import PdfMemoryChunk, iter_pdf_memory_chunks, pdf_page_count
 from auth_ledger import drain as _drain_auth_failures
 import barcode_scan
+# 支持格式的唯一来源（仓库根的 formats.json）；这里是模块级的，读不到会在 import 期就报错。
+import formats
 
 
 @contextmanager
@@ -66,27 +68,7 @@ def detect_file_type(source: str) -> str:
         return "html"
     
     ext = Path(source).suffix.lower()
-    type_map = {
-        ".pdf": "pdf",
-        ".jpg": "image",
-        ".jpeg": "image",
-        ".png": "image",
-        ".bmp": "image",
-        ".tiff": "image",
-        ".tif": "image",
-        ".webp": "image",
-        ".gif": "image",
-        ".docx": "docx",
-        ".doc": "doc",
-        ".pptx": "pptx",
-        ".ppt": "ppt",
-        ".xlsx": "xlsx",
-        ".xls": "xls",
-        ".xlsm": "xlsm",
-        ".html": "html",
-        ".htm": "html",
-    }
-    return type_map.get(ext, "unknown")
+    return formats.TYPE_BY_EXT.get(ext, "unknown")
 
 
 def load_settings(args) -> dict:
@@ -324,18 +306,22 @@ def _barcode_only_result(args, settings: dict, file_type: str, output_dir: Optio
     return format_result(result), codes
 
 
-# PDF 后端降级链留空时的自动档：先云端 MinerU，再 PaddleOCR，再两个自建服务，最后本地。
+# PDF 后端降级链留空时的自动档：先云端 MinerU，再 SoMark（OXR），再 PaddleOCR，
+# 然后两个自建服务，最后本地。
 # 自建服务排在云端后面：填了地址才生效，没填的会在选链时被剔除。
+# OXR 同理由 Token 决定去留：没填 oxrTokens 时这一档会被跳过，不进链路、不留失败记录。
 DEFAULT_PDF_BACKEND_CHAIN = [
     "mineru",
+    "oxr",
     "paddleocr",
     "mineru-local",
     "paddleocr-local",
     "local",
 ]
 
-# 图片链留空时的兜底：云端 PaddleOCR 优先，其次自建 PaddleX。
-DEFAULT_IMAGE_BACKEND_CHAIN = ["paddleocr", "paddleocr-local"]
+# 图片链留空时的兜底：云端 SoMark（OXR）优先，其次云端 PaddleOCR，最后自建 PaddleX。
+# 末尾的 paddleocr-local 没填本地地址时会被剔除，留着不改变默认行为。
+DEFAULT_IMAGE_BACKEND_CHAIN = ["oxr", "paddleocr", "paddleocr-local"]
 
 # 自建后端只有填了地址才算可用，键是后端 id，值是必须填的设置项。
 _LOCAL_BACKEND_REQUIREMENTS = {
@@ -343,13 +329,32 @@ _LOCAL_BACKEND_REQUIREMENTS = {
     "paddleocr-local": "paddleLocalEndpoint",
 }
 
+# 需要 Token 才有意义的云端后端：键是后端 id，值是必须非空的设置项。
+# 与上面那张表分开：自建后端缺地址是「没部署」，缺 Token 是「没登录」，报错话术不一样。
+_TOKEN_BACKEND_REQUIREMENTS = {
+    "oxr": "oxrTokens",
+}
+
+
+def _has_any_token(value) -> bool:
+    """判断一个 Token 设置项是否至少填了一把。
+
+    必须显式处理 list：`str([] or "")` 得到 "[]"，strip 之后非空，会把空列表误判成已配置。
+    """
+    if isinstance(value, (list, tuple)):
+        return any(str(item or "").strip() for item in value)
+    return bool(str(value or "").strip())
+
 
 def _backend_configured(backend: str, settings: dict) -> bool:
-    """本地后端只有在填了地址时才算可用。"""
+    """自建后端要有地址、Token 后端要有 Token，其余后端默认可用。"""
     required = _LOCAL_BACKEND_REQUIREMENTS.get(backend)
-    if not required:
-        return True
-    return bool(str(settings.get(required) or "").strip())
+    if required:
+        return bool(str(settings.get(required) or "").strip())
+    token_field = _TOKEN_BACKEND_REQUIREMENTS.get(backend)
+    if token_field:
+        return _has_any_token(settings.get(token_field))
+    return True
 
 
 def select_backend_chain(
@@ -367,6 +372,10 @@ def select_backend_chain(
 
     if explicit_backend and explicit_backend != "auto":
         if not _backend_configured(explicit_backend, settings):
+            if explicit_backend in _TOKEN_BACKEND_REQUIREMENTS:
+                raise ValueError(
+                    f"后端 {explicit_backend} 需要先在设置里填写 OXR Token"
+                )
             required = _LOCAL_BACKEND_REQUIREMENTS[explicit_backend]
             raise ValueError(
                 f"后端 {explicit_backend} 需要先在设置里填写「{required}」"
@@ -386,6 +395,15 @@ def select_backend_chain(
     for backend in chain:
         if _backend_configured(backend, settings):
             usable.append(backend)
+            continue
+        if backend in _TOKEN_BACKEND_REQUIREMENTS:
+            # 没填 Token 只是「这档不用」，不是配置错误：普通用户本来就可能只用 MinerU。
+            # 因此记 debug，不写 warning，也不让它进链路白失败一次。
+            logger.debug(
+                "跳过未配置 Token 的后端",
+                backend=backend,
+                required_setting=_TOKEN_BACKEND_REQUIREMENTS[backend],
+            )
             continue
         logger.info(
             "跳过未配置的本地后端",
@@ -560,6 +578,9 @@ def _redact_runtime_secret(text: str, settings: dict) -> str:
     for item in settings.get("paddleTokens") or []:
         if isinstance(item, str):
             secrets.append(item)
+    for item in settings.get("oxrTokens") or []:
+        if isinstance(item, str):
+            secrets.append(item)
     for item in settings.get("mineruCredentials") or []:
         if isinstance(item, dict):
             secrets.extend([item.get("accessKey", ""), item.get("secretKey", "")])
@@ -637,6 +658,20 @@ def _extract_with_backend(
     elif backend == "paddleocr":
         from paddle_client import PaddleClient
         client = PaddleClient(settings)
+        return client.extract(
+            source=source,
+            output_dir=output_dir,
+            page_range=page_range,
+            language=language,
+            include_images=include_images,
+            keys=available_credentials,
+            pdf_bytes=pdf_bytes,
+            display_name=display_name,
+        )
+
+    elif backend == "oxr":
+        from oxr_client import OxrClient
+        client = OxrClient(settings)
         return client.extract(
             source=source,
             output_dir=output_dir,
@@ -881,6 +916,7 @@ def _run(args) -> dict:
     # 凭证按后端分别存，避免 PaddleOCR 拿到 MinerU 的 dict 凭证
     available_credentials = {
         "paddleocr": settings.get("paddleTokens") or [],
+        "oxr": settings.get("oxrTokens") or [],
         "mineru": settings.get("mineruCredentials") or [],
     }
 
@@ -949,7 +985,10 @@ def _run(args) -> dict:
         if barcode_only is not None:
             return barcode_only
 
-    backend_chain = select_backend_chain(file_type, backend, settings)
+    # 电子书只能本地解析：不进后端链，也不按 defaultBackend 去挑云端档。云端那几档
+    # 做不了 EPUB，进去了只会把进度、超时、返回体按错的那套走。
+    ebook_local_only = file_type == "epub"
+    backend_chain = ["local"] if ebook_local_only else select_backend_chain(file_type, backend, settings)
     include_images = settings.get("includeMedia", settings.get("includeImages", True))
 
     chunk_state = _iter_pdf_chunks_if_needed(args, settings)
@@ -979,6 +1018,11 @@ def _run(args) -> dict:
             first_chunk=first_chunk,
             remaining_chunks=remaining_chunks,
         )
+
+    # 设置页的默认后端是全局的：把它设成 oxr 的人不该突然一本电子书都读不了，
+    # 但显式传入的意图需要被看见，所以用 warning，不用 error。
+    if ebook_local_only and backend and backend not in ("auto", "local"):
+        result.warnings.append(f"EPUB 只能本地解析，已忽略 backend={backend}")
 
     prefetched_codes = _take_barcode_prefetch(barcode_future, barcode_pool) or probe_codes
     return _finalize_single_result(

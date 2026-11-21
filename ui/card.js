@@ -53,6 +53,7 @@ export function formatElapsed(ms) {
  */
 export const BACKEND_LABEL = {
   mineru: "MinerU",
+  oxr: "OXR（SoMark）",
   paddleocr: "PaddleOCR",
   "mineru-local": "MinerU（本地）",
   "paddleocr-local": "PaddleOCR（本地）",
