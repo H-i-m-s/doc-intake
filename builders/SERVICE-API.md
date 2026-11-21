@@ -54,7 +54,7 @@ const res = await sdk.bus.requestService(
   "ok": true,
   "app": "doc-intake",
   "inputs": [ { "key": "sources", "type": "string[]", "required": true, "description": "…" } ],
-  "backends": ["auto", "mineru", "paddleocr", "mineru-local", "paddleocr-local", "local"],
+  "backends": ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"],
   "formats": [".pdf", ".docx", ".png", "…"],
   "waits": { "defaultMs": 20000, "maxMs": 600000 },
   "markdown": "默认返回全文"
@@ -83,7 +83,7 @@ const res = await sdk.bus.requestService(
 |---|---|---|---|
 | `sources` | 字符串数组 | 是 | 文件或目录的**绝对路径**；目录会被展开。也容忍单个字符串。相对路径直接拒。 |
 | `outputDir` | 字符串 | 否 | 产物保存目录；留空按设置里的规则由解析器决定 |
-| `backend` | 字符串 | 否 | 六个档位之一；缺省用设置里的默认档 |
+| `backend` | 字符串 | 否 | 七个档位之一；缺省用设置里的默认档 |
 | `pageRange` | 字符串 | 否 | 如 `1-20`；留空为全部 |
 | `language` | 字符串 | 否 | 如 `zh` / `en`；缺省用设置里的默认语言 |
 | `includeMedia` | 布尔 | 否 | 是否提取图片与媒体；缺省用设置值 |

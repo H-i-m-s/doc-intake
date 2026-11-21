@@ -152,7 +152,7 @@ pip install -r python/requirements.txt
 
 设置页分三段，改动即时生效、无需重启：
 
-- **基础项**（默认展开）：`pythonPath`、默认解析后端、PDF 降级链、MinerU / PaddleOCR 两个 Token、默认语言、是否提取媒体、自动保存与保存路径。必填项和常用项都在这一层。
+- **基础项**（默认展开）：`pythonPath`、默认解析后端、PDF 降级链、MinerU / OXR / PaddleOCR 三个 Token、默认语言、是否提取媒体、自动保存与保存路径。必填项和常用项都在这一层。
 - **高级设置**（默认收起，点标题展开）：MinerU / PaddleOCR 细节、PDF 切割、图片分割、并发与重试、旧版 Office 转换、HTML 提取、Excel 行列上限、Agent 返回容量、日志。默认值都调过，不确定就别改。
 - **环境依赖管理**：用你填的 `pythonPath` 逐项探测依赖装没装，列出「库名 / 功能 / 必装或可选 / 当前状态」。缺依赖时可以直接复制 `pip install` 命令，也可以点「一键安装缺失的必装依赖」就地安装（安装会改动你那个 Python 环境，页面内会先确认）。
 
@@ -173,7 +173,7 @@ pip install -r python/requirements.txt
 
 #### 2. 验证 Token 是否生效
 
-设置页里 MinerU 和 PaddleOCR 两个 Token 字段下面各有一个「检测」按钮。填好直接点，不用先保存；
+设置页里 MinerU、OXR、PaddleOCR 三个 Token 字段下面各有一个「检测」按钮。填好直接点，不用先保存；
 结果逐行列出（第几个 · 掩码后的 Token · 结论），哪一把失效一眼能看到。
 
 检测只回答「这把凭证能不能过鉴权」，不发真实解析任务，不占解析额度。
@@ -204,7 +204,7 @@ Hana 自带 `office-documents` skill，它的设计思路是「一个 skill 干�
 
 Hana平台对插件返回信息有字数限制，大于32k将被略去中间部分。所以推荐选择一个保存路径，保存到本地让agent自行读取。
 
-注：2.0版本及以后插件已用特殊手段绕过了此限制，详情见[[#Agent 返回机制说明]]（可通过更改插件中的“返回文本块数量上限”与“每个返回文本块的最大大小”提高返回内容上限。“返回文本块数量上限=8”+“每个返回文本块的最大大小=28k”已能满足绝大多数需求）。但依旧推荐保存到本地，因为这样可以让Hana看产出的媒体，获得更好的效果。
+注：2.0版本及以后插件已用特殊手段绕过了此限制，详情见 [`builders/PARAMETERS.md`](builders/PARAMETERS.md) 的「Agent 返回容量」一节（可通过更改插件中的“返回文本块数量上限”与“每个返回文本块的最大大小”提高返回内容上限。“返回文本块数量上限=8”+“每个返回文本块的最大大小=28k”已能满足绝大多数需求）。但依旧推荐保存到本地，因为这样可以让Hana看产出的媒体，获得更好的效果。
 
 ---
 
@@ -253,6 +253,7 @@ doc-intake/
 ├── manifest.json                 # v2 清单：图标、能力、设置 schema 与自定义设置页、版本
 ├── index.js                      # defineApp 入口：读设置 + 注册工具
 ├── README.md
+├── builders/                     # 面向开发者：对外服务（SERVICE-API）与参数/设置清单（PARAMETERS），随包发布
 ├── assets/
 │   └── icon.png                  # 图标（512×512）
 │
@@ -272,6 +273,7 @@ doc-intake/
 │   ├── main.py                   # 入口：参数解析、后端选择、链式降级、结果格式化
 │   ├── mineru_client.py          # MinerU 云端 API 客户端（多 Token KeyPool）
 │   ├── paddle_client.py          # PaddleOCR HTTP API 客户端（多 Token KeyPool）
+│   ├── oxr_client.py             # SoMark（OXR）HTTP API 客户端（异步任务 + KeyPool）
 │   ├── key_pool.py               # 多 credential 轮询 + 失败跳过
 │   ├── api_retry.py              # HTTP 重试：指数退避、429/5xx 自动重试
 │   ├── image_splitter.py         # 长图智能分割（空白行检测 + 色差容忍）
@@ -312,7 +314,7 @@ doc-intake/
 
 | 格式 | 扩展名 | 后端 | 说明 |
 |------|--------|------|------|
-| PDF | `.pdf` | MinerU → PaddleOCR → Local | 链式降级，扫描件走 OCR |
+| PDF | `.pdf` | MinerU → OXR → PaddleOCR → MinerU 本地 → PaddleOCR 本地 → Local | 链式降级，扫描件走 OCR；缺凭证或缺地址的档位自动剔除 |
 | Word | `.docx` | Local | 文本/表格/公式/图片/视频/音频 |
 | Word（旧版） | `.doc` | Local（Office COM → `.docx`） | 转换后复用 DOCX 提取器；复杂内容可能有兼容性差异 |
 | PowerPoint | `.pptx` | Local | 文本/表格/公式/图片/视频/音频 |
@@ -320,191 +322,15 @@ doc-intake/
 | Excel | `.xlsx` / `.xlsm` | Local | 表格/图片锚定 |
 | Excel（旧版） | `.xls` | Local（Office COM → `.xlsx`） | 转换后复用 XLSX 提取器；宏不保留，复杂对象需验证 |
 | HTML | `.html` / `.htm` | Local | 元数据/链接/代码块/远程媒体 |
-| 图片 | `.jpg` `.jpeg` `.png` `.bmp` `.tiff` `.tif` `.webp` `.gif` | PaddleOCR | 自动长图分割 |
+| 图片 | `.jpg` `.jpeg` `.png` `.bmp` `.tiff` `.tif` `.webp` `.gif` | OXR → PaddleOCR → PaddleOCR 本地 | 自动长图分割 |
 
 ---
 
-## 工具参数完整参考
+## 参数与设置清单
 
-### 工具 1：`doc_intake`
+工具入参、设置项的完整清单在 [`builders/PARAMETERS.md`](builders/PARAMETERS.md)；别的 App 通过服务总线怎么调用、四个方法各传什么，在 [`builders/SERVICE-API.md`](builders/SERVICE-API.md)。README 里不再留第二份参数表，免得两处各自漂移。
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|:---:|--------|------|
-| `source` | `string[]` | ✅ | — | 文件路径列表。支持单个文件、多个文件、文件夹路径。文件夹自动展开为所有支持格式的文件。 |
-| `outputDir` | `string` | ❌ | 由 `autoSave` + `savePath` 配置决定 | 保存目录。未指定时：若 `autoSave=true` 或 `summaryOnly=true` 则保存到 `savePath`，否则不保存文件。 |
-| `backend` | `"auto" \| "mineru" \| "paddleocr" \| "local"` | ❌ | `"auto"` | 强制指定后端。`auto` 按文件类型走默认降级链。 |
-| `pageRange` | `string` | ❌ | 全部页 | PDF 页码范围，格式 `"1-5,10,15-20"`（1-based）。仅 PDF 有效。 |
-| `language` | `string` | ❌ | `"zh"` | 文档语言，传递给 OCR / 云端 API。影响 PaddleOCR 和 MinerU 的识别语言。 |
-| `includeMedia` | `boolean` | ❌ | `true` | 是否提取媒体文件（图片/视频/音频）。默认提取。只有用户明确要求纯文本、不要提取或不要保存媒体时才设为 `false`；“保存 JSON”“正文可省略”“只返回摘要”都不能解释为 `false`。 |
-| `saveJson` | `boolean` | ❌ | `false` | 是否额外保存结构化 JSON 文件（与 .md 并列）。JSON 包含 markdown 内容 + metadata；其中 `metadata.mediaPaths` 保存相对路径，Agent 返回的媒体路径仍为绝对路径。 |
-| `summaryOnly` | `boolean` | ❌ | `false` | 只返回每个文件的成功/失败状态和输出路径，不返回 Markdown 正文；提取和保存流程仍正常执行。成功但带 warnings 的文件仍算成功。 |
-| `splitOnly` | `boolean` | ❌ | `false` | 仅做图片分割测试，不调用后端。调试用，正常提取不要传。 |
-
-### 工具 2：Token 检测（不在工具列表里）
-
-Token 有效性检测已从工具中移除。它不是「提取文档」这一类工作，而是配置环节的一次性检查，
-现在放在设置页：MinerU / PaddleOCR 两个 Token 字段下面各有一个「检测」按钮。
-
-数据面是设置页路由的 `POST /validate`，由 `lib/validate.js` 纯 Node 发探测请求，不 spawn Python。
-
----
-
-## 插件配置项完整参考
-
-以下所有配置项均在插件设置页中修改，不需要手动编辑配置文件。页面上，「基础项」放最常用的那批，其余按功能分组收在「高级设置」里；下面的分类是功能视角，与页面的展开状态无关。
-
-### 基础配置
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `pythonPath` | `string` | `""` | Python 可执行文件路径（如 conda 环境的 `python.exe`）。**必填**，不填则无法运行。 |
-| `defaultBackend` | `"auto" \| "mineru" \| "paddleocr" \| "local"` | `"auto"` | 默认解析后端。 |
-| `defaultLanguage` | `string` | `"zh"` | 默认语言（`zh` / `en` 等），传递给 OCR 和云端 API。 |
-| `includeMedia` | `boolean` | `true` | 默认是否提取媒体（图片/视频/音频）。 |
-| `saveJson` | `boolean` | `false` | 默认是否保存结构化 JSON。 |
-| `autoSave` | `boolean` | `false` | 默认是否自动保存到本地。 |
-| `savePath` | `string` | `""` | 默认保存路径。**留空 = 系统文档目录下的 `doc-intake`**（按各自机器算，不写死盘符）。 |
-
-### MinerU 配置
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `mineruCredentials` | `string` | `""` | MinerU Token，多个用分号分隔。获取地址：https://mineru.net/apiManage/token |
-| `mineruModelVersion` | `"vlm" \| "pipeline" \| "MinerU-HTML"` | `"vlm"` | MinerU 模型版本。`vlm` 精度最高，`pipeline` 速度快。 |
-| `mineruEnableOCR` | `boolean` | `true` | MinerU 是否开启 OCR（仅 `pipeline` / `vlm` 有效）。 |
-| `mineruEnableFormula` | `boolean` | `true` | MinerU 是否开启公式识别。 |
-| `mineruEnableTable` | `boolean` | `true` | MinerU 是否开启表格识别。 |
-| `mineruFlashMaxMB` | `number` | `10` | MinerU Flash 模式最大文件大小（MB）。无 Token 时走 Flash。 |
-| `mineruFlashMaxPages` | `number` | `20` | MinerU Flash 模式最大页数。 |
-| `mineruPrecisionMaxMB` | `number` | `200` | MinerU Precision 模式最大文件大小（MB）。有 Token 时走 Precision。 |
-| `mineruPrecisionMaxPages` | `number` | `200` | MinerU Precision 模式最大页数。 |
-
-### PaddleOCR 配置
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `paddleTokens` | `string` | `""` | PaddleOCR Token，多个用分号分隔。获取地址：https://aistudio.baidu.com/account/accessToken |
-| `paddleUseDocOrientationClassify` | `boolean` | `false` | 文档方向分类。 |
-| `paddleUseDocUnwarping` | `boolean` | `true` | 文档去扭曲。 |
-| `paddleUseChartRecognition` | `boolean` | `true` | 图表识别。 |
-| `paddleUseSealRecognition` | `boolean` | `false` | 印章识别。 |
-| `paddleUseTableRecognition` | `boolean` | `true` | 表格识别。 |
-| `paddleUseFormulaRecognition` | `boolean` | `true` | 公式识别。 |
-
-### PDF 降级链 & 切割
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `pdfBackendChain` | `string` | `""` | PDF 后端降级链。**用 `>` 或 `;` 分隔**，如 `mineru>paddleocr>local`；留空 = 自动（mineru>paddleocr>local）。按顺序尝试，失败自动降级到下一档。（v1 这里是数组，v2 改成了字符串） |
-| `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF（在插件 Python 进程内按 `splitChunkPages` 生成内存 PDF bytes，直接上传云端，不创建 `*_chunks` 文件夹）。 |
-| `splitChunkPages` | `number` | `180` | 内存分块时每块页数（小于 MinerU 200 页限制）。 |
-
-大 PDF 的切割只用于云端上传，chunk 会在 Python 进程内以 PDF bytes 存在，不会在源文件目录创建 `*_chunks` 文件夹或 chunk PDF。所有 chunk 的识别结果会按 `chunkIndex` 在插件内部按原 PDF 顺序合并，再统一保存为一个 Markdown/JSON 文件；媒体也会直接写入原 PDF 对应的唯一 `{原文件名}_media/` 目录，并使用 chunk 前缀避免重名。插件不会先生成 chunk PDF 再上传，也不会先生成 chunk Markdown/JSON 再做文件级后处理。
-
-#### 本地档（PyMuPDF）的限制
-
-`local` 是 PDF 降级链的最末档 — 基于 PyMuPDF 直接读 PDF 内嵌文本和图片。它不调用云端 API，但有以下能力边界：
-
-- **不做 OCR**：扫描版（无文本层）只能拿到空白，需走 PaddleOCR / MinerU
-- **不做公式识别 / 表格识别 / 分栏重排**
-- **Founder 方正 PDF 的 ToUnicode CMap 可能缺失**：这类 PDF（很多国标 GB/T 文件）在 PyMuPDF 提取后会出现「犐犆犛」、「犌犅」之类乱码字符（实际是 ASCII 'I''C''S''G''B' 等被错误 fallback 到 CJK 扩展区）。这是 PDF 文件本身的缺陷，**本地档无法修复**
-
-本地档会在 `warnings` 里检测 Founder 方正特征乱码（Unicode U+7280–U+72FF）并给出明确提示，建议改用云端 OCR 后端重新提取。看到此警告请改传 `backend="mineru"` 或 `backend="paddleocr"`。
-
-#### 本地档的图片按位置插入
-
-本地档会把每页内嵌图片按 `page.get_image_info()` 给出的 y 坐标，插入到对应文字 block 之前 / 之后，输出 markdown 时按视觉顺序拼接：
-
-- 同 y 行的多张图按 x0 升序排（左到右），容忍 ±5px 浮点误差
-- 同一 xref 在一页内只引用一次
-- inline image（xref=0）跳过：PyMuPDF 不暴露原始 bytes，极少出现
-- "纯资源引用"(在 `get_images` 但 `get_image_info` 没显示)不抽
-
-例：GB+4674-2009.pdf 的第 7 页有 7 张图(6 张并排示意图 + 1 张页脚图标)，markdown 输出会按视觉位置穿插在对应段落之间。
-
-### 图片分割
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `splitImageThreshold` | `number` | `1.2` | 高度/宽度超过此值才启用分割。 |
-| `splitImageTolerance` | `number` | `15` | 分割色差容忍度（欧氏距离）。 |
-| `splitImageBlankRatio` | `number` | `0.98` | 一行中多少比例的像素相近才算空白行。 |
-| `splitImageMinBlank` | `number` | `5` | 连续多少行空白才作为切割点。 |
-
-### 并发 & 重试
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `maxConcurrent` | `number` | `4` | 云端 API 后端并发数（MinerU / PaddleOCR）。 |
-| `maxConcurrentLocal` | `number` | `8` | 普通本地解析并发数（DOCX / PPTX / HTML 等）。旧版 Office 转换使用独立并发限。 |
-| `legacyConversionProvider` | `string` | `auto` | 旧版 `.doc` / `.xls` / `.ppt` 转换 provider：`auto`、`office_com`、`libreoffice`、`disabled`。 |
-| `libreOfficePath` | `string` | `""` | LibreOffice 可执行文件绝对路径；仅选择 `libreoffice` 或 auto 且无 Office COM 时使用。 |
-| `legacyConversionConcurrency` | `number` | `1` | 旧版 Office 转换并发上限。COM 默认串行。 |
-| `legacyConversionTimeoutMs` | `number` | `180000` | LibreOffice 旧格式转换超时时间（毫秒）。 |
-| `maxRetries` | `number` | `3` | API 临时错误最大重试次数（429 / 5xx / 网络抖动）。 |
-| `retryBaseDelayMs` | `number` | `1000` | 重试基础退避毫秒（5xx/network 按 `base × 2^attempt`；429 独立用 8s base）。 |
-| `keyRetryOnFailure` | `boolean` | `true` | Key 失败时自动重试下一个。 |
-| `notifyKeyFailure` | `boolean` | `true` | Key 失效时通知用户。 |
-
-### HTML 提取
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `htmlExtractMetadata` | `boolean` | `true` | 提取元数据（title、author、description 等）。 |
-| `htmlExtractLinks` | `boolean` | `true` | 提取所有链接列表。 |
-| `htmlExtractImages` | `boolean` | `true` | 提取并下载所有图片。 |
-| `htmlExtractCodeBlocks` | `boolean` | `true` | 提取代码块并标注语言。 |
-| `htmlHeadingStyle` | `"ATX" \| "SETEXT"` | `"ATX"` | Markdown 标题风格。 |
-| `xlsxMaxRows` | `number` | `100` | Excel 表格最大提取行数，适用于 `.xls`、`.xlsx`、`.xlsm`；`0` 表示不限制，正数表示具体上限。 |
-| `xlsxMaxCols` | `number` | `50` | Excel 表格最大提取列数，适用于 `.xls`、`.xlsx`、`.xlsm`；`0` 表示不限制，正数表示具体上限。 |
-| `maxRemoteImagesPerHtml` | `number` | `100` | HTML 页面最多下载多少远程图片。 |
-
-### Agent 返回机制说明
-
-`SKILL.md` 只保留 Agent 调用工具时需要执行的规则；本节记录返回层的设计，供维护者理解实现，不作为 Agent 的调用指令。
-
-#### 为什么使用多个 text block
-
-Hana 对单个 `content[type="text"]` 有约 32 KiB 的 UTF-8 字节限制。单块直接达到限制时，平台可能对正文做头尾截断，因此插件采用低于限制的独立文本块承载 Markdown：
-
-- 默认每块 `28672` 字节，即 28 KiB；
-- 默认最多 4 块，总容量约 112 KiB；
-- 每个块都保持在单块限制以下，并按 UTF-8 边界切分；
-- 完整结构化数据仍放在 `details.data`，正文文本放在多个 `content[type="text"]` 块中。
-
-这个方案来自实际探针验证，不代表 4 是 Hana 的硬上限。增加块数只能扩大工具结果的承载量，仍会受到 Agent 上下文、模型上下文窗口、provider 请求限制和输入成本影响。当前默认值优先取稳定余量，而不是追求最大块数。
-
-#### Excel 提取范围与 Agent 返回容量
-
-Excel 行列上限和 Agent 返回容量是两个独立层次：
-
-- `xlsxMaxRows` / `xlsxMaxCols` 作用于 Excel 解析阶段，统一适用于 `.xls`、`.xlsx`、`.xlsm`。正数决定解析器最多把多少行、多少列写入 Markdown；设置为 `0` 时不限制，保存 Markdown 或 JSON 会包含源表中的全部可提取内容。
-- `inlineBlockBytes` / `inlineBlockCount` 只作用于工具结果返回给 Agent 的正文容量。它们不会减少解析器已经提取的数据，也不会缩短已保存的 Markdown 或 JSON。
-
-返回层按最终 Markdown 内容大小判断，不按文件数量判断：
-
-1. 内容能放入 `inlineBlockBytes × inlineBlockCount`：返回完整 Markdown，必要时拆成多个 text block。
-2. 内容超限且已有本地保存结果：返回处理摘要和路径，完整正文从 `mdPath` 读取。
-3. 内容超限且没有本地保存结果：跨多个 text block 保留开头和结尾，中间插入省略提示，并标记结果不完整。
-
-因此，`xlsxMaxRows` / `xlsxMaxCols` 控制“提取多少数据”，`inlineBlockBytes` / `inlineBlockCount` 控制“当场发送给 Agent 多少正文”。本地 Markdown 文件是大文档的完整兜底，但它也只包含 Excel 行列提取上限以内的内容。
-
-#### 配置项
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `inlineBlockBytes` | `number`（4096–30720） | `28672` | 每个返回文本块的最大大小，按 UTF-8 字节计算；默认 28 KiB。 |
-| `inlineBlockCount` | `number`（1–8） | `4` | 返回文本块数量上限；默认 4 个，默认总容量约 112 KiB。 |
-| `mediaPathReturnLimit` | `number`（≥0） | `20` | Agent 返回媒体绝对路径的数量上限。媒体数不超过上限时返回 `mediaPaths`，超过上限时返回 `mediaCount`。 |
-
-旧版 `maxInlineReturnBytes` 会作为 `inlineBlockBytes` 的兼容 fallback，但新配置优先。
-
-### 返回大小 & 日志
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `logLevel` | `"DEBUG" \| "INFO" \| "WARNING" \| "ERROR"` | `"INFO"` | 日志级别。 |
-| `logFile` | `string` | `""` | 日志文件路径（留空则只输出到控制台 stderr）。 |
+下面「其他插件/Skill 如何调用 doc-intake」保留最常用的几行调用写法，够用就不必翻文档。
 
 ---
 
@@ -638,14 +464,14 @@ doc_intake(source=["a.docx", "b.pptx", "c.xlsx"], outputDir="D:\\输出")
 
 ### Token 验证
 
-不在工具里做了。设置页 → 应用 → Doc Intake，MinerU / PaddleOCR 两个 Token 字段下面各有一个
+不在工具里做了。设置页 → 应用 → Doc Intake，MinerU / OXR / PaddleOCR 三个 Token 字段下面各有一个
 「检测」按钮，点一下逐把出结果。
 
 ---
 
 ## 其他插件/Skill 如何调用 doc-intake
 
-如果你在开发自己的插件或 Skill，需要调用 `doc_intake` 提取文档内容，直接使用上面的参数即可。在你的 SKILL.md 中写明调用方式，Agent 会自动路由到这个插件。
+如果你在开发自己的插件或 Skill，需要调用 `doc_intake` 提取文档内容，直接按 [`builders/PARAMETERS.md`](builders/PARAMETERS.md) 里的入参表调用即可；需要走服务总线（`app:doc-intake/*` 四个方法）则看 [`builders/SERVICE-API.md`](builders/SERVICE-API.md)。在你的 SKILL.md 中写明调用方式，Agent 会自动路由到这个插件。
 
 **最小调用：**
 
