@@ -31,6 +31,13 @@ const FILE_STATE_TEXT = {
   failed: "失败",
 };
 
+/** 投递事件名。宿主要求 ^[a-z0-9][a-z0-9._-]{0,63}$，小写、点分隔，不碰大写与空格。 */
+export const EMIT_EVENT = "panel.delivered";
+/** 宿主硬限：数据包序列化后不能到 8KB。这里留一点余量，按「小于」判。 */
+export const EMIT_MAX_BYTES = 8192;
+/** 截断时最多带几条文件。 */
+export const EMIT_MAX_FILES = 20;
+
 /**
  * 后端默认值回来之前，表单先按设置 schema 的默认值站着（manifest 里的 default）。
  * 这样即使 /panel-defaults 失败，看到的是「和设置一致的默认」，而不是一片空框。
@@ -126,6 +133,84 @@ export function overallPercentOf(job, now, fallbackBackend) {
   return Math.min(100, Math.max(0, percent));
 }
 
+/**
+ * 序列化后的字节数（UTF-8）。
+ * 宿主按字节卡 8KB，而中文一个字三字节，用字符串长度当尺子会低估得多。
+ * TextEncoder 浏览器与 Node 都有；万一没有就按「字符数 × 3」估，宁可算大一点，
+ * 被门卫退回比多砍几条文件代价大。
+ */
+function jsonByteLength(value) {
+  const text = JSON.stringify(value) ?? "";
+  try {
+    return new TextEncoder().encode(text).length;
+  } catch {
+    return text.length * 3;
+  }
+}
+
+function deliverFileEntry(file, withExtras) {
+  const mdPath = typeof file?.mdPath === "string" ? file.mdPath : "";
+  const name = baseNameOf(file?.name) || baseNameOf(file?.source) || "未命名文件";
+  if (!withExtras) return { name, mdPath };
+  const pages = Number(file?.pages);
+  return {
+    name,
+    mdPath,
+    backend: typeof file?.backend === "string" ? file.backend : "",
+    pages: Number.isFinite(pages) && pages > 0 ? pages : null,
+  };
+}
+
+/**
+ * 作业快照 → 投递给对话的数据包（纯函数，不碰 DOM，也不发任何东西）。
+ *
+ * 规则只有一条是硬的：宿主卡 8KB。所以按「信息从多到少」退三步，
+ * 每一步都比上一步更适合小包：
+ *   1) 全量（带 backend 与 pages）
+ *   2) 只留 name 与 mdPath
+ *   3) 只取前 20 条，并标 truncated: true
+ * 三步都装不下（名字里塞超长字符串之类）就继续砍半，直到塞进去。
+ * 这一条是宿主的硬限制，不是这边的偏好；丢掉的只是产物清单，
+ * 投递这件事本身要说明的「跑完了」仍然在。
+ *
+ * 只收 mdPath 有值的文件：没落盘的产物没有任何可以指给人看的位置。
+ */
+export function buildDeliverPayload(job) {
+  const files = Array.isArray(job?.files) ? job.files : [];
+  const total = files.length;
+  const success = files.filter((file) => file?.status === "done").length;
+  const kept = files.filter((file) => typeof file?.mdPath === "string" && file.mdPath.trim());
+  const base = {
+    jobId: typeof job?.jobId === "string" ? job.jobId : "",
+    summary: `成功 ${success}/${total}`,
+  };
+
+  const candidates = [
+    { ...base, files: kept.map((file) => deliverFileEntry(file, true)) },
+    { ...base, files: kept.map((file) => deliverFileEntry(file, false)) },
+    {
+      ...base,
+      files: kept.slice(0, EMIT_MAX_FILES).map((file) => deliverFileEntry(file, false)),
+      truncated: true,
+    },
+  ];
+  for (const candidate of candidates) {
+    if (jsonByteLength(candidate) < EMIT_MAX_BYTES) return candidate;
+  }
+
+  let count = Math.min(EMIT_MAX_FILES, kept.length);
+  while (count > 0) {
+    count = Math.floor(count / 2);
+    const candidate = {
+      ...base,
+      files: kept.slice(0, count).map((file) => deliverFileEntry(file, false)),
+      truncated: true,
+    };
+    if (jsonByteLength(candidate) < EMIT_MAX_BYTES) return candidate;
+  }
+  return { ...base, files: [], truncated: true };
+}
+
 // ── 浏览器部分 ────────────────────────────────────────────────────────────
 // 下面只在真有 DOM 时执行：Node 里 import 本文件是为了取上面的纯函数。
 
@@ -172,6 +257,9 @@ function startPanel() {
   const barFillEl = document.getElementById("di-bar-fill");
   const filesEl = document.getElementById("di-files");
   const summaryEl = document.getElementById("di-summary");
+  const deliverRowEl = document.getElementById("di-deliver");
+  const deliverBtnEl = document.getElementById("di-deliver-btn");
+  const deliverNoteEl = document.getElementById("di-deliver-note");
 
   if (!panelEl || !sourcesEl || !advBodyEl || !advInnerEl || !resultEl) return;
 
@@ -562,6 +650,7 @@ function startPanel() {
     clearPoll();
     stopAnimation();
     setBusy(false);
+    if (deliverRowEl) deliverRowEl.hidden = true;
     if (summaryEl) {
       summaryEl.textContent = text;
       summaryEl.classList.add("di-summary--warn");
@@ -577,13 +666,15 @@ function startPanel() {
     renderRows(snapshot, true);
     setBusy(false);
     resultEl.dataset.state = snapshot.state === "done" ? "done" : "failed";
+    const total = Array.isArray(snapshot.files) ? snapshot.files.length : 0;
+    const success = (snapshot.files || []).filter((file) => file?.status === "done").length;
     if (summaryEl) {
-      const total = Array.isArray(snapshot.files) ? snapshot.files.length : 0;
-      const success = (snapshot.files || []).filter((file) => file?.status === "done").length;
       summaryEl.textContent = `成功 ${success}/${total}`;
       summaryEl.classList.toggle("di-summary--warn", snapshot.state !== "done");
       summaryEl.hidden = false;
     }
+    // 一个都没成就不给投递：把一句「成功 0/2」送进对话没有任何用处。
+    if (deliverRowEl) deliverRowEl.hidden = !(success > 0);
     if (snapshot.state === "done") {
       // 从这里接着跑到 100，而不是重新算：终态快照里所有文件都已结束，
       // 重算会直接得到 100，条子就是一帧跳满。
@@ -627,6 +718,92 @@ function startPanel() {
     }
   }
 
+  // ── 投递到对话（待实测的一条路） ────────────────────────────────────
+  //
+  // 宿主给卡片留了一条把用户操作送回对话的通道 hana.emit(事件名, 数据包)。
+  // 能不能真的送达取决于两件在这里读不死的事：
+  //   1) App 有没有被授予 app/session.start-turn（默认关）；
+  //   2) 这张卡所在的挂载位是按「点击那一刻聚焦的对话」自动路由，还是要求调用方
+  //      显式指定目标对话 —— 两种宿主的实现都有。
+  // 所以这一块只负责：把按钮做对、把失败原因翻成人话、把宿主原话原封不动留在页面上。
+  // 本工单没有验证过它真的能送达；不要把下面任何一句文案当成「已经支持」。
+
+  /** 提示行只说一句话。tone: "ok" | "warn" | ""。 */
+  function setEmitNote(text, tone) {
+    if (!deliverNoteEl) return;
+    deliverNoteEl.textContent = text;
+    if (tone) deliverNoteEl.dataset.tone = tone;
+    else delete deliverNoteEl.dataset.tone;
+    reportSize();
+  }
+
+  /**
+   * 失败原文 → 一句人话。
+   * 三句话按「先授权、再会话、最后原样」排：权限欠缺是全局问题，
+   * 会话欠缺只在某些挂载位发生，剩下的一律把宿主原话抬出来。
+   * 匹配用 code + message 合起来搜：宿主有时把结论放在 code 里，message 只剩一句话。
+   */
+  function describeEmitFailure(error) {
+    const code = typeof error?.code === "string" ? error.code : "";
+    const message = typeof error?.message === "string" ? error.message : String(error ?? "");
+    const text = `${code} ${message}`;
+    if (/start-turn|unauthorized|permission|授权/i.test(text)) {
+      return "还没授权：打开 设置 → 应用 → 文档提取，把「可以在对话里起一轮」打开";
+    }
+    if (/no conversation|SESSION_REQUIRED|executionSessionId|cardInstanceId|no route/i.test(text)) {
+      return "这里没有可以投递的对话，回到对话界面再点一次";
+    }
+    return `投递失败：${message || "宿主没有给出原因"}`;
+  }
+
+  /** 把原始错误或成功结果序列化成一行可读的 JSON，放进 title 供外部诊断读。 */
+  function toDiagnosticJson(value) {
+    try {
+      const text = JSON.stringify(value ?? null);
+      if (typeof text === "string") return text;
+    } catch { /* 环形引用之类，下面的兜底接住 */ }
+    try { return JSON.stringify({ code: value?.code ?? null, message: String(value?.message ?? value) }); } catch { return "{}"; }
+  }
+
+  async function deliver() {
+    if (!job || !deliverBtnEl) return;
+    // 宿主是否提供 emit 本身就是变量（老版本没有），拿不到也要说清楚。
+    if (typeof hana?.emit !== "function") {
+      if (deliverNoteEl) {
+        deliverNoteEl.dataset.emit = "unavailable";
+        deliverNoteEl.title = JSON.stringify({ ok: false, reason: "hana.emit 不可用" });
+      }
+      setEmitNote("这个宿主版本没有投递通道", "warn");
+      return;
+    }
+
+    deliverBtnEl.disabled = true;
+    const payload = buildDeliverPayload(job);
+    try {
+      // 只传两个参数：第三个参数是「显式指定目标对话」，这张卡不替用户做这个决定。
+      // 手势也不伪造 —— 宿主要求真点击，SDK 自己去采。
+      const result = await hana.emit(EMIT_EVENT, payload);
+      if (deliverNoteEl) {
+        deliverNoteEl.dataset.emit = "ok";
+        deliverNoteEl.title = toDiagnosticJson({ ok: true, result: result ?? null });
+      }
+      setEmitNote("已投递到当前对话", "ok");
+      // 按钮改成已投，直到下一次开始提取才复位（resetResult 里改回去）。
+      deliverBtnEl.textContent = "已投递";
+    } catch (error) {
+      // 三条证据都留：一行人话给人看，一个属性给外部程序读，一份原对象给控制台。
+      const code = typeof error?.code === "string" ? error.code : "";
+      if (deliverNoteEl) {
+        deliverNoteEl.dataset.emit = code || "error";
+        deliverNoteEl.title = toDiagnosticJson(error);
+      }
+      console.warn("[panel] emit 失败", error);
+      setEmitNote(describeEmitFailure(error), "warn");
+      // 失败后按钮保持可用：用户可以改了设置再点一次。
+      deliverBtnEl.disabled = false;
+    }
+  }
+
   // ── 发起一次提取 ──────────────────────────────────────────────────────
   function setBusy(next) {
     busy = !!next;
@@ -652,6 +829,18 @@ function startPanel() {
       summaryEl.textContent = "";
       summaryEl.classList.remove("di-summary--warn");
       summaryEl.hidden = true;
+    }
+    // 投递区跟着结果区一起复位：按钮文案、提示行、诊断属性全回到初始。
+    if (deliverRowEl) deliverRowEl.hidden = true;
+    if (deliverBtnEl) {
+      deliverBtnEl.disabled = false;
+      deliverBtnEl.textContent = "投递到对话";
+    }
+    if (deliverNoteEl) {
+      deliverNoteEl.textContent = "";
+      delete deliverNoteEl.dataset.tone;
+      delete deliverNoteEl.dataset.emit;
+      deliverNoteEl.removeAttribute("title");
     }
     resultEl.hidden = true;
     delete resultEl.dataset.state;
@@ -746,6 +935,8 @@ function startPanel() {
     pickSaveEl?.addEventListener("click", () => { void pickSaveDir(); });
 
     runEl?.addEventListener("click", () => { void startRun(); });
+    // 投递按钮：只在真点击下才会走到这里，手势由 SDK 自己采。
+    deliverBtnEl?.addEventListener("click", () => { void deliver(); });
 
     // 页面藏起来就停轮询（刷出来的画面没人看），回来立刻补一次，
     // 不然切回来会先看到一秒前的旧状态。

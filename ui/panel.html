@@ -109,6 +109,13 @@
       </div>
       <div class="di-files" id="di-files"></div>
       <p class="di-summary" id="di-summary" hidden></p>
+      <!-- 投递区：只在「终态且至少成功一个」时出现。
+           按钮是真按钮，靠鼠标点出来；宿主自己采集手势，这里不伪造。
+           右边那行先空着，点一次才说话。 -->
+      <div class="di-deliver" id="di-deliver" hidden>
+        <button class="di-deliver__btn" id="di-deliver-btn" type="button">投递到对话</button>
+        <span class="di-deliver__note" id="di-deliver-note" role="status"></span>
+      </div>
     </div>
   </div>
   <script type="module" src="./panel.js"></script>

@@ -474,6 +474,65 @@ body.t-dark .di-input { color-scheme: dark; }
 
 .di-summary[hidden] { display: none; }
 
+/* ---------- 投递区 ---------- */
+/* 按钮做成 accent 胶囊而不是第二条通栏主按钮：它只在有产物时才出现，
+   而上面那条通栏已经开始可用，两条同样重的按钮竖着排会分不清谁是主操作。 */
+.di-deliver {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.di-deliver[hidden] { display: none; }
+
+.di-deliver__btn {
+  appearance: none;
+  margin: 0;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  color: var(--di-on-accent);
+  background: var(--di-accent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: box-shadow 160ms linear, color 160ms linear, background-color 160ms linear;
+}
+
+.di-deliver__btn:hover {
+  box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--di-ink) 9%, transparent);
+}
+
+.di-deliver__btn:active {
+  box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--di-ink) 16%, transparent);
+}
+
+/* 点过之后按钮不再是将要发生的事，只能退成灰胶囊（文案已经改成「已投递」）。 */
+.di-deliver__btn[disabled] {
+  color: color-mix(in srgb, var(--di-ink) 60%, transparent);
+  background: color-mix(in srgb, var(--di-ink) 10%, transparent);
+  box-shadow: none;
+  cursor: default;
+}
+
+/* 右侧那句活：空的时候不占宽度，说话时才把行撑开并换行。 */
+.di-deliver__note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--di-muted);
+  word-break: break-word;
+}
+
+.di-deliver__note[data-tone="ok"] { color: var(--di-ok); }
+.di-deliver__note[data-tone="warn"] { color: var(--di-warn); }
+
 /* ---------- 键盘可达 ---------- */
 .di-mini:focus-visible,
 .di-run:focus-visible,
