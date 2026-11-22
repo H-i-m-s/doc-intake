@@ -208,4 +208,4 @@ const r = await sdk.bus.requestService("app:doc-intake/result", { jobId, waitMs:
 - **作业记录 30 分钟过期。** 过期后 `status` / `result` 都回 `JOB_NOT_FOUND`，但已经落盘的文件还在，`mdPath` 请自己留好。
 - **服务接受任意绝对路径。** 没有目录白名单。它能读到的范围，就是这个 App 进程本身能读到的范围；调用方则是用户亲手授权过的 App。
 - **`waitMs` 上限 10 分钟。** 再长就该走拿单号那条路，而不是挂着一个调用等。
-- **跨 App 真实调用还没被观测过。** 实现、参数、准入、返回形状都按宿主契约做过，也直接调过处理器验证；但本机没有第二个 App 走 `app/services.call` 调进来，所以「授权之后的真实放行」这一层尚未验证。第一次真调时若被拒，先看错误里点的能力词是哪一项。
+- **跨 App 真实调用已验证过一轮**（2026-11-22，用一个只做转发的探针 App 从调用方侧打进来）：`describe`、`extract`（local 后端 + HTML + 单文件）、`status`、`result` 四条都通，非法路径也按 `PATH_NOT_ALLOWED` 被拒。未覆盖：云端后端的长任务与 `waitMs` 到点转 `running`、多文件并发、`summaryOnly` 与 `splitOnly` 两条分支。探针代码在 `D:\Agent\svc-probe`，可以直接当调用示例拄。
