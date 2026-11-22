@@ -254,6 +254,9 @@ function startPanel() {
   const languageEl = document.getElementById("di-language");
   const includeMediaEl = document.getElementById("di-include-media");
   const saveJsonEl = document.getElementById("di-save-json");
+  // 后两个开关没有默认值可铺：每次提取都是人为的即兴选择，不勾就是不勾。
+  const splitOnlyEl = document.getElementById("di-split-only");
+  const summaryOnlyEl = document.getElementById("di-summary-only");
   const resultEl = document.getElementById("di-result");
   const overallTextEl = document.getElementById("di-overall-text");
   const overallPercentEl = document.getElementById("di-overall-percent");
@@ -1004,6 +1007,9 @@ function startPanel() {
       language: languageEl?.value.trim() || "",
       includeMedia: includeMediaEl?.checked === true,
       saveJson: saveJsonEl?.checked === true,
+      // 两项都只发严格布尔：没勾就是 false，不发「未选」。
+      splitOnly: splitOnlyEl?.checked === true,
+      summaryOnly: summaryOnlyEl?.checked === true,
     };
 
     let data = null;

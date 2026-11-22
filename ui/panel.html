@@ -101,15 +101,24 @@
             <label class="di-row__label" for="di-language">语言</label>
             <input class="di-input" id="di-language" type="text" spellcheck="false" autocomplete="off" />
           </div>
-          <!-- 两项合成一行：都是开关，各自一个字都不长，分成两行只是把卡片拉高。 -->
+          <!-- 四个开关排成两行两列：一行四个会被挤到换行，一列四个又把卡片拉长。
+               两句用法说明塞在各条的 title 里，不单独占行。 -->
           <div class="di-checks">
-            <label class="di-check">
+            <label class="di-check" title="提取过程中出现的图片、视频、音频一并保存">
               <input type="checkbox" id="di-include-media" />
               <span>提取图片与媒体</span>
             </label>
-            <label class="di-check">
+            <label class="di-check" title="除了 Markdown 之外，同时落一份结构化 JSON">
               <input type="checkbox" id="di-save-json" />
               <span>另存 JSON</span>
+            </label>
+            <label class="di-check" title="只适用于图片，不会调用任何解析后端">
+              <input type="checkbox" id="di-split-only" />
+              <span>只做图片分割测试</span>
+            </label>
+            <label class="di-check" title="会自动落盘，否则连路径都拿不到">
+              <input type="checkbox" id="di-summary-only" />
+              <span>只返回状态（不返回正文）</span>
             </label>
           </div>
         </div>

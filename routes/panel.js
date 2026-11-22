@@ -144,6 +144,10 @@ export default function registerPanelRoutes(app, ctx) {
     if (language) input.language = language;
     if (typeof body?.includeMedia === "boolean") input.includeMedia = body.includeMedia;
     if (typeof body?.saveJson === "boolean") input.saveJson = body.saveJson;
+    // 这两个开关只认严格布尔：字符串 "true" 不是它。它们会改变解析器走哪条路，
+    // 猜错一次就是把一次正常提取变成一次莫名其妙的失败。
+    if (typeof body?.splitOnly === "boolean") input.splitOnly = body.splitOnly;
+    if (typeof body?.summaryOnly === "boolean") input.summaryOnly = body.summaryOnly;
 
     // 7) 提取用的 ctx：只给 logger 与一份同步取值的配置壳。
     //    extractDocument 内部会再读一次配置，所以这里必须挂上 config.get；

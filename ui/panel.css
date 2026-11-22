@@ -456,12 +456,13 @@ body.t-dark .di-input { color-scheme: dark; }
 .di-row--combo { align-items: flex-start; }
 .di-row--combo .di-row__label { padding-top: 7px; }
 
-/* 两个勾选框合成一行，左边留出标签那一列的宽度，
-   和上面三行的控件对齐，不单独缩进成一个孤岛。 */
+/* 四个勾选框排成两行两列。左边留出标签那一列的宽度（4.6em + 行间距 10px），
+   和上面三行的控件对齐；行间距 9px 与高级选项里其它行一致，列间距 12px 足够分清左右两个开关。 */
 .di-checks {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 12px;
   align-items: center;
-  gap: 18px;
   padding-left: calc(4.6em + 10px);
 }
 

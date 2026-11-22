@@ -88,6 +88,8 @@ const res = await sdk.bus.requestService(
 | `language` | 字符串 | 否 | 如 `zh` / `en`；缺省用设置里的默认语言 |
 | `includeMedia` | 布尔 | 否 | 是否提取图片与媒体；缺省用设置值 |
 | `saveJson` | 布尔 | 否 | 是否另存结构化 JSON；缺省用设置值 |
+| `splitOnly` | 布尔 | 否 | 只做图片分割测试，不调用任何解析后端；只适用于图片，对其它文件会失败 |
+| `summaryOnly` | 布尔 | 否 | 只回每个文件的状态，不返正文；会自动落盘，所以 `mdPath` 仍然可用 |
 | `waitMs` | 数字 | 否 | 最多等多久再回，缺省 20000，上限 600000；`0` 表示只投递不等 |
 
 「到点没跑完」不是失败。活已经独立跑起来了，跟这次调用还在不在没关系，拿 `jobId` 回来问就行。
@@ -131,6 +133,8 @@ const res = await sdk.bus.requestService(
 **第三层，每个文件各自。** `files[].status` 是 `success` 或 `failed`，失败的 `files[].error` 里是一句人话。
 
 注意别用「有没有 markdown 字段」去推断成功失败：扫描件可能识别出零个字，一份纯图片的 PDF 可能只剩几句图注，这些都是合法完成，正文就是空的。`charCount` 会如实给 0。
+
+用 `summaryOnly` 时正文为空是正常的，路径仍然有效。
 
 ---
 
