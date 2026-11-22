@@ -60,8 +60,10 @@ NUL_RATIO_LIMIT = 0.01
 #: 打分阈值：最高分低于它就不是「判出来了」，而是「挑了个最不坏的」。
 MIN_SCORE = 0.15
 
-#: 汉字文本里，常用字的占比低于这个数就不像正常文本（Big5 被当 GB18030 解时约 0.01–0.07）。
-COMMON_RATIO_FLOOR = 0.25
+#: 汉字文本里，常用字的占比低于这个数就不像正常文本。
+#: 实测：读对了是 1.0（GBK 与 Big5 都是），读错了（Big5 字节当 GBK 解）是 0.52，
+#: 工单里那串乱码 0.33，纯生僻字 0.0。0.6 正好卡在两头中间，两边各留一点余地。
+COMMON_RATIO_FLOOR = 0.6
 
 #: 汉字密度到这个数以上，才拿常用字占比去要求它（纯英文/代码不需要过这一关）。
 HANZI_DENSITY_FLOOR = 0.10
@@ -71,6 +73,44 @@ KANA_DENSITY_CEILING = 0.05
 
 #: 替换符 + 控制符 + 私用区合起来的占比上限。
 MALFORMED_CEILING = 0.02
+
+#: 判定只算「各候选编码解读不一致」的字符，也就是非 ASCII。英文、数字、ASCII 标点
+#: 在哪本字典里查都是一个样，对区分编码零信息量；留着它们只会把少数派稀释。
+#: 非 ASCII 字符少于这个数就不下结论：几百个字里只有九个汉字，怎么算都不算数。
+MIN_INFORMATIVE_CHARS = 12
+
+#: 韩文纯度：谚文占「谚文 + 汉字」的比例。真韩文接近 1.0，中文被当成韩文解读时是
+#: 0.5–0.75 的杂拼——现代韩文几乎不用汉字，一旦汉字掺进来就说明库表用错了。
+KOREAN_PURITY_FLOOR = 0.95
+
+#: 日文里假名占「假名 + 汉字」的比例。日文本来就混着写，过三成就当它真是日文。
+KANA_MIX_FLOOR = 0.30
+
+
+def _level_one_hanzi() -> frozenset:
+    """造一份「常用汉字」集合：GB2312 一级字（3755 个）+ Big5 常用字（5401 个）。
+
+    为什么不再用一份手写的高频字表：三百字的表盖不住小样本。一份只有九个字的日志，
+    里面四个字不在表里，占比就从 1.0 掍到 0.55，判据当场失效。而“这个字在不在常用
+    字区”是身份判断，不看频率也不看样本量，九个字照样能用。
+
+    GB2312 把汉字分两级，一级字区是 B0A1–D7F9，按拼音排的就是那批使用频率最高的字；
+    Big5 把常用字放在 A440–C67E。两个区都按字节区间扫一遍就成了，不用背字表。
+    """
+    out = set()
+    for lead in range(0xB0, 0xD8):
+        for trail in range(0xA1, 0xFF):
+            try:
+                out.add(bytes([lead, trail]).decode("gb2312"))
+            except UnicodeDecodeError:
+                continue
+    for lead in range(0xA4, 0xC7):
+        for trail in range(0x40, 0xFF):
+            try:
+                out.add(bytes([lead, trail]).decode("big5"))
+            except UnicodeDecodeError:
+                continue
+    return frozenset(out)
 
 #: 打分只看前这么多字符：编码在整个文件里是同一套，按文件大小线性变慢没有意义。
 SCORE_SAMPLE_CHARS = 200_000
@@ -93,7 +133,7 @@ TRADITIONAL_COMMON = frozenset(
     "聽開麼進還運動員將無與萬廣歡嚴靈願場兩從導層屬歲師帶幫幾張強歸當盡監盤確種稱穩窮節範"
 )
 
-_COMMON = COMMON_HANZI | TRADITIONAL_COMMON
+_COMMON = COMMON_HANZI | TRADITIONAL_COMMON | _level_one_hanzi()
 
 #: 每个字符类别的分值。正分是「正常文本该有的」，负分是「念错了才会冒出来的」。
 WEIGHTS = {
@@ -102,8 +142,8 @@ WEIGHTS = {
     "kana": 0.6,          # 假名：日文就这样
     "hangul": 0.5,        # 谚文：韩文就这样
     "punct": 0.05,        # 中文标点与通用标点：正常但不加分的事
-    "ascii": 0.18,        # 可打印 ASCII：英文、代码、数字
-    "latin": 0.15,        # 拉丁补充区：西欧文本
+    "ascii": 0.18,        # 可打印 ASCII：英文、代码、数字（不计入打分，只用于算非 ASCII 量）
+    "latin": 0.6,         # 拉丁补充区：西欧文本就长这样，不该被当成噪音
     "ext_a": -0.6,        # CJK 扩展 A：念错了才会成片出现
     "ext_b": -0.8,        # 扩展 B 及以上
     "fullwidth": -0.6,    # 全角符号区
@@ -187,29 +227,62 @@ def _char_class(ch: str) -> Optional[str]:
 
 
 def _analyse(text: str) -> dict:
-    """数一遍各类字符，给出分数与两个比例。空文本给一个「什么都不是」的零分结果。"""
+    """数一遍各类字符，给出分数与几个比例。空文本给一个「什么都不是」的零分结果。
+
+    分母用「有效字符」而不是全部字符：ASCII 在 gb18030 / big5 / euc-kr / cp1252 下解出来
+    完全一样（英文、数字、半角标点全世界同一套编号），对区分编码没有任何信息。拿整篇
+    平均的话，一份 1345 字节、只有 9 个汉字的日志会让三个候选的得分挤在 0.17 附近，
+    差 0.0016——那不是判断，是抛硬币。只看非 ASCII 那几个字，差距立刻变成 1.0 对 0.33。
+    """
     counts = dict.fromkeys(WEIGHTS, 0)
     for ch in text:
         cls = _char_class(ch)
         if cls:
             counts[cls] += 1
     length = len(text)
+    # 有效字符 = 被分类过的字符减去 ASCII。注意不能用 len(text) - ascii：换行符不分入任何
+    # 一类，减出来的差里会凭空多出一大截，分母就被灌水了（日志文件里 31 个换行把 9 个字
+    # 算成了 40 个）。
+    informative = sum(counts.values()) - counts["ascii"]
     if length == 0:
         return {
-            "length": 0, "score": 0.0, "hanziDensity": 0.0, "kanaDensity": 0.0,
-            "commonRatio": 0.0, "malformedRatio": 0.0, **counts,
+            "length": 0, "informative": 0, "score": 0.0, "hanziDensity": 0.0,
+            "kanaDensity": 0.0, "commonRatio": 0.0, "malformedRatio": 0.0, **counts,
         }
+    denom = informative or 1
     hanzi = counts["common"] + counts["cjk"] + counts["ext_a"] + counts["ext_b"]
     malformed = counts["replacement"] + counts["control"] + counts["pua"]
+    score = sum(
+        weight * value for key, weight in WEIGHTS.items() if key != "ascii"
+        for value in (counts[key],)
+    ) / denom
     return {
         "length": length,
-        "score": sum(WEIGHTS[key] * value for key, value in counts.items()) / length,
-        "hanziDensity": hanzi / length,
-        "kanaDensity": counts["kana"] / length,
+        "informative": informative,
+        "score": score,
+        "hanzi": hanzi,
+        "hanziDensity": hanzi / denom,
+        "kanaDensity": counts["kana"] / denom,
         "commonRatio": counts["common"] / hanzi if hanzi else 0.0,
-        "malformedRatio": malformed / length,
+        "malformedRatio": malformed / denom,
         **counts,
     }
+
+
+def _confident_script(metrics: dict):
+    """解码结果明显是某种非汉字文字时返回它（hangul / kana），否则 None。
+
+    为什么需要这个：韩文按 GBK 解出来会变成一整篇常用汉字（EUC-KR 的首字节区间与 GB2312
+    一级字区大段重叠），得分甚至是 1.0。也就是说“汉字又多又常用”这件事本身不能证明
+    它是中文。反过来，谚文成片且不掺汉字，倒是很强的证据。"""
+    hangul = metrics["hangul"]
+    kana = metrics["kana"]
+    hanzi = metrics["hanzi"]
+    if hangul and hangul / (hangul + hanzi or 1) >= KOREAN_PURITY_FLOOR:
+        return "hangul"
+    if kana and kana / (kana + hanzi or 1) >= KANA_MIX_FLOOR:
+        return "kana"
+    return None
 
 
 def _problems(metrics: dict) -> list[str]:
@@ -223,15 +296,28 @@ def _problems(metrics: dict) -> list[str]:
         metrics["hanziDensity"] >= HANZI_DENSITY_FLOOR
         and metrics["kanaDensity"] < KANA_DENSITY_CEILING
     )
+    # 常用字占比只管汉字够多的文本；而且这条判据是「这个字是不是一级字」的身份判断，
+    # 不看频率也不看样本量，九个字也照样能用。
     if hanzi_text and metrics["commonRatio"] < COMMON_RATIO_FLOOR:
         reasons.append(
             f"常用汉字占比 {metrics['commonRatio']:.2f}，低于 {COMMON_RATIO_FLOOR}"
         )
+    # 谚文与汉字杂拼：既不像韩文（现代韩文不用汉字），也不像中文（中文不会冒谚文）。
+    hangul = metrics["hangul"]
+    if hangul and hangul / (hangul + metrics["hanzi"] or 1) < KOREAN_PURITY_FLOOR:
+        reasons.append(
+            f"谚文与汉字混杂（谚文占 {hangul / (hangul + metrics['hanzi']):.2f}），不像正常韩文"
+        )
     return reasons
 
 
+def _rank_key(metrics: dict) -> float:
+    """排序用的分数。留一个函数名，将来要加裕度检查就在这里改。"""
+    return metrics["score"]
+
+
 def _is_plausible(metrics: dict) -> bool:
-    return not _problems(metrics) and metrics["score"] >= MIN_SCORE
+    return not _problems(metrics) and _rank_key(metrics) >= MIN_SCORE
 
 
 def _confidence_from_score(score: float) -> float:
@@ -261,7 +347,13 @@ def _charset_normalizer_guess(data: bytes) -> Optional[_Guess]:
         text = str(best)
     except (LookupError, UnicodeError, ValueError):
         return None
-    if not text or not _is_plausible(_analyse(_sample(text))):
+    if not text:
+        return None
+    metrics = _analyse(_sample(text))
+    # 除了「像不像人话」，还要问「有没有足够的样本来判断」。英文为主的文件里，
+    # 任何 8 位解码都能让校验通过（ASCII 本身就在拿正分），而它给出的往往是个
+    # 看上去很像的错答案——样本太小时干脆不让它发言。
+    if not _is_plausible(metrics) or metrics["informative"] < MIN_INFORMATIVE_CHARS:
         return None
 
     # 报个规范名：某个候选编码解出来跟它一字不差时，就报那个名字。cp1250 与 cp1252 在纯
@@ -307,28 +399,37 @@ def _rank_candidates(data: bytes) -> _Guess:
     survivors = [item for item in scored if item[2]]
     pool = survivors or scored
     # max 在并列时保留先出现的那个，所以 CANDIDATES 的顺序就是并列时的优先级。
-    best_encoding, best_text, best_strict, best_metrics = max(pool, key=lambda item: item[3]["score"])
+    best_encoding, best_text, best_strict, best_metrics = max(pool, key=lambda item: _rank_key(item[3]))
     runner_up = max(
         (item for item in pool if item[0] != best_encoding),
-        key=lambda item: item[3]["score"],
+        key=lambda item: _rank_key(item[3]),
         default=None,
     )
 
     if best_strict and _is_plausible(best_metrics):
-        return _Guess(
+        guess = _Guess(
             encoding=best_encoding,
             text=best_text,
             source="heuristic",
-            confidence=_confidence_from_score(best_metrics["score"]),
+            confidence=_confidence_from_score(_rank_key(best_metrics)),
         )
+        # 非 ASCII 字太少时不是不能选，而是不该说得那么肯定：把置信度压下去，
+        # 并明说依据不足。宁可让调用方知道「这是猜的」，也不要让它以为读准了。
+        if best_metrics["informative"] < MIN_INFORMATIVE_CHARS:
+            guess.confidence = round(guess.confidence * 0.6, 3)
+            guess.warnings.append(
+                f"非 ASCII 内容只有 {best_metrics['informative']} 个字，"
+                f"编码判定依据不足，已按 {best_encoding} 解"
+            )
+        return guess
 
     # 到这里就是「判不出来」：正文照给，说清楚为什么。
     reasons: list[str] = []
     if not survivors:
         reasons.append("全部候选都解不开（strict 解码失败）")
     else:
-        if best_metrics["score"] < MIN_SCORE:
-            reasons.append(f"最高分 {best_metrics['score']:.2f}，低于 {MIN_SCORE}")
+        if _rank_key(best_metrics) < MIN_SCORE:
+            reasons.append(f"最高分 {_rank_key(best_metrics):.2f}，低于 {MIN_SCORE}")
         reasons.extend(_problems(best_metrics))
     detail = "；".join(reasons) or "候选之间分不出高下"
     # best_text 对解不开的候选本来就是 errors="replace" 的结果，对解得开的就是原文。
@@ -343,7 +444,7 @@ def _rank_candidates(data: bytes) -> _Guess:
         f"已按 {best_encoding} 尽力解码，{tail}"
     )
     if runner_up is not None:
-        note += f"；次高分是 {runner_up[0]}（{runner_up[3]['score']:.2f}）"
+        note += f"；次高分是 {runner_up[0]}（{_rank_key(runner_up[3]):.2f}）"
     return _Guess(
         encoding=best_encoding,
         text=best_text,
@@ -369,11 +470,31 @@ def _resolve_auto(data: bytes, name: str) -> _Guess:
     except UnicodeDecodeError:
         pass
 
-    guess = _charset_normalizer_guess(data)
-    if guess is not None:
-        return guess
+    # 库一个意见，自建打分一个意见。不能“库先答就定”：它过得了闸门只说明“不算离谱”，
+    # 不等于“比另一个更好”。实测：英文为主的 CSV 里夹两行中文，库判 cp949、
+    # 自建打分判 gb18030，而 cp949 的分数（句文 0.5）也能过 0.15 的闸门——于是错的
+    # 那个先交卷就赢了。改成两个候选摆在同一把尺子上量，谁高用谁。
+    library = _charset_normalizer_guess(data)
+    ranked = _rank_candidates(data)
 
-    return _rank_candidates(data)
+    if library is None:
+        return ranked
+    if ranked.source == "forced":
+        return library
+
+    # 库报的是韩文/日文，而且解出来的谚文/假名是纯的：这一层我的打分看不出来，
+    # 信库。汉字常用与否分辨不了「中文」与「被读成中文的韩文」，这里只能靠文字体系。
+    if _confident_script(_analyse(_sample(library.text))):
+        return library
+
+    library_key = _rank_key(_analyse(_sample(library.text)))
+    ranked_key = _rank_key(_analyse(_sample(ranked.text)))
+    if ranked_key > library_key + 0.02:
+        ranked.warnings.append(
+            f"编码检测库判为 {library.encoding}，按同一套判据改回 {ranked.encoding}"
+        )
+        return ranked
+    return library
 
 
 # ── 正文整理 ────────────────────────────────────────────────────────────
