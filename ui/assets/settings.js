@@ -214,7 +214,7 @@ const FIELDS = {
   mineruPrecisionMaxPages: { title: "Precision 最大页数", type: "number", int: true },
   mineruLocalEndpoint: {
     title: "MinerU 本地服务地址",
-    hint: "例如 http://127.0.0.1:8000，留空则不启用本地 MinerU",
+    hint: "例如 http://127.0.0.1:8000，留空则使用插件自管的实例。本插件只调用本地 MinerU，仅在需要时加载进程，不提供 MinerU 安装服务。",
     type: "string",
     wide: true,
     placeholder: "例如 http://127.0.0.1:8000",
@@ -230,7 +230,33 @@ const FIELDS = {
     title: "MinerU 本地档位",
     hint: "留空按服务端默认",
     type: "string",
-    labels: { "": "跟随服务端", flash: "flash（快）", standard: "standard（准）" },
+    labels: { "": "跟随服务端", flash: "flash（快）", basic: "basic（基础）", standard: "standard（准）", advanced: "advanced（增强）" },
+  },
+  // 自管实例：插件自己拉起、自己卸载的那一个。上面三格是「外部实例」，这里是「内部实例」。
+  mineruLocalAutoStart: {
+    title: "需要时自动启动",
+    hint: "关掉后只使用已在运行的服务，不再自动拉起。",
+    type: "boolean",
+  },
+  mineruKitPath: {
+    title: "MinerU 启动器路径",
+    hint: "必填（仅自动拉起时）。填 mineru-kit.exe 的完整路径；只认文件，不认目录。",
+    type: "string",
+    wide: true,
+    picker: "file",
+    placeholder: "例如 E:\\Conda\\envs_dirs\\mineru\\Scripts\\mineru-kit.exe",
+  },
+  mineruLocalPort: {
+    title: "自管实例端口",
+    hint: "插件自己拉起的 MinerU 监听哪个端口。避开手工占用的 8000。",
+    type: "number",
+    int: true,
+  },
+  mineruLocalIdleSeconds: {
+    title: "空闲卸载（秒）",
+    hint: "这么久没有解析请求就把服务关掉。0 = 每次解析完立刻关。",
+    type: "number",
+    int: true,
   },
 
   // ---- PaddleOCR ----
@@ -352,7 +378,7 @@ const BASIC_KEYS = [
 ];
 
 const ADVANCED_GROUPS = [
-  { title: "MinerU", keys: ["mineruModelVersion", "mineruEnableOCR", "mineruEnableFormula", "mineruEnableTable", "mineruFlashMaxMB", "mineruFlashMaxPages", "mineruPrecisionMaxMB", "mineruPrecisionMaxPages", "mineruLocalEndpoint", "mineruLocalApiKey", "mineruLocalTier"] },
+  { title: "MinerU", keys: ["mineruModelVersion", "mineruEnableOCR", "mineruEnableFormula", "mineruEnableTable", "mineruFlashMaxMB", "mineruFlashMaxPages", "mineruPrecisionMaxMB", "mineruPrecisionMaxPages", "mineruLocalEndpoint", "mineruLocalApiKey", "mineruLocalTier", "mineruLocalAutoStart", "mineruKitPath", "mineruLocalPort", "mineruLocalIdleSeconds"] },
   { title: "PaddleOCR", keys: ["paddleUseDocOrientationClassify", "paddleUseDocUnwarping", "paddleUseChartRecognition", "paddleUseSealRecognition", "paddleUseTableRecognition", "paddleUseFormulaRecognition", "paddleLocalEndpoint"] },
   { title: "PDF 切割", keys: ["autoSplitLargePDF", "splitChunkPages"] },
   { title: "图片分割", keys: ["splitImageThreshold", "splitImageTolerance", "splitImageBlankRatio", "splitImageMinBlank"] },

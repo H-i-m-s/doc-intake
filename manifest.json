@@ -116,7 +116,7 @@
             "type": "string",
             "title": "MinerU 本地服务地址",
             "default": "",
-            "description": "例如 http://127.0.0.1:8000，留空则不启用本地 MinerU"
+            "description": "例如 http://127.0.0.1:8000，留空则使用插件自管的实例。本插件只调用本地 MinerU，仅在需要时加载进程，不提供 MinerU 安装服务。"
           },
           "mineruLocalApiKey": {
             "type": "string",
@@ -127,9 +127,33 @@
           "mineruLocalTier": {
             "type": "string",
             "title": "MinerU 本地档位",
-            "enum": ["", "flash", "standard"],
+            "enum": ["", "flash", "basic", "standard", "advanced"],
             "default": "",
             "description": "留空按服务端默认"
+          },
+          "mineruKitPath": {
+            "type": "string",
+            "title": "MinerU 启动器路径",
+            "default": "",
+            "description": "必填（仅自动拉起时）。填 mineru-kit.exe 的完整路径，例如 E:\\Conda\\envs_dirs\\mineru\\Scripts\\mineru-kit.exe。只认文件，不认目录"
+          },
+          "mineruLocalPort": {
+            "type": "number",
+            "title": "自管实例端口",
+            "default": 8010,
+            "description": "插件自己拉起的 MinerU 监听哪个端口。避开手工占用的 8000"
+          },
+          "mineruLocalIdleSeconds": {
+            "type": "number",
+            "title": "空闲卸载（秒）",
+            "default": 300,
+            "description": "这么久没有解析请求就把服务关掉。0 = 每次解析完立刻关"
+          },
+          "mineruLocalAutoStart": {
+            "type": "boolean",
+            "title": "需要时自动启动",
+            "default": true,
+            "description": "关掉后只使用已在运行的服务，不再自动拉起"
           },
           "paddleLocalEndpoint": {
             "type": "string",

@@ -2,7 +2,7 @@
 
 这份文档给要写代码接入 doc-intake 的人看：前半是工具入参，后半是设置项全表。想让别的 App 通过宿主服务总线调它，看同目录的 `SERVICE-API.md`。
 
-设置项的权威来源是 `manifest.json` 里的 `contributes.settings.schema.properties`；这一篇是它的中文展开，也是登记在册的 66 个键的清单。两边对不上时以 manifest 为准，那是运行时真正校验的那一份。
+设置项的权威来源是 `manifest.json` 里的 `contributes.settings.schema.properties`；这一篇是它的中文展开，也是登记在册的 71 个键的清单。两边对不上时以 manifest 为准，那是运行时真正校验的那一份。
 
 ---
 
@@ -130,9 +130,13 @@ Token 检测不在工具列表里，它不是「提取文档」这类活，而�
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `mineruLocalEndpoint` | `string` | `""` | 自建 MinerU 服务地址，如 `http://127.0.0.1:8000`。留空 = 不启用这一档。 |
+| `mineruLocalEndpoint` | `string` | `""` | 自建 MinerU 服务地址，如 `http://127.0.0.1:8000`。留空 = 用插件自管的实例；填了就用填的这个，只探活，不会替它启动也不会替它停。 |
 | `mineruLocalApiKey` | `string` | `""` | 自建 MinerU 的 API Key，服务端用 `--api-key` 启动时才需要，一般留空。 |
 | `mineruLocalTier` | `"" \| "flash" \| "standard"` | `""` | 自建 MinerU 的档位，留空按服务端默认。 |
+| `mineruKitPath` | `string` | `""` | `mineru-kit.exe` 的完整路径，如 `E:\Conda\envs_dirs\mineru\Scripts\mineru-kit.exe`。只在自动拉起时需要，只认文件不认目录。 |
+| `mineruLocalPort` | `number` | `8010` | 插件自己拉起的 MinerU 监听端口，避开手工占用的 8000。 |
+| `mineruLocalIdleSeconds` | `number` | `300` | 空闲多少秒后卸载自管实例。`0` = 每次解析完立刻关。 |
+| `mineruLocalAutoStart` | `boolean` | `true` | 关掉后只用已在运行的服务，不再自动拉起。 |
 | `paddleLocalEndpoint` | `string` | `""` | 自建 PaddleX Serving 地址，如 `http://127.0.0.1:8080`。留空 = 不启用这一档。 |
 
 ### 图片分割

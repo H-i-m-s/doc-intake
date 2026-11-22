@@ -16,6 +16,7 @@ import { defineApp } from "./sdk/app-contract/server-client.js";
 import { configureJobsStore, loadJobs } from "./lib/jobs.js";
 import { configureCleanupLog } from "./lib/cleanup-log.js";
 import { getSettings } from "./lib/settings.js";
+import { configureMineruService } from "./lib/mineru-service.js";
 import { createServiceHandlers } from "./lib/service-api.js";
 import * as toolDocIntake from "./tools/doc_intake.js";
 
@@ -32,6 +33,9 @@ export default defineApp(async (sdk) => {
   const restoredJobs = loadJobs();
   // 清理记录跟着 dataDir 走。它不在保存目录里，清理动作碰不到自己。
   const cleanupLog = configureCleanupLog({ dataDir: sdk.dataDir });
+  // 自管 MinerU 实例的 service.json / activity / service.log 都放这里。
+  // 只能来自宿主给的 dataDir：自己猜路径，宿主换存储布局后会静默写丢。
+  configureMineruService({ dataDir: sdk.dataDir, logger: sdk.logger });
 
   // 启动日志带上两个能力探测结果：Token 健康状态要用存储落盘、偶尔借宿主网络出口探一次，
   // 这两样缺任何一样都会静默退化成"不提示"，所以把它写在启动行里，以后看日志一眼就能排除。

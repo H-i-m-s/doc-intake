@@ -58,7 +58,12 @@ const SPEC = {
   oxrTokens: { type: "string", default: "" },
   mineruLocalEndpoint: { type: "string", default: "" },
   mineruLocalApiKey: { type: "string", default: "" },
-  mineruLocalTier: { type: "string", enum: ["", "flash", "standard"], default: "" },
+  mineruLocalTier: { type: "string", enum: ["", "flash", "basic", "standard", "advanced"], default: "" },
+  // 自管实例（见 python/mineru_service.py 与 lib/mineru-service.js）。
+  mineruKitPath: { type: "string", default: "" },
+  mineruLocalPort: { type: "number", default: 8010 },
+  mineruLocalIdleSeconds: { type: "number", default: 300 },
+  mineruLocalAutoStart: { type: "boolean", default: true },
   paddleLocalEndpoint: { type: "string", default: "" },
   paddleUseDocOrientationClassify: { type: "boolean", default: false },
   paddleUseDocUnwarping: { type: "boolean", default: true },
