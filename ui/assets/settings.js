@@ -1580,8 +1580,11 @@ function applySearch(raw) {
       continue;
     }
     visibleCount += 1;
-    // 精确只认界面上看得见的那段文字：key 与分组名只让它显示，不算数。
-    const exact = matchesTokensExact(entry.visible, tokens);
+    // 算数的是“这一行与它头顶的分组名/卡片名里写了这个词”：MinerU 组里的开关虽然自己
+    // 那行只写「开启 OCR」，但它上面的分组标题就是 MinerU，屏幕上看得见、也已经上了色，
+    // 那就该计数、该能跳。只有字段名（mineruEnableTable）和只靠子序列凑出来的不算。
+    const exact = matchesTokensExact(entry.visible, tokens)
+      || matchesTokensExact(entry.context, tokens);
     entry.row.classList.toggle("gs-field--fuzzy", !exact);
     if (exact) matchRows.push(entry.row);
   }
