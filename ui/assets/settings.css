@@ -953,8 +953,70 @@ body { padding: 0 12px; }
   color: var(--gs-muted);
 }
 
+/* 命中高亮：accent 给一层薄底，字色不变。不用亮黄——那是浏览器查找的语义，
+   在深色主题上发刺。 */
+mark.gs-hi {
+  background: color-mix(in srgb, var(--gs-accent) 24%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 /* 过滤只动 class，不碰 hidden 属性——那个是 meta.when 的条件显隐在用。
    选择器带上父类来压过 .gs-field 自己的 display。 */
 .gs-field.gs-field--filtered { display: none; }
 .gs-group--empty { display: none; }
 .gs-card--filtered { display: none; }
+
+/* 有内容时浮动：吸顶 + 一道投影，导航按钮随时够得着；空着时这几条完全不生效，
+   它就是个普通页头。top 用变量是为了让上面那条 Token 提示先占位。 */
+.gs-search--floating {
+  position: sticky;
+  top: var(--gs-search-top, 0px);
+  z-index: 6;
+  padding: 6px 0 8px;
+}
+.gs-search--floating .gs-search__box {
+  border-color: transparent;
+  box-shadow:
+    0 10px 22px -16px color-mix(in srgb, var(--gs-ink) 60%, transparent),
+    0 0 0 1px var(--gs-line);
+}
+
+/* 上一个 / 下一个：两个小箭头，只在有命中时出现 */
+.gs-search__nav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.gs-search__step {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gs-muted);
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s, transform 0.1s;
+}
+.gs-search__step:hover { color: var(--gs-ink); background: var(--gs-soft); }
+.gs-search__step:active { transform: scale(0.92); }
+.gs-search__step:focus-visible { outline: 2px solid var(--gs-accent-ring); outline-offset: 1px; }
+.gs-search__step svg { width: 9px; height: 6px; display: block; }
+
+/* 当前停在哪个命中：左侧一道 accent 竖条 + 淡淡一层底。负外边距抵消内边距，
+   所以变成「当前」的时候字不会跳一下。 */
+.gs-field--current {
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--gs-accent) 9%, transparent);
+  box-shadow: inset 2px 0 0 var(--gs-accent);
+}

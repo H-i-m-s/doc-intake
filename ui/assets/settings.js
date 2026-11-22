@@ -8,7 +8,7 @@ import { installThemeBridge } from "../theme-bridge.js";
 import { createUpdateApi } from "./update-api.mjs";
 import { installUpdateNotice } from "./update-notice.mjs";
 import { chainShiftOffsets, chainDragTo } from "./chain-shift.mjs";
-import { parseQuery, matchesTokens, normalizeText } from "./fuzzy.js";
+import { parseQuery, matchesTokens, normalizeText, highlightRanges } from "./fuzzy.js";
 
 const API = {
   config: "/config",
@@ -412,9 +412,13 @@ const ui = {
   cleanupList: el("cleanup-log-list"),
   cleanupClear: el("btn-clear-cleanup-log"),
   search: el("gs-search"),
+  searchWrap: el("gs-search-wrap"),
   searchClear: el("gs-search-clear"),
   searchCount: el("gs-search-count"),
   searchEmpty: el("gs-search-empty"),
+  searchNav: el("gs-search-nav"),
+  searchPrev: el("gs-search-prev"),
+  searchNext: el("gs-search-next"),
 };
 
 let loaded = {};            // 服务端读回的配置（对比用）
@@ -1483,6 +1487,8 @@ function buildAllFields() {
 const searchEntries = [];
 let searchActive = false;
 let collapseBeforeSearch = null;
+let matchRows = [];
+let matchIndex = -1;
 
 function buildSearchIndex() {
   searchEntries.length = 0;
@@ -1519,12 +1525,13 @@ function applySearch(raw) {
     if (!active) syncFieldVisibility();
   }
 
-  let hits = 0;
+  matchRows = [];
   for (const entry of searchEntries) {
     const ok = !active || matchesTokens(entry.hay, tokens);
     entry.row.classList.toggle("gs-field--filtered", active && !ok);
-    if (active && ok) hits += 1;
+    if (active && ok) matchRows.push(entry.row);
   }
+  const hits = matchRows.length;
 
   // 搜索期间放开条件显隐：用户是带着目标来搜的，搜到了却因为没选那个后端而看不见，
   // 比看得见更容易出问题。
@@ -1545,17 +1552,123 @@ function applySearch(raw) {
     card.classList.toggle("gs-card--filtered", active && (!hasFields || !any));
   }
 
+  // 先拆旧的再画新的：高亮是 mark 包文字，叠着画会把上一次的位置带进来。
+  clearHighlights();
+  if (active) paintHighlights(tokens);
+
+  // 有内容才浮动吸顶：空着的时候它就是个普通页头，不该盯着屏幕跟随。
+  ui.searchWrap?.classList.toggle("gs-search--floating", active);
+  if (active) syncSearchStickyTop();
+
   ui.searchClear.hidden = !active;
   ui.searchCount.hidden = !active;
-  if (active) ui.searchCount.textContent = hits > 0 ? `${hits} 项` : "无";
+  ui.searchNav.hidden = !active || hits === 0;
   ui.searchEmpty.hidden = !active || hits > 0;
   if (active && hits === 0) ui.searchEmpty.textContent = `没有匹配「${String(raw).trim()}」的设置项。`;
+
+  // 打字时只把游览位置归到第一个，不滚页面：边打边跳会把人抛出去。
+  setCurrent(active && hits > 0 ? 0 : -1, false);
+}
+
+// ---------------------------------------------------------------- 命中导航
+
+function updateMatchLabel() {
+  if (!searchActive) return;
+  if (matchRows.length === 0) {
+    ui.searchCount.textContent = "无";
+    return;
+  }
+  ui.searchCount.textContent = `${matchIndex + 1} / ${matchRows.length}`;
+}
+
+function setCurrent(index, scroll) {
+  for (const row of ui.root.querySelectorAll(".gs-field--current")) {
+    row.classList.remove("gs-field--current");
+  }
+  matchIndex = index;
+  if (index >= 0 && index < matchRows.length) {
+    const row = matchRows[index];
+    row.classList.add("gs-field--current");
+    if (scroll) {
+      try {
+        row.scrollIntoView({ block: "center", behavior: REDUCED_MOTION ? "auto" : "smooth" });
+      } catch { /* 老引擎不认参数，就当不滚 */ }
+    }
+  }
+  updateMatchLabel();
+}
+
+function gotoMatch(delta) {
+  if (matchRows.length === 0) return;
+  const next = (matchIndex + delta + matchRows.length) % matchRows.length;
+  setCurrent(next, true);
+}
+
+/** 浮动时的吸顶位置：上面可能还压着一条 Token 提示，不能都抢 top:0。 */
+function syncSearchStickyTop() {
+  if (!ui.searchWrap) return;
+  const bar = ui.tokenBar;
+  const offset = bar && !bar.hidden ? bar.getBoundingClientRect().height + 8 : 0;
+  ui.searchWrap.style.setProperty("--gs-search-top", `${Math.round(offset)}px`);
 }
 
 function clearSearch() {
   if (!ui.search) return;
   ui.search.value = "";
   applySearch("");
+}
+
+// ---------------------------------------------------------------- 高亮
+//
+// 命中处涂一层 accent 底。只拆文字节点，链接、标签、控件结构原样留着，
+// 所以清搜索时把 mark 换回纯文字就能完全还原——不留一层包一层的壳。
+
+function clearHighlights() {
+  for (const mark of ui.root.querySelectorAll("mark.gs-hi")) {
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    parent.replaceChild(document.createTextNode(mark.textContent), mark);
+    parent.normalize();
+  }
+}
+
+function paintHighlightsIn(root, tokens) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+
+  for (const node of nodes) {
+    const text = node.nodeValue;
+    const ranges = highlightRanges(text, tokens);
+    if (!ranges.length) continue;
+    const frag = document.createDocumentFragment();
+    let cursor = 0;
+    for (const [start, end] of ranges) {
+      if (start > cursor) frag.appendChild(document.createTextNode(text.slice(cursor, start)));
+      const mark = document.createElement("mark");
+      mark.className = "gs-hi";
+      mark.textContent = text.slice(start, end);
+      frag.appendChild(mark);
+      cursor = end;
+    }
+    if (cursor < text.length) frag.appendChild(document.createTextNode(text.slice(cursor)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+function paintHighlights(tokens) {
+  // 字段行里已经包含了标题、说明、控件文案；分组标题与卡片标题单独补上——
+  // 有时命中的是「MinerU」这种组名，不标出来看不出为什么这一整组都在。
+  const targets = [
+    ...ui.root.querySelectorAll(".gs-field"),
+    ...ui.root.querySelectorAll(".gs-group__title, .gs-card__title"),
+  ];
+  for (const el of targets) {
+    if (el.closest(".gs-field--filtered, .gs-group--empty, .gs-card--filtered")) continue;
+    paintHighlightsIn(el, tokens);
+  }
 }
 
 // 复用高级项那套「分组标题 + 字段」的外观。title 传空就只要字段，不要标题（也就没有那条延长线）。
@@ -2272,6 +2385,7 @@ function wire() {
   ui.tokenClose.addEventListener("click", () => {
     tokenBarDismissed = true;
     ui.tokenBar.hidden = true;
+    syncSearchStickyTop();
   });
   advCollapsible = createCollapsible(ui.advToggle, ui.adv, false);
   depsCollapsible = createCollapsible(ui.depsToggle, ui.depsBody, false);
@@ -2285,9 +2399,17 @@ function wire() {
         event.stopPropagation();
         clearSearch();
       } else if (event.key === "Enter") {
-        // 这一页没有 form，回车不该冒到宿主那边去
+        // 回车 = 下一个命中，Shift+回车 = 上一个。这一页没有 form，
+        // 所以也要顺手拦掉默认行为，别冒到宿主那边去。
         event.preventDefault();
+        if (ui.search.value.trim()) gotoMatch(event.shiftKey ? -1 : 1);
       }
+    });
+    // 点完箭头把焦点还给输入框，接着敲字不用再点一下。
+    ui.searchPrev.addEventListener("click", () => { gotoMatch(-1); ui.search.focus(); });
+    ui.searchNext.addEventListener("click", () => { gotoMatch(1); ui.search.focus(); });
+    window.addEventListener("resize", () => {
+      if (searchActive) syncSearchStickyTop();
     });
     ui.searchClear.addEventListener("click", () => {
       clearSearch();

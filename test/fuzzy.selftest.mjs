@@ -5,7 +5,7 @@
 // 只测 ui/assets/fuzzy.js：页面上的显隐、折叠、空态都由人看，这一层保证
 // 「什么算命中」不退化成什么都命中或什么都不命中。
 
-import { normalizeText, parseQuery, isSubsequence, tokenMatches, matchesTokens } from "../ui/assets/fuzzy.js";
+import { normalizeText, parseQuery, isSubsequence, tokenMatches, matchesTokens, highlightRanges } from "../ui/assets/fuzzy.js";
 
 let pass = 0;
 const fails = [];
@@ -62,6 +62,23 @@ check("按说明里的词搜", matchesTokens(save, parseQuery("结构化")), tru
 
 // 中文串不该被英文单字误伤
 check("中文文本不吃英文单字子序列", matchesTokens(normalizeText("并发与重试 最多同时跑几个"), parseQuery("xy")), false);
+
+// ── 高亮区间：要把归一化后的命中位置映回原文下标 ──
+const rng = (text, query) => JSON.stringify(highlightRanges(text, parseQuery(query)));
+check("高亮整段中文", rng("纯文本编码", "编码"), JSON.stringify([[3, 5]]));
+check("高亮跳过分词后仍能映回位置", rng("SaveJson", "save"), JSON.stringify([[0, 4]]));
+check("高亮跳过标点与空格", rng("PDF 切割", "pdf切"), JSON.stringify([[0, 5]]));
+check("高亮认全角字", rng("ＧＢＫ 编码", "gbk"), JSON.stringify([[0, 3]]));
+check("两个词各标一段", rng("PDF 后端降级链", "pdf 降级"), JSON.stringify([[0, 3], [6, 8]]));
+check("重叠区间合开", rng("文本编码", "编码 码"), JSON.stringify([[2, 4]]));
+check("没有命中就没有区间", rng("文本编码", "并发"), JSON.stringify([]));
+check("空查询不涂色", rng("文本编码", "  "), JSON.stringify([]));
+check(
+  "跨度太大的子序列拆成单字",
+  rng("abcdefghijklmnopqrstuvwxyz", "az"),
+  JSON.stringify([[0, 1], [25, 26]]),
+);
+check("映回下标不越界", highlightRanges("编码", parseQuery("编码")).every(([, end]) => end <= 2), true);
 
 if (fails.length) {
   console.error(`通过 ${pass} 项，失败 ${fails.length} 项`);
