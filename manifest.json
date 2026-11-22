@@ -357,6 +357,13 @@
             "title": "Excel 最大提取列数（0 表示不限制）",
             "default": 50
           },
+          "txtEncoding": {
+            "type": "string",
+            "title": "纯文本 (.txt) 编码",
+            "enum": ["auto", "utf-8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "cp1252", "utf-16-le", "utf-16-be"],
+            "default": "auto",
+            "description": "auto = 按 BOM 与内容自动判定（能分清 GB18030 与 Big5）。指定编码就不再判定，解不开的字节会变成替换符并给出警告"
+          },
           "autoSave": {
             "type": "boolean",
             "title": "默认自动保存到本地",

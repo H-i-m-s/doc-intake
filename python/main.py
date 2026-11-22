@@ -746,6 +746,34 @@ _VIDEO_TAG_RE = _re.compile(r'<video\b[^>]*>.*?</video>|<video\b[^>]*/>', _re.IG
 _AUDIO_TAG_RE = _re.compile(r'<audio\b[^>]*>.*?</audio>|<audio\b[^>]*/>', _re.IGNORECASE | _re.DOTALL)
 
 
+# 这些元数据键对所有“带书桳气”的格式都成立（电子书、纯文本）。两处出口共用一份，
+# 免得 compact_meta 与落盘 JSON 各自维护一个白名单、渐渐漂。
+_BOOK_META_KEYS = (
+    "title",
+    "author",
+    "language",
+    "chapterCount",
+    "pageCount",
+    "epubVersion",
+    "fixedLayout",
+    "series",
+    "number",
+    "containerFormat",
+    "encoding",
+    "encodingSource",
+    "encodingConfidence",
+    "hasBom",
+    "charCount",
+    "lineCount",
+    "replacementCount",
+)
+
+
+def _is_verbatim_text(meta: dict) -> bool:
+    """纯文本的正文就是原文，任何“美化”都是篡改：不抹 <img>、不折空行、不注条码。"""
+    return (meta or {}).get("format") == "txt"
+
+
 def _strip_data_url_images(markdown: str) -> str:
     """把 markdown 里 base64 (data URL) 图片标签替换成占位文本。不动 <video>/<audio>/非 base64 <img>。"""
     if not markdown:
@@ -819,7 +847,10 @@ def format_result(result: ExtractionResult):
     # video/audio 标签始终保留(它们 src 是本地路径,不会进 base64)。
     # 有保存路径 → 只 strip base64，<img src="本地路径"> 保留供 agent 看。
     raw_markdown = result.markdown or ""
-    if not result.output_dir:
+    if _is_verbatim_text(meta):
+        # 纯文本：正文里的 <img>、data URL、连续空行都是作者写的字，一律不动。
+        cleaned_markdown = raw_markdown
+    elif not result.output_dir:
         cleaned_markdown = _strip_all_image_tags(raw_markdown)
     else:
         cleaned_markdown = _strip_data_url_images(raw_markdown)
@@ -844,20 +875,9 @@ def format_result(result: ExtractionResult):
         "usedBackendInChain": meta.get("usedBackendInChain"),
         "authFailures": auth_failures,
     }
-    # 电子书这类本地提取器会带书名、作者、章节数。compact_meta 是白名单，不转发
-    # 就等于白读了——调用方只看到“epub”三个字母，看不到读到的是哪本书。
-    for key in (
-        "title",
-        "author",
-        "language",
-        "chapterCount",
-        "pageCount",
-        "epubVersion",
-        "fixedLayout",
-        "series",
-        "number",
-        "containerFormat",
-    ):
+    # 电子书这类本地提取器会带书名、作者、章节数；纯文本会带编码与规模。
+    # compact_meta 是白名单，不转发的字段等于白读了。
+    for key in _BOOK_META_KEYS:
         if meta.get(key) not in (None, ""):
             compact_meta[key] = meta[key]
     if meta.get("barcodeCodes"):
@@ -1336,8 +1356,10 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
     committed_paths: list[Path] = []
     try:
         # base64 图片最后抹除，防止一坨 base64 进 markdown 让人看 / agent 渲染。
-        final_markdown = _strip_data_url_images(final_markdown)
-        final_markdown = _inject_barcode_annotations(result, final_markdown, settings)
+        # 纯文本不谋：正文逐字保真，空行不折、<img> 不抹、条码注记也不往正文里塞。
+        if not _is_verbatim_text(result.metadata or {}):
+            final_markdown = _strip_data_url_images(final_markdown)
+            final_markdown = _inject_barcode_annotations(result, final_markdown, settings)
         md_bytes = final_markdown.encode("utf-8")
         # 运行时结果也必须使用保存后的 Markdown，避免 Agent 继续看到云端原始长文件名。
         result.markdown = final_markdown
@@ -1363,6 +1385,11 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                     "barcodeCodes": (result.metadata or {}).get("barcodeCodes"),
                 },
             }
+            # 电子书与纯文本的书卷气字段跟 compact_meta 用同一份白名单，别让落盘 JSON
+            # 比返回值少一半信息——拿着 JSON 的人也想看编码和章节数。
+            for key in _BOOK_META_KEYS:
+                if meta.get(key) not in (None, ""):
+                    json_data["metadata"][key] = meta[key]
             json_bytes = json.dumps(json_data, ensure_ascii=False, indent=2).encode("utf-8")
 
         def atomic_write(path: Path, data: bytes) -> None:

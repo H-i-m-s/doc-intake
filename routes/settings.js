@@ -103,6 +103,8 @@ const SPEC = {
   htmlHeadingStyle: { type: "string", enum: ["ATX", "SETEXT"], default: "ATX" },
   xlsxMaxRows: { type: "number", default: 100 },
   xlsxMaxCols: { type: "number", default: 50 },
+  // 纯文本按哪个编码解。auto = 交给 txt_extractor 自己判（BOM > UTF-8 > charset-normalizer > 打分）。
+  txtEncoding: { type: "string", enum: ["auto", "utf-8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "cp1252", "utf-16-le", "utf-16-be"], default: "auto" },
   autoSave: { type: "boolean", default: false },
   savePath: { type: "string", default: "" },
   serviceReadRoots: { type: "string", default: "" },
