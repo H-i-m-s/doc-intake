@@ -1509,10 +1509,14 @@ function buildSearchIndex() {
   for (const row of ui.root.querySelectorAll(".gs-field")) {
     const cardTitle = row.closest(".gs-card")?.querySelector(".gs-card__title")?.textContent || "";
     const groupTitle = row.closest(".gs-group")?.querySelector(".gs-group__title")?.textContent || "";
-    // row.textContent 已经包含标题、说明、选项文案与 placeholder，
-    // 所以搜「gb18030」能找到编码下拉，搜「云端」能找到降级链里的备注。
-    const hay = normalizeText([cardTitle, groupTitle, row.dataset.key || "", row.textContent].join(" "));
-    searchEntries.push({ row, hay });
+    // 两段文本分开存：
+    //   own     = 这一项自己的东西（key、标题、说明、控件里的选项文案）
+    //   context = 它所在的分组名与卡片名（属于环境，不属于这一项）
+    // 分开的理由：搜 mineru 时，MinerU 组里的“开启 OCR”该显示（在同一组里），
+    // 但它自己并没有写 mineru，不该计数、不该上色、更不该被箭头跳到。
+    const own = normalizeText([row.dataset.key || "", row.textContent].join(" "));
+    const context = normalizeText([cardTitle, groupTitle].join(" "));
+    searchEntries.push({ row, own, context });
   }
 }
 
@@ -1542,15 +1546,17 @@ function applySearch(raw) {
   matchRows = [];
   let visibleCount = 0;
   for (const entry of searchEntries) {
-    const pass = !active || matchesTokens(entry.hay, tokens);
+    const pass = !active
+      || matchesTokens(entry.own, tokens)
+      || matchesTokens(entry.context, tokens);
     entry.row.classList.toggle("gs-field--filtered", active && !pass);
     if (!active || !pass) {
       entry.row.classList.remove("gs-field--fuzzy");
       continue;
     }
     visibleCount += 1;
-    // 精确与模糊分两档：模糊的只显示，不算数、不上色、不能跳。
-    const exact = matchesTokensExact(entry.hay, tokens);
+    // 精确只看这一项自己写的字：模糊的（含“只靠分组名带进来”的）只显示，不算数。
+    const exact = matchesTokensExact(entry.own, tokens);
     entry.row.classList.toggle("gs-field--fuzzy", !exact);
     if (exact) matchRows.push(entry.row);
   }
