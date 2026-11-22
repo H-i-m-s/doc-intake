@@ -431,7 +431,7 @@
         "route": "/panel.html",
         "cardForm": "flush",
         "realization": "card",
-        "detachedDefaultSize": { "width": 400, "height": 820 },
+        "detachedDefaultSize": { "width": 400, "height": 700 },
         "face": { "image": "face.svg" }
       }
     ]
