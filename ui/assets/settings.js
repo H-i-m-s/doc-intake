@@ -749,7 +749,13 @@ function decorateSelect(select) {
       cursor = Math.min(options.length - 1, Math.max(0, cursor + step));
       paint();
       const item = menu.children[cursor];
-      if (item) item.scrollIntoView({ block: "nearest" });
+      if (item) {
+        // 不调 scrollIntoView：宿主里原生滚动不可靠，菜单内自己算位置
+        const menuBox = menu.getBoundingClientRect();
+        const itemBox = item.getBoundingClientRect();
+        if (itemBox.top < menuBox.top) menu.scrollTop -= menuBox.top - itemBox.top;
+        else if (itemBox.bottom > menuBox.bottom) menu.scrollTop += itemBox.bottom - menuBox.bottom;
+      }
       return;
     }
     if (e.key === "Enter" || e.key === " ") {
@@ -773,7 +779,7 @@ function decorateSelect(select) {
 }
 
 // 点空白、Esc、滚动、改窗口大小都关掉浮层。滚动要排掉浮层内部的滚动，
-// 否则键盘上下键的 scrollIntoView 会把自己关掉。
+// 否则键盘上下键的菜单内滚动会把自己关掉。
 document.addEventListener("mousedown", (e) => {
   const el = e.target;
   if (el instanceof Element && (el.closest(".gs-selectwrap") || el.closest(".gs-selectmenu"))) return;
@@ -1679,8 +1685,12 @@ function scrollRowIntoView(row) {
     }
   }
   if (!scroller) {
-    // 整页都不可滚，只能试着让浏览器去找可滚祖先（≥外层容器时才有效）
-    try { row.scrollIntoView({ block: "nearest" }); } catch { /* 算了 */ }
+    // 谁都说自己不可滚。最后一搏：直接把文档的 scrollTop 交过去（有的宿主只在赋值时
+    // 才更新滚动量），仍然不行就承认——这个页面自己碰不到滚动。
+    const docEl = document.scrollingElement || document.documentElement;
+    const wanted = Math.max(0, (docEl?.scrollTop || 0) + rect.top - band - SCROLL_GAP);
+    if (docEl) docEl.scrollTop = wanted;
+    if (document.body) document.body.scrollTop = wanted;
     if (searchActive && !rowIsVisible(row, band)) {
       ui.searchEmpty.hidden = false;
       ui.searchEmpty.textContent = "这一项的滚动不由插件页面控制，没能自动跳过去。";
