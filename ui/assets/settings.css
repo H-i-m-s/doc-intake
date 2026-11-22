@@ -412,6 +412,33 @@ body { padding: 0 12px; }
   border-bottom: 1.6px solid var(--gs-accent);
   transform: rotate(45deg);
 }
+
+/* 搜索停在某个选项上：面板里那一行脉冲一下，按钮自己也闪一圈。
+   字段里没字可闪（显示的是“自动”这种当前值），反馈不落在面板和按钮上，
+   箭头停过去就像什么也没发生。 */
+@keyframes gs-flash-opt {
+  0%, 100% { background: color-mix(in srgb, var(--gs-accent) 0%, transparent); }
+  18%, 62% { background: color-mix(in srgb, var(--gs-accent) 26%, transparent); }
+}
+@keyframes gs-flash-btn {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  18%, 62% { box-shadow: 0 0 0 3px var(--gs-accent-ring); }
+}
+.gs-selectmenu__opt.is-search-hit { animation: gs-flash-opt 1.5s ease-in-out; }
+.gs-selectbtn.is-search-hit { animation: gs-flash-btn 1.5s ease-in-out; }
+
+/* 面板底色比卡片深，24% 的 accent 在这里看着发灰，命中的词单独加浓一档 */
+.gs-selectmenu mark.gs-hi {
+  background: color-mix(in srgb, var(--gs-accent) 40%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gs-selectmenu__opt.is-search-hit,
+  .gs-selectbtn.is-search-hit { animation: none; }
+  /* 不脉冲也要看得出哪一条是命中：给一层静态底色 */
+  .gs-selectmenu__opt.is-search-hit { background: color-mix(in srgb, var(--gs-accent) 26%, transparent); }
+}
+
 .gs-textarea { min-height: 62px; resize: vertical; font-family: var(--gs-mono); font-size: 12px; }
 .gs-field--wide .gs-input { width: 100%; }
 
@@ -692,17 +719,20 @@ body { padding: 0 12px; }
     var(--gs-bg) 100%
   );
 }
-/* 内层就是一张普通卡片，逐项照抄上面的 .gs-card，不做任何遮罩或裁剪。 */
+/* 内层就是一张普通卡片，逐项照抄上面的 .gs-card，不做任何遮罩或裁剪。
+   左：三个按钮和状态文字；右：搜索框。底栏本来就吸在底部，搜索框往这里一放，
+   翻到哪一屏都够得着，不用再单独吸顶。 */
 .gs-foot {
   background: var(--gs-surface);
   border: 1px solid var(--gs-line);
   border-radius: var(--gs-radius);
-  padding: 14px 16px 8px;
+  padding: 12px 16px;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--gs-ink) 5%, transparent);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 14px;
 }
+.gs-foot__main { flex: 1 1 0; min-width: 240px; display: flex; flex-direction: column; gap: 6px; }
 .gs-foot__actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ---------- 确认条 ---------- */
@@ -769,6 +799,10 @@ body { padding: 0 12px; }
   .gs-field__control { justify-content: flex-start; }
   .gs-field .gs-input, .gs-selectwrap { width: 100%; }
   .gs-input--num { width: 140px; }
+  /* 窄屏上搜索框换到按钮下面一整行，不跟按钮抢宽度 */
+  .gs-foot { flex-wrap: wrap; }
+  .gs-search { flex: 1 1 100%; min-width: 0; }
+  .gs-search__empty { text-align: left; }
   .gs-dep { grid-template-columns: 1fr auto; }
   .gs-dep__purpose { grid-column: 1 / -1; }
   .gs-dep--head { display: none; }
@@ -869,12 +903,15 @@ body { padding: 0 12px; }
 .gs-num__step svg { width: 8px; height: 6px; display: block; }
 
 /* ---------- 搜索 ---------- */
-/* 设置项几十个，靠翻很难找。搜索框留在页头，跟着内容滚——不吸顶，是因为
-   吸顶的还有那条 Token 提示，两块都抢 top:0 会叠在一起。 */
+/* 设置项几十个，靠翻很难找。搜索框就在底栏右侧那块空地上：底栏吸底，
+   它跟着一直在手边。不再吸顶，也就不必和顶部那条 Token 提示抢位置。 */
 .gs-search {
+  flex: 0 1 280px;
+  min-width: 170px;
   display: flex;
-  align-items: center;
-  margin-top: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
 }
 
 .gs-search__box {
@@ -948,8 +985,10 @@ body { padding: 0 12px; }
 .gs-search__clear:focus-visible { outline: 2px solid var(--gs-accent-ring); outline-offset: 1px; }
 
 .gs-search__empty {
-  margin: 2px 0 0;
-  font-size: 12.5px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
   color: var(--gs-muted);
 }
 
@@ -973,21 +1012,6 @@ mark.gs-hi {
 /* 只是模糊命中的行：留着给人看，但压淡一点——它们不进计数、不上色、也不能跳，
    长得跟精确命中一样会让人以为箭头数少了。 */
 .gs-field--fuzzy { opacity: 0.72; }
-
-/* 有内容时浮动：吸顶 + 一道投影，导航按钮随时够得着；空着时这几条完全不生效，
-   它就是个普通页头。top 用变量是为了让上面那条 Token 提示先占位。 */
-.gs-search--floating {
-  position: sticky;
-  top: var(--gs-search-top, 0px);
-  z-index: 6;
-  padding: 6px 0 8px;
-}
-.gs-search--floating .gs-search__box {
-  border-color: transparent;
-  box-shadow:
-    0 10px 22px -16px color-mix(in srgb, var(--gs-ink) 60%, transparent),
-    0 0 0 1px var(--gs-line);
-}
 
 /* 上一个 / 下一个：两个小箭头，只在有命中时出现 */
 .gs-search__nav {

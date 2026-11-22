@@ -387,6 +387,7 @@ const ui = {
   note: el("gs-note"),
   banner: el("python-banner"),
   tokenBar: el("token-bar"),
+  footWrap: document.querySelector(".gs-foot-wrap"),
   tokenTitle: el("token-bar-title"),
   tokenDetail: el("token-bar-detail"),
   tokenMute: el("token-mute"),
@@ -420,7 +421,6 @@ const ui = {
   cleanupList: el("cleanup-log-list"),
   cleanupClear: el("btn-clear-cleanup-log"),
   search: el("gs-search"),
-  searchWrap: el("gs-search-wrap"),
   searchClear: el("gs-search-clear"),
   searchCount: el("gs-search-count"),
   searchEmpty: el("gs-search-empty"),
@@ -706,10 +706,15 @@ function decorateSelect(select) {
   }
 
   function close() {
-    if (!open) return;
+    if (!open) {
+      // 收着的时候也可能留着上一次搜索涂的色，一并清掉，别等下次点开才露馅
+      clearSearchHits();
+      return;
+    }
     open = false;
     menu.classList.remove("open");
     trigger.setAttribute("aria-expanded", "false");
+    clearSearchHits();
     setTimeout(() => { if (!open) menu.hidden = true; }, 140);
   }
 
@@ -722,6 +727,75 @@ function decorateSelect(select) {
     paint();
     close();
     trigger.focus();
+  }
+
+  // ---- 搜索联动 ----
+  // 面板挂在 body 上，搜索的高亮扫不到这里，所以选项的涂色由控件自己做。
+  // 选项文字随时可以复原：label 存在 options 里，重建不会丢字。
+  function paintOptionText(item, opt, tokens) {
+    item.replaceChildren();
+    const ranges = tokens && tokens.length ? highlightRanges(opt.label, tokens) : [];
+    if (!ranges.length) {
+      item.textContent = opt.label;
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    let cursorAt = 0;
+    for (const [start, end] of ranges) {
+      if (start > cursorAt) frag.appendChild(document.createTextNode(opt.label.slice(cursorAt, start)));
+      const mark = document.createElement("mark");
+      mark.className = "gs-hi";
+      mark.textContent = opt.label.slice(start, end);
+      frag.appendChild(mark);
+      cursorAt = end;
+    }
+    if (cursorAt < opt.label.length) frag.appendChild(document.createTextNode(opt.label.slice(cursorAt)));
+    item.appendChild(frag);
+  }
+
+  function findOption(value) {
+    return options.find((opt) => opt.value === value) || null;
+  }
+
+  function markHits(tokens) {
+    for (const item of menu.children) {
+      const opt = findOption(item.dataset.value);
+      if (opt) paintOptionText(item, opt, tokens);
+    }
+  }
+
+  function clearSearchHits() {
+    for (const item of menu.children) item.classList.remove("is-search-hit");
+    trigger.classList.remove("is-search-hit");
+    markHits(null);
+  }
+
+  let hitTimer = 0;
+
+  /** 搜索停在某个选项上：脉冲一下，让人知道面板是为这一处打开的。 */
+  function flashHit(value) {
+    clearTimeout(hitTimer);
+    trigger.classList.remove("is-search-hit");
+    for (const item of menu.children) item.classList.remove("is-search-hit");
+    void trigger.offsetWidth;
+    trigger.classList.add("is-search-hit");
+    const item = Array.from(menu.children).find((el) => el.dataset.value === value);
+    if (item) item.classList.add("is-search-hit");
+    hitTimer = window.setTimeout(() => {
+      trigger.classList.remove("is-search-hit");
+      if (item) item.classList.remove("is-search-hit");
+    }, 1600);
+  }
+
+  /** 搜索的箭头走到这一项：按命中项打开面板，并把命中词涂在选项上。 */
+  function openFor(value, tokens) {
+    openMenu();
+    const index = options.findIndex((opt) => opt.value === value);
+    if (index >= 0) cursor = index;
+    markHits(tokens);
+    paint();
+    place();
+    flashHit(value);
   }
 
   options.forEach((opt, index) => {
@@ -772,7 +846,18 @@ function decorateSelect(select) {
   wrap.append(select, trigger);
   document.body.appendChild(menu);
 
-  const picker = { wrap, refresh: paint, close };
+  const picker = {
+    wrap,
+    trigger,
+    options: () => options.map((opt) => ({ value: opt.value, label: opt.label })),
+    currentValue: () => select.value,
+    refresh: paint,
+    close,
+    openFor,
+    clearSearchHits,
+    isOpen: () => open,
+    reposition: () => { if (open) place(); },
+  };
   pickers.add(picker);
   paint();
   return picker;
@@ -789,6 +874,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAllPi
 window.addEventListener("scroll", (e) => {
   const el = e.target;
   if (el instanceof Element && el.closest(".gs-selectmenu")) return;
+  // 搜索自己滑页时不关：那一串 scroll 是程序发的，关了就等于刚打开就幕一下没了。
+  if (searchScrolling) return;
   closeAllPickers();
 }, true);
 window.addEventListener("resize", () => closeAllPickers());
@@ -986,6 +1073,7 @@ function buildControl(key) {
     const picker = decorateSelect(select);
     return {
       node: picker.wrap,
+      picker,
       read: () => select.value,
       write: (v) => {
         const wanted = String(v ?? "");
@@ -1503,36 +1591,58 @@ let searchActive = false;
 let collapseBeforeSearch = null;
 let matchRows = [];
 let matchIndex = -1;
+// 当前这串搜索词：箭头停到下拉选项上时，面板自己上色要用它。
+let activeTokens = [];
 
-/** 字段自己的一整串文字：标题、说明、控件上的当前值、下拉里没展开的选项、降级链的每一行。
- *
- * 这里不排除任何东西。搜 mineru 时，「默认解析后端」的 MinerU 写在没展开的下拉里，
- * 「PDF 后端降级链」的 MinerU 写在链行里，这两处都算命中：用户要的是“这东西里有没有
- * 这几个字”，不是“此刻屏幕上有没有露出来”。折叠起来的卡片同理，收起来不等于不存在。 */
-function fieldTextOf(row) {
-  return normalizeText(row.textContent);
+// 屏幕上看不到的字：原生下拉的选项（被自绘按钮盖住）、被 hidden 收起的块（例如降级链
+// 一条都没勾时那句“内置顺序：mineru > oxr > …”）、以及链末尾那条提示。
+// 后两者是同一批后端名的另一种写法，把它们算进字段文字，就会出现“同一个词亮两次”：
+// 一处在提示里、一处在真正的链行上，两都是可抓的地方，但眼睛只看见一处。
+const NON_VISIBLE = "select, option, datalist, [hidden], .gs-chain-empty";
+
+/** 字段“看得见”的文字：标题、说明、控件上的当前值、降级链的每一行。 */
+function visibleTextOf(node) {
+  const clone = node.cloneNode(true);
+  for (const stale of clone.querySelectorAll(NON_VISIBLE)) stale.remove();
+  return normalizeText(clone.textContent);
 }
 
 /** 把一个字段拆成若干“一处命中”：
  *
  *   · 普通字段 → 它自己就是一处（标题、说明、当前值都算同一处）
  *   · 降级链 → 每一行单独一处，「MinerU」与「MinerU（本地）」是两处，箭头得分开停
+ *   · 下拉 → 字段本身一处，每个选项各一处。选项不显示，但它是个去得了的地方：
+ *     箭头停上去就把面板打开、把那条涂上，再往下走就自己收起
  *
- * 不拆的话，按一下箭头会从「MinerU」直接跳到下一个字段，把链里第二个命中跨过去——
- * 人眼看着有两处红了，箭头却只停一次，就是这里的事。 */
+ * 不拆的话，按一下箭头会从一处直接跳到下一个字段，把中间那几处跨过去——
+ * 人眼看着有没亮的地方，箭头却不给停，就是这里的事。 */
 function hitUnitsOf(row) {
+  const units = [];
   const chainRows = [...row.querySelectorAll(".gs-chain-row")];
   if (chainRows.length === 0) {
-    return [{ el: row, text: fieldTextOf(row) }];
+    units.push({ el: row, kind: "field", text: visibleTextOf(row) });
+  } else {
+    // 字段头部（标题 + 说明）单独算一处：把链行抽掉再取字，不然整块说明会被算进第一行。
+    const header = row.cloneNode(true);
+    for (const stale of header.querySelectorAll(".gs-chain-row")) stale.remove();
+    units.push({ el: row, kind: "field", text: visibleTextOf(header) });
+    for (const chainRow of chainRows) {
+      units.push({ el: chainRow, kind: "chainRow", text: visibleTextOf(chainRow) });
+    }
   }
-  // 字段头部（标题 + 说明）单独算一处：把链行抽掉再取字，不然整块说明会被算进第一行。
-  const clone = row.cloneNode(true);
-  for (const stale of clone.querySelectorAll(".gs-chain-row")) stale.remove();
-  const headerText = normalizeText(clone.textContent);
-  return [
-    { el: row, text: headerText },
-    ...chainRows.map((chainRow) => ({ el: chainRow, text: fieldTextOf(chainRow) })),
-  ];
+  const control = controls.get(row.dataset.key);
+  if (control?.picker) {
+    for (const option of control.picker.options()) {
+      units.push({
+        el: control.picker.trigger,
+        kind: "option",
+        text: normalizeText(option.label),
+        value: option.value,
+        picker: control.picker,
+      });
+    }
+  }
+  return units;
 }
 
 function buildSearchIndex() {
@@ -1544,6 +1654,8 @@ function buildSearchIndex() {
       row,
       // 命中单位：计数、上色、跳转都按这个粒度走。
       units: hitUnitsOf(row),
+      // 下拉控件：选项里“当前选中的那一条”的字就显示在按钮上，不该再算一处
+      picker: controls.get(row.dataset.key)?.picker || null,
       // 下面两串只负责“让它显示出来”，不参与计数、上色、跳转。
       keyText: normalizeText(row.dataset.key || ""),
       context: normalizeText([cardTitle, groupTitle].join(" ")),
@@ -1589,9 +1701,12 @@ function applySearch(raw) {
     visibleCount += 1;
     // 算数的是“一处命中”：字段自己的文字里写了这几个字，或者降级链里哪一行写了。
     // 只靠字段名/分组名留下来的字段依然显示，但不计数、不上色、箭头也不停。
-    const hits = entry.units.filter((unit) => matchesTokensExact(unit.text, tokens));
+    // 下拉里当前选中的那一条不算：它的字已经显示在按钮上，归入字段那一处。
+    const live = entry.picker ? entry.picker.currentValue() : null;
+    const hits = entry.units.filter((unit) => matchesTokensExact(unit.text, tokens)
+      && !(unit.kind === "option" && unit.value === live));
     entry.row.classList.toggle("gs-field--fuzzy", hits.length === 0);
-    for (const unit of hits) matchRows.push(unit.el);
+    for (const unit of hits) matchRows.push(unit);
   }
   const hitCount = matchRows.length;
 
@@ -1614,14 +1729,16 @@ function applySearch(raw) {
     card.classList.toggle("gs-card--filtered", active && (!hasFields || !any));
   }
 
+  // 命中集合变了，搜索驱动打开的下拉先收掉：它是按上一串关键词开的，留着就是错的。
+  closeAllPickers();
+  activeTokens = tokens;
+
   // 先拆旧的再画新的：高亮是 mark 包文字，叠着画会把上一次的位置带进来。
   // 只给精确命中的行上色——模糊命中的行看得见就行。
   clearHighlights();
   if (active) paintHighlights(tokens);
 
-  // 有内容才浮动吸顶：空着的时候它就是个普通页头，不该盯着屏幕跟随。
-  ui.searchWrap?.classList.toggle("gs-search--floating", active);
-  if (active) syncSearchStickyTop();
+  // 有内容时也只动按钮和计数：搜索框在底栏里，不靠吸顶跟着屏幕。
 
   ui.searchClear.hidden = !active;
   ui.searchCount.hidden = !active;
@@ -1650,17 +1767,30 @@ function updateMatchLabel() {
 
 let flashTimer = 0;
 
-/** 把某一项滚到“刚好看得见”的位置：顶端让开吸顶的搜索框。
+/** 滚动到命中项：定位点在上三分之一处，不是贴着顶上。
  *
- * 不用 scrollIntoView：block:"center" 会把目标送到视口正中，而顶部还压着一条吸顶的
- * 搜索框，落到中间的行反而看不全；block:"start" 又会被那条框盖住。所以自己算：
- * 滚动容器 = document.scrollingElement，偏移量 = 吸顶框所占的那一条。 */
-const SCROLL_GAP = 16;
+ * 不用 scrollIntoView：它只会把人送到 start / center / end 三选一，都不能对“上三分之一”；
+ * 而且这一页在宿主的 iframe 里，原生平滑不可靠。所以位置自己算、每帧自己推。 */
 const SCROLL_MS_MIN = 180;
 const SCROLL_MS_MAX = 420;
 
 let scrollFrame = 0;
 let scrollToken = 0;
+
+// 搜索自己滚页面时，滚动事件不该把刚打开的下拉收掉：那一串 scroll 是程序发的，
+// 不是用户的手。从开滚到落位后再宽限 220ms，把尾巴上的异步 scroll 一起遮住。
+let searchScrolling = false;
+let searchScrollingTimer = 0;
+
+function beginSearchScroll() {
+  searchScrolling = true;
+  clearTimeout(searchScrollingTimer);
+}
+
+function endSearchScroll() {
+  clearTimeout(searchScrollingTimer);
+  searchScrollingTimer = window.setTimeout(() => { searchScrolling = false; }, 220);
+}
 
 const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
@@ -1669,7 +1799,7 @@ const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2
  * 不用 scrollTo({behavior:"smooth"})：这一页跑在宿主弹窗的 iframe 里，原生平滑在这里
  * 不生效——要么完全不动，要么动到一半被载体的重绘/重置打断，于是“按上箭头有时不跳”。
  * 自己逐帧写 scrollTop，每帧都是一次真实赋值，谁也取消不了。 */
-function animateScrollTop(el, to, token, done) {
+function animateScrollTop(el, to, token, done, follow) {
   cancelAnimationFrame(scrollFrame);
   const from = el.scrollTop;
   const delta = to - from;
@@ -1685,6 +1815,8 @@ function animateScrollTop(el, to, token, done) {
     if (token !== scrollToken) return; // 又按了箭头，交给新的那一次
     const t = Math.min(1, (now - startedAt) / duration);
     el.scrollTop = from + delta * easeInOutCubic(t);
+    // 跟着滚动的东西（例如已经展开的下拉面板）每帧对一次位置，否则会飞在半路
+    follow?.();
     if (t < 1) scrollFrame = requestAnimationFrame(step);
     else done?.();
   };
@@ -1692,19 +1824,47 @@ function animateScrollTop(el, to, token, done) {
 }
 
 function scrollTopBand() {
-  if (!ui.searchWrap) return 0;
-  return (parseFloat(getComputedStyle(ui.searchWrap).top) || 0) + ui.searchWrap.offsetHeight;
+  // 搜索框已经搬到底栏，顶部只剩那条 Token 提示会吸顶：给它让出高度，别让命中项藏在它后面。
+  const bar = ui.tokenBar;
+  if (!bar || bar.hidden) return 0;
+  return bar.getBoundingClientRect().height + 8;
+}
+
+/** 底栏是吸在视口底部的：它遮住的那一条高度，算滚动和“看得见吗”时都要扣掉。 */
+function viewBottomGuard() {
+  const foot = ui.footWrap;
+  if (!foot) return 0;
+  const rect = foot.getBoundingClientRect();
+  return Math.max(0, Math.round(window.innerHeight - rect.top));
 }
 
 function rowIsVisible(row, band) {
   const r = row.getBoundingClientRect();
-  return r.bottom > band && r.top < window.innerHeight - 8;
+  return r.bottom > band && r.top < window.innerHeight - viewBottomGuard() - 8;
+}
+
+/** 命中项该落在视口的哪儿：上三分之一。
+ *
+ * 整页是自上而下读的，眼睛停在上三分之一处最自然；送到最顶上反而像被剪掉了一截，
+ * 还得把视线往上找。下半部分的留白刚好把后面的字段也带进眼里，接著看下去不用再滚。 */
+function scrollAimTop() {
+  const band = scrollTopBand();
+  const bottom = window.innerHeight - viewBottomGuard();
+  const usable = Math.max(160, bottom - band);
+  return band + usable * 0.33;
 }
 
 /** 滚完复查：没到位就硬落位一次；再不行就说实话，不留一个按了没反应的箭头。 */
 function settleRow(row, band, scroller, target, token) {
   if (token !== scrollToken) return;
   if (!rowIsVisible(row, band)) scroller.scrollTop = target;
+  // 底栏压着视口底部：目标刚好落在按钮条后面时，再往下推一点把它露出来
+  const guard = viewBottomGuard();
+  const overflow = row.getBoundingClientRect().bottom - (window.innerHeight - guard);
+  if (overflow > 0) {
+    const limit = scroller.scrollHeight - scroller.clientHeight;
+    scroller.scrollTop = Math.min(scroller.scrollTop + overflow, limit);
+  }
   if (!searchActive) return;
   if (rowIsVisible(row, band)) {
     ui.searchEmpty.hidden = true;
@@ -1714,19 +1874,27 @@ function settleRow(row, band, scroller, target, token) {
   ui.searchEmpty.textContent = "这一项的滚动不由插件页面控制，没能自动跳过去。";
 }
 
-/** 把某一项滚到“刚好看得见”的位置：顶端让开吸顶的搜索框，平滑地过去。
+/** 把某一项滚到视口上三分之一处，平滑地过去。
  *
- * 不假设滚动权在文档上：文档自身可滚就滚它，否则退到最近的、可滚的祖先。 */
-function scrollRowIntoView(row) {
+ * 不假设滚动权在文档上：文档自身可滚就滚它，否则退到最近的、可滚的祖先。
+ * after 在真正落位之后跑；follow 每帧一次，跟着滚的东西拿它对位置。 */
+function scrollRowIntoView(row, after, follow) {
   const band = scrollTopBand();
   const token = ++scrollToken;
   const doc = document.scrollingElement || document.documentElement;
   const rect = row.getBoundingClientRect();
+  beginSearchScroll();
+
+  const finish = (scroller, target) => {
+    settleRow(row, band, scroller, target, token);
+    if (token === scrollToken) after?.();
+    endSearchScroll();
+  };
 
   if (doc && doc.scrollHeight > doc.clientHeight + 1) {
     const limit = doc.scrollHeight - doc.clientHeight;
-    const wanted = Math.max(0, Math.min(doc.scrollTop + rect.top - band - SCROLL_GAP, limit));
-    animateScrollTop(doc, wanted, token, () => settleRow(row, band, doc, wanted, token));
+    const wanted = Math.max(0, Math.min(doc.scrollTop + rect.top - scrollAimTop(), limit));
+    animateScrollTop(doc, wanted, token, () => finish(doc, wanted), follow);
     return;
   }
 
@@ -1741,20 +1909,21 @@ function scrollRowIntoView(row) {
     // 谁都说自己不可滚。最后一搏：直接把文档的 scrollTop 交过去（有的宿主只在赋值时
     // 才更新滚动量），仍然不行就承认——这个页面自己碰不到滚动。
     const docEl = document.scrollingElement || document.documentElement;
-    const wanted = Math.max(0, (docEl?.scrollTop || 0) + rect.top - band - SCROLL_GAP);
+    const wanted = Math.max(0, (docEl?.scrollTop || 0) + rect.top - scrollAimTop());
     if (docEl) docEl.scrollTop = wanted;
     if (document.body) document.body.scrollTop = wanted;
     if (searchActive && !rowIsVisible(row, band)) {
       ui.searchEmpty.hidden = false;
       ui.searchEmpty.textContent = "这一项的滚动不由插件页面控制，没能自动跳过去。";
     }
+    after?.();
+    endSearchScroll();
     return;
   }
 
   const limit = scroller.scrollHeight - scroller.clientHeight;
-  const box = scroller.getBoundingClientRect();
-  const wanted = Math.max(0, Math.min(scroller.scrollTop + rect.top - box.top - SCROLL_GAP, limit));
-  animateScrollTop(scroller, wanted, token, () => settleRow(row, band, scroller, wanted, token));
+  const wanted = Math.max(0, Math.min(scroller.scrollTop + rect.top - scrollAimTop(), limit));
+  animateScrollTop(scroller, wanted, token, () => finish(scroller, wanted), follow);
 }
 
 /** 跳到的位置闪一下：淡入、停一会儿、淡出。不做常驻的整行底色——
@@ -1771,29 +1940,39 @@ function flashRow(row) {
 }
 
 function setCurrent(index, scroll) {
+  const previous = matchIndex;
   matchIndex = index;
-  if (index >= 0 && index < matchRows.length) {
-    const row = matchRows[index];
-    if (scroll) {
-      scrollRowIntoView(row);
-      flashRow(row);
+  const hit = index >= 0 && index < matchRows.length ? matchRows[index] : null;
+  // 下拉里的选项：跳过去得把面板打开才看得见。其余命中留在原地。
+  const keep = hit && hit.kind === "option" ? hit.picker : null;
+  if (previous !== index) closeAllPickers(keep);
+
+  if (hit && scroll) {
+    if (hit.kind === "option") {
+      // 先开面板再滚：打开是点到即得，不用等滚动跑完；滚的时候面板每帧跟着按钮对位置
+      openOptionHit(hit);
+      scrollRowIntoView(hit.el, () => {
+        if (!searchActive || matchRows[matchIndex] !== hit) return;
+        hit.picker?.reposition();
+      }, () => hit.picker?.reposition());
+    } else {
+      scrollRowIntoView(hit.el);
+      flashRow(hit.el);
     }
   }
   updateMatchLabel();
+}
+
+/** 下拉里的那一项：面板打开、命中词涂上、候选条脉冲一下。 */
+function openOptionHit(hit) {
+  if (!hit.picker) return;
+  hit.picker.openFor(hit.value, activeTokens);
 }
 
 function gotoMatch(delta) {
   if (matchRows.length === 0) return;
   const next = (matchIndex + delta + matchRows.length) % matchRows.length;
   setCurrent(next, true);
-}
-
-/** 浮动时的吸顶位置：上面可能还压着一条 Token 提示，不能都抢 top:0。 */
-function syncSearchStickyTop() {
-  if (!ui.searchWrap) return;
-  const bar = ui.tokenBar;
-  const offset = bar && !bar.hidden ? bar.getBoundingClientRect().height + 8 : 0;
-  ui.searchWrap.style.setProperty("--gs-search-top", `${Math.round(offset)}px`);
 }
 
 function clearSearch() {
@@ -1808,17 +1987,29 @@ function clearSearch() {
 // 所以清搜索时把 mark 换回纯文字就能完全还原——不留一层包一层的壳。
 
 function clearHighlights() {
+  // 撕掉 mark 之后必须把相邻文本合并回去：一个词在 DOM 里可能被上一次的高亮切成
+  // 好几段文字节点（“MinerU” → “M”＋“inerU”），不合并的话下一轮查询是在碎片上找
+  // “mineru”，子串对不上、字就一个个消失。
+  // 合并不会把别处的 mark 卷进来（它们不是文本节点），高亮也不会相互嵌套
+  // （画的时候已经跳过已高亮的文字），所以这里只收拾自己动过的父节点。
+  const touched = new Set();
   for (const mark of ui.root.querySelectorAll("mark.gs-hi")) {
     const parent = mark.parentNode;
     if (!parent) continue;
+    touched.add(parent);
     parent.replaceChild(document.createTextNode(mark.textContent), mark);
-    parent.normalize();
   }
+  for (const parent of touched) parent.normalize();
 }
 
 function paintHighlightsIn(root, tokens) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => (node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    acceptNode: (node) => {
+      if (!node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      // 已经包在高亮里的字不再进队列：重复上色只会叠出两层底
+      if (node.parentElement && node.parentElement.closest("mark.gs-hi")) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
   });
   const nodes = [];
   while (walker.nextNode()) {
@@ -2571,7 +2762,6 @@ function wire() {
   ui.tokenClose.addEventListener("click", () => {
     tokenBarDismissed = true;
     ui.tokenBar.hidden = true;
-    syncSearchStickyTop();
   });
   advCollapsible = createCollapsible(ui.advToggle, ui.adv, false);
   depsCollapsible = createCollapsible(ui.depsToggle, ui.depsBody, false);
@@ -2594,9 +2784,6 @@ function wire() {
     // 点完箭头把焦点还给输入框，接着敲字不用再点一下。
     ui.searchPrev.addEventListener("click", () => { gotoMatch(-1); ui.search.focus(); });
     ui.searchNext.addEventListener("click", () => { gotoMatch(1); ui.search.focus(); });
-    window.addEventListener("resize", () => {
-      if (searchActive) syncSearchStickyTop();
-    });
     ui.searchClear.addEventListener("click", () => {
       clearSearch();
       ui.search.focus();
