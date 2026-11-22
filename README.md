@@ -327,6 +327,7 @@ doc-intake/
 | 电子书（FB2） | `.fb2` / `.fbz` | Local | section 嵌套深度成标题层级，图片从 `<binary>` 的 base64 解出 |
 | 漫画 | `.cbz` | Local | 按页名自然序出图（`page2` 在 `page10` 前），不主动 OCR |
 | Kindle | `.mobi` `.azw` `.azw3` `.prc` | Local + 可选依赖 `mobi` | 先看 PalmDB 头的加密类型，有 DRM 直接拒；未装依赖时给出安装提示 |
+| 纯文本 | `.txt` | Local | 判定编码（BOM / UTF-8 / GBK / Big5 / UTF-16 / 西文）、正文逐字不改；判不准时给正文并在 warnings 里说清 |
 
 电子书一律本地解析，不进降级链——云端那几档做不了。CBZ 默认只出图不 OCR；MOBI/AZW 要的可选依赖是 GPL-3.0，插件本身不打包它，由用户在自己的 Python 环境里装。
 

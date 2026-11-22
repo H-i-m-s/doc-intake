@@ -436,7 +436,7 @@ export function buildResult(sources, results, settings = {}, options = {}) {
 export const name = "doc_intake";
 export const description =
   "提取文档/图片/电子书内容，输出 Markdown。支持 PDF（MinerU / SoMark）、图片（SoMark / PaddleOCR）、Office 文档（本地解析，含 DOC/XLS/PPT 旧格式转换）、"
-  + "电子书（EPUB / FB2 / FBZ / CBZ / MOBI / AZW / AZW3 / PRC，均本地解析）。"
+  + "电子书（EPUB / FB2 / FBZ / CBZ / MOBI / AZW / AZW3 / PRC）与纯文本（TXT，含 GBK / Big5 / UTF-16 编码判定），均本地解析。"
   + "图片和文档里的二维码、条码会随提取一并解出，不需要额外参数或另找工具。"
   + "若返回里带 tokenNotice 字段，说明用户的云端 Token（MinerU / OXR / PaddleOCR）有问题，需要按它里面的 text 提醒用户。";
 

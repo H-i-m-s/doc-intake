@@ -45,6 +45,7 @@
 | `pipIndexUrl` | `string` | `""` | 自定义安装源地址，只在上面选 `custom` 时生效，要填完整的 index-url。 |
 | `defaultBackend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "paddleocr-local" \| "local"` | `"auto"` | 默认解析后端。工具与服务没显式指定时用它。 |
 | `defaultLanguage` | `string` | `"zh"` | 默认语言，透传给 OCR 与云端 API。 |
+| `txtEncoding` | `"auto" \| "utf-8" \| "gb18030" \| "gbk" \| "big5" \| "shift_jis" \| "euc-kr" \| "cp1252" \| "utf-16-le" \| "utf-16-be"` | `"auto"` | 解 `.txt` 时用哪种编码。`auto` 先看 BOM，再按候选集打分；判错了就钉成具体编码重跑。写错的编码名直接报错，不静默回落。 |
 | `includeMedia` | `boolean` | `true` | 默认是否提取媒体（图片/视频/音频）。 |
 | `barcodeScan` | `boolean` | `true` | 解析媒体里的二维码与条码，结果注在引用该媒体的那一行下面；未安装 `zxing-cpp` 时自动跳过并留一条 warning。 |
 
@@ -79,8 +80,11 @@
 | `.fb2` / `.fbz` | `fb2` | 单个 XML；`<binary>` 里的 base64 解成图片，section 嵌套深度成标题层级，`body name="notes"` 挪到文末 |
 | `.cbz` | `cbz` | zip 装图，按页名自然序（`page2` 在 `page10` 前）出图；不主动 OCR，要文字得显式走图片链 |
 | `.mobi` `.azw` `.azw3` `.prc` | `mobi` | 先看 PalmDB 记录头的加密类型，有 DRM 直接拒；再交给可选依赖 `mobi` 解包，解出 epub 就复用 EPUB 提取器，解出 html 走 HTML 转 Markdown，解出 pdf 是 Print Replica，报错请用户先转 PDF |
+| `.txt` | `txt` | 编码判定（BOM → UTF-8 严格 → charset-normalizer → 自建打分）后原样转出；正文只做去 BOM、换行归一成 LF、剥行尾空白，不加标题、不合段、不去缩进、不压空行 |
 
 MOBI/AZW 那条依赖是 GPL-3.0，插件不打包它，由用户在设置页「环境依赖」里一键装进自己的 Python 环境。没装时返回的是可读的安装提示，不是 traceback。
+
+`.txt` 的存在理由是 `.txt` 本身：加密那节不管，问题在“猜错也不报错”。Big5 的字节在 GB18030 里也能解成合法字符，于是拿到一段看似中文的乱码——比报错危险。所以它的产出除了正文，还带 `encoding` / `encodingSource` / `encodingConfidence` / `replacementCount`，判不准时在 `warnings` 里说清按谁解的、有几处替换符。`.txt` 的正文是逐字保真的：`main.py` 那两处“美化”（折空行、抹 `<img>`）对它一律不生效。
 
 `pageRange` 对电子书无效（它们没有页的概念，CBZ 的页是图片顺序）；`language` 也只当提示，真正的语言取自书籍自身的元数据。
 
