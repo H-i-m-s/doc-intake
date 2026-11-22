@@ -1504,19 +1504,43 @@ let collapseBeforeSearch = null;
 let matchRows = [];
 let matchIndex = -1;
 
-function buildSearchIndex() {
-  searchEntries.length = 0;
+/** 只取「屏幕上看得见」的文字。
+ *
+ * row.textContent 会把 native <select> 里那些选项一并算进去——而下拉已经自绘，那些选项
+ * 在下拉展开前并不在屏幕上。不排除它们，“默认解析后端”会因为选项里有 MinerU 而被算成
+ * 精确命中，可那行字里根本没有 MinerU。 */
+function visibleTextOf(root) {
+  let out = "";
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!node.nodeValue.trim()) continue;
+    const parent = node.parentElement;
+    if (!parent) continue;
+    if (parent.closest("select, option, datalist, [hidden], [aria-hidden='true']")) continue;
+    out += ` ${node.nodeValue}`;
+  }
+  return normalizeText(out);
+}
+
+function buildSearchIndex() {  searchEntries.length = 0;
   for (const row of ui.root.querySelectorAll(".gs-field")) {
     const cardTitle = row.closest(".gs-card")?.querySelector(".gs-card__title")?.textContent || "";
     const groupTitle = row.closest(".gs-group")?.querySelector(".gs-group__title")?.textContent || "";
-    // 两段文本分开存：
-    //   own     = 这一项自己的东西（key、标题、说明、控件里的选项文案）
-    //   context = 它所在的分组名与卡片名（属于环境，不属于这一项）
-    // 分开的理由：搜 mineru 时，MinerU 组里的“开启 OCR”该显示（在同一组里），
-    // 但它自己并没有写 mineru，不该计数、不该上色、更不该被箭头跳到。
-    const own = normalizeText([row.dataset.key || "", row.textContent].join(" "));
+    // 三段文本分开存，各自管不同的事：
+    //   visible = 界面上看得见的字（标题、说明、控件上显示的选项文案）
+    //   keyText = 字段名（mineruEnableTable 这种，界面上看不见）
+    //   context = 卡片名与分组名（属于环境，不属于这一项）
+    // 为什么非得拆：搜 mineru 时，「开启表格识别」的 key 含 mineru、又正好在 MinerU 组里，
+    // 但它界面上没有一个字写着 mineru。用户眼里的精确命中是“屏幕上写了这个词”，
+    // 所以只有 visible 参与计数、上色与跳转；另外两段只负责让它显示出来。
     const context = normalizeText([cardTitle, groupTitle].join(" "));
-    searchEntries.push({ row, own, context });
+    searchEntries.push({
+      row,
+      visible: visibleTextOf(row),
+      keyText: normalizeText(row.dataset.key || ""),
+      context,
+    });
   }
 }
 
@@ -1547,7 +1571,8 @@ function applySearch(raw) {
   let visibleCount = 0;
   for (const entry of searchEntries) {
     const pass = !active
-      || matchesTokens(entry.own, tokens)
+      || matchesTokens(entry.visible, tokens)
+      || matchesTokens(entry.keyText, tokens)
       || matchesTokens(entry.context, tokens);
     entry.row.classList.toggle("gs-field--filtered", active && !pass);
     if (!active || !pass) {
@@ -1555,8 +1580,8 @@ function applySearch(raw) {
       continue;
     }
     visibleCount += 1;
-    // 精确只看这一项自己写的字：模糊的（含“只靠分组名带进来”的）只显示，不算数。
-    const exact = matchesTokensExact(entry.own, tokens);
+    // 精确只认界面上看得见的那段文字：key 与分组名只让它显示，不算数。
+    const exact = matchesTokensExact(entry.visible, tokens);
     entry.row.classList.toggle("gs-field--fuzzy", !exact);
     if (exact) matchRows.push(entry.row);
   }
