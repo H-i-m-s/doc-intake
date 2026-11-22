@@ -132,11 +132,19 @@ Token 检测不在工具列表里，它不是「提取文档」这类活，而�
 |--------|------|--------|------|
 | `mineruLocalEndpoint` | `string` | `""` | 自建 MinerU 服务地址，如 `http://127.0.0.1:8000`。留空 = 用插件自管的实例；填了就用填的这个，只探活，不会替它启动也不会替它停。 |
 | `mineruLocalApiKey` | `string` | `""` | 自建 MinerU 的 API Key，服务端用 `--api-key` 启动时才需要，一般留空。 |
-| `mineruLocalTier` | `"" \| "flash" \| "standard"` | `""` | 自建 MinerU 的档位，留空按服务端默认。 |
+| `mineruLocalTier` | `"" \| "flash" \| "basic" \| "standard" \| "advanced"` | `""` | 自建 MinerU 的档位，留空按服务端默认。选服务端没装的档会被拒（`GET /v1/tiers` 能看到的才算有）。 |
 | `mineruKitPath` | `string` | `""` | `mineru-kit.exe` 的完整路径，如 `E:\Conda\envs_dirs\mineru\Scripts\mineru-kit.exe`。只在自动拉起时需要，只认文件不认目录。 |
 | `mineruLocalPort` | `number` | `8010` | 插件自己拉起的 MinerU 监听端口，避开手工占用的 8000。 |
 | `mineruLocalIdleSeconds` | `number` | `300` | 空闲多少秒后卸载自管实例。`0` = 每次解析完立刻关。 |
 | `mineruLocalAutoStart` | `boolean` | `true` | 关掉后只用已在运行的服务，不再自动拉起。 |
+
+#### 自管实例的启停
+
+填了 `mineruLocalEndpoint` 就只用它：插件探一次 `/v1/health`，通了就用，不通就带着原因报失败，**不会**改成去拉起自管实例——用户显式给的地址就是唯一意图。留空则走自管：先看 `mineruLocalPort` 上有没有自己上一轮留下的实例（靠 `service.json` 认），没有就按 `mineruKitPath` 拉起一个守护脚本，由它在空闲 `mineruLocalIdleSeconds` 秒后把服务关掉。
+
+守护脚本是 `python/mineru_service.py`，状态文件在宿主的 `dataDir/mineru-service/`：`service.json`（自己与子进程的 pid、端口、kit 路径）、`activity`（最后活跃时间，由 App 每次解析前刷新）、`service.log`（服务端输出）。杀死只认这三样同时成立：`service.json` 记的 pid 活着、命令行含 `mineru-kit`、端口对得上。用户在 8000 上自己起的实例永远不在这条路上——没 `service.json` 就不接管、也不在同一个端口再起一个。
+
+两件容易误会的事：一次首次解析会花 179 秒左右加载模型（后续请求快），所以「醒一次用一下」适合低频大文件，不适合连续小文件；`mineruLocalIdleSeconds = 0` 是每次解析完立刻关，代价是下一次又要冷启动。
 | `paddleLocalEndpoint` | `string` | `""` | 自建 PaddleX Serving 地址，如 `http://127.0.0.1:8080`。留空 = 不启用这一档。 |
 
 ### 图片分割

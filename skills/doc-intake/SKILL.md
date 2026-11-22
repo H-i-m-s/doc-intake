@@ -70,7 +70,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 - 纯文本（`.txt`）：也就地解析。看 `metadata.encoding` 知道它按什么编码读的，`encodingConfidence` 低或 `replacementCount` 大于 0 时，**必须在回答里告诉用户可能认错了编码**，并建议把设置里的「纯文本编码」钉成具体编码重跑，不要在乱码上继续总结。正文是逐字保真的，没有标题也没有段落重组，不要替它补。
 - 用户要求不上传 PDF 或只用本地解析时传 `backend="local"`。
 - 不要因为本地解析失败就自行改写参数；根据返回的 `warnings` 判断是否需要建议用户改用其他后端。
-- 本地部署时可用 `mineru-local` / `paddleocr-local`，需先在设置里填本地服务地址。
+- 本地部署时可用 `mineru-local` / `paddleocr-local`，需先在设置里填本地服务地址。`mineru-local` 另有一条自管路：地址留空、填好 `mineru-kit.exe` 路径，插件会在真用到时才拉起服务，空闲后自己关掉。首次解析要加载模型（百秒量级），慢是正常的，不意味着挂了。它只调用你装好的 MinerU，不提供安装服务。
 
 ## 4. 结果处理
 
