@@ -1597,80 +1597,101 @@ let flashTimer = 0;
  * 搜索框，落到中间的行反而看不全；block:"start" 又会被那条框盖住。所以自己算：
  * 滚动容器 = document.scrollingElement，偏移量 = 吸顶框所占的那一条。 */
 const SCROLL_GAP = 16;
-let scrollCheckTimer = 0;
-let rowScrollToken = 0;
+const SCROLL_MS_MIN = 180;
+const SCROLL_MS_MAX = 420;
 
-/** 请求滚动：优先平滑，不支持或抛错就硬落位。 */
-function requestScroll(el, top, smooth) {
-  try {
-    if (smooth && typeof el.scrollTo === "function") {
-      el.scrollTo({ top, behavior: "smooth" });
-      return;
-    }
-  } catch { /* 落到下一行去 */ }
-  el.scrollTop = top;
+let scrollFrame = 0;
+let scrollToken = 0;
+
+const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+/** 自己推的平滑滚动。
+ *
+ * 不用 scrollTo({behavior:"smooth"})：这一页跑在宿主弹窗的 iframe 里，原生平滑在这里
+ * 不生效——要么完全不动，要么动到一半被载体的重绘/重置打断，于是“按上箭头有时不跳”。
+ * 自己逐帧写 scrollTop，每帧都是一次真实赋值，谁也取消不了。 */
+function animateScrollTop(el, to, token, done) {
+  cancelAnimationFrame(scrollFrame);
+  const from = el.scrollTop;
+  const delta = to - from;
+  if (REDUCED_MOTION || Math.abs(delta) < 1) {
+    el.scrollTop = to;
+    done?.();
+    return;
+  }
+  const duration = Math.min(SCROLL_MS_MAX, Math.max(SCROLL_MS_MIN, Math.abs(delta) * 0.6));
+  const startedAt = performance.now();
+
+  const step = (now) => {
+    if (token !== scrollToken) return; // 又按了箭头，交给新的那一次
+    const t = Math.min(1, (now - startedAt) / duration);
+    el.scrollTop = from + delta * easeInOutCubic(t);
+    if (t < 1) scrollFrame = requestAnimationFrame(step);
+    else done?.();
+  };
+  scrollFrame = requestAnimationFrame(step);
 }
 
-/** 把某一项滚到“刚好看得见”的位置，用平滑；并复查它到底动没动。
+function scrollTopBand() {
+  if (!ui.searchWrap) return 0;
+  return (parseFloat(getComputedStyle(ui.searchWrap).top) || 0) + ui.searchWrap.offsetHeight;
+}
+
+function rowIsVisible(row, band) {
+  const r = row.getBoundingClientRect();
+  return r.bottom > band && r.top < window.innerHeight - 8;
+}
+
+/** 滚完复查：没到位就硬落位一次；再不行就说实话，不留一个按了没反应的箭头。 */
+function settleRow(row, band, scroller, target, token) {
+  if (token !== scrollToken) return;
+  if (!rowIsVisible(row, band)) scroller.scrollTop = target;
+  if (!searchActive) return;
+  if (rowIsVisible(row, band)) {
+    ui.searchEmpty.hidden = true;
+    return;
+  }
+  ui.searchEmpty.hidden = false;
+  ui.searchEmpty.textContent = "这一项的滚动不由插件页面控制，没能自动跳过去。";
+}
+
+/** 把某一项滚到“刚好看得见”的位置：顶端让开吸顶的搜索框，平滑地过去。
  *
- * 不假设滚动权在文档上：文档、body、行以上的每一个可滚祖先都试。平滑滚动是异步的，
- * 700ms 后如果目标行还没进视口，就硬落位一次；再不行就在页面上直说——不然用户会以为
- * 是自己没按对，而真正的可能是这一页被外层包着滚，插件碰不到。
- */
+ * 不假设滚动权在文档上：文档自身可滚就滚它，否则退到最近的、可滚的祖先。 */
 function scrollRowIntoView(row) {
-  let band = 0;
-  if (ui.searchWrap) {
-    band = (parseFloat(getComputedStyle(ui.searchWrap).top) || 0) + ui.searchWrap.offsetHeight;
-  }
-  const smooth = !REDUCED_MOTION;
-  const token = ++rowScrollToken;
-
+  const band = scrollTopBand();
+  const token = ++scrollToken;
   const doc = document.scrollingElement || document.documentElement;
-  const docScrollable = doc && doc.scrollHeight > doc.clientHeight + 1;
-  const el = row.getBoundingClientRect();
+  const rect = row.getBoundingClientRect();
 
-  if (docScrollable) {
+  if (doc && doc.scrollHeight > doc.clientHeight + 1) {
     const limit = doc.scrollHeight - doc.clientHeight;
-    const wanted = Math.max(0, Math.min(doc.scrollTop + el.top - band - SCROLL_GAP, limit));
-    requestScroll(doc, wanted, smooth);
+    const wanted = Math.max(0, Math.min(doc.scrollTop + rect.top - band - SCROLL_GAP, limit));
+    animateScrollTop(doc, wanted, token, () => settleRow(row, band, doc, wanted, token));
+    return;
   }
 
-  // 内层容器：从近到远，每个能滚的祖先都补偿一次（平滑）。文档能滚时这里是空转，
-  // 因为行与最近祖先之间的偏移会被上一步吞掉，只剩 0 像素。
-  const targets = [];
+  let scroller = null;
   for (let node = row.parentElement; node; node = node.parentElement) {
-    if (node.scrollHeight <= node.clientHeight + 1) continue;
-    const box = node.getBoundingClientRect();
-    const limit = node.scrollHeight - node.clientHeight;
-    const wanted = Math.max(0, Math.min(node.scrollTop + el.top - box.top - SCROLL_GAP, limit));
-    requestScroll(node, wanted, smooth);
-    targets.push([node, wanted]);
-  }
-
-  // 复查：平滑跑完还没到位，就硬落位；仍不行就认输并说出来。
-  clearTimeout(scrollCheckTimer);
-  scrollCheckTimer = window.setTimeout(() => {
-    if (token !== rowScrollToken) return; // 期间又跳了，交给新的那次
-    const visible = () => {
-      const r = row.getBoundingClientRect();
-      return r.bottom > band && r.top < window.innerHeight - 8;
-    };
-    if (!visible()) {
-      if (docScrollable) {
-        const limit = doc.scrollHeight - doc.clientHeight;
-        doc.scrollTop = Math.max(0, Math.min(doc.scrollTop + row.getBoundingClientRect().top - band - SCROLL_GAP, limit));
-        if (document.body) document.body.scrollTop = doc.scrollTop;
-      }
-      for (const [node, top] of targets) node.scrollTop = top;
+    if (node.scrollHeight > node.clientHeight + 1) {
+      scroller = node;
+      break;
     }
-    if (!searchActive) return;
-    if (visible()) {
-      ui.searchEmpty.hidden = true;
-    } else {
+  }
+  if (!scroller) {
+    // 整页都不可滚，只能试着让浏览器去找可滚祖先（≥外层容器时才有效）
+    try { row.scrollIntoView({ block: "nearest" }); } catch { /* 算了 */ }
+    if (searchActive && !rowIsVisible(row, band)) {
       ui.searchEmpty.hidden = false;
       ui.searchEmpty.textContent = "这一项的滚动不由插件页面控制，没能自动跳过去。";
     }
-  }, 700);
+    return;
+  }
+
+  const limit = scroller.scrollHeight - scroller.clientHeight;
+  const box = scroller.getBoundingClientRect();
+  const wanted = Math.max(0, Math.min(scroller.scrollTop + rect.top - box.top - SCROLL_GAP, limit));
+  animateScrollTop(scroller, wanted, token, () => settleRow(row, band, scroller, wanted, token));
 }
 
 /** 跳到的位置闪一下：淡入、停一会儿、淡出。不做常驻的整行底色——
