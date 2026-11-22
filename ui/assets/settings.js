@@ -1523,15 +1523,24 @@ function visibleTextOf(root) {
   return normalizeText(out);
 }
 
-function buildSearchIndex() {
-  searchEntries.length = 0;
+function buildSearchIndex() {  searchEntries.length = 0;
   for (const row of ui.root.querySelectorAll(".gs-field")) {
-    // 只有屏幕上看得见的文字参与匹配。
-    //
-    // 不把字段 key（mineruEnableTable）、分组名（MinerU）、卡片名也算进来：它们能把
-    // 整组行都带进结果，可那些行屏幕上并没有写要搜的那个词。搜“mineru”就只该看到
-    // 真正写着 mineru 的那几行——看到什么就数什么，数什么就能跳什么。
-    searchEntries.push({ row, visible: visibleTextOf(row) });
+    const cardTitle = row.closest(".gs-card")?.querySelector(".gs-card__title")?.textContent || "";
+    const groupTitle = row.closest(".gs-group")?.querySelector(".gs-group__title")?.textContent || "";
+    // 三段文本分开存，各自管不同的事：
+    //   visible = 界面上看得见的字（标题、说明、控件上显示的选项文案）
+    //   keyText = 字段名（mineruEnableTable 这种，界面上看不见）
+    //   context = 卡片名与分组名（属于环境，不属于这一项）
+    // 为什么非得拆：搜 mineru 时，「开启表格识别」的 key 含 mineru、又正好在 MinerU 组里，
+    // 但它界面上没有一个字写着 mineru。用户眼里的精确命中是“屏幕上写了这个词”，
+    // 所以只有 visible 参与计数、上色与跳转；另外两段只负责让它显示出来。
+    const context = normalizeText([cardTitle, groupTitle].join(" "));
+    searchEntries.push({
+      row,
+      visible: visibleTextOf(row),
+      keyText: normalizeText(row.dataset.key || ""),
+      context,
+    });
   }
 }
 
@@ -1561,14 +1570,17 @@ function applySearch(raw) {
   matchRows = [];
   let visibleCount = 0;
   for (const entry of searchEntries) {
-    const pass = !active || matchesTokens(entry.visible, tokens);
+    const pass = !active
+      || matchesTokens(entry.visible, tokens)
+      || matchesTokens(entry.keyText, tokens)
+      || matchesTokens(entry.context, tokens);
     entry.row.classList.toggle("gs-field--filtered", active && !pass);
     if (!active || !pass) {
       entry.row.classList.remove("gs-field--fuzzy");
       continue;
     }
     visibleCount += 1;
-    // 精确 = 屏幕上原样写了这个词；只按字符顺序凑出来的算模糊（显示、压淡，不计数不跳）。
+    // 精确只认界面上看得见的那段文字：key 与分组名只让它显示，不算数。
     const exact = matchesTokensExact(entry.visible, tokens);
     entry.row.classList.toggle("gs-field--fuzzy", !exact);
     if (exact) matchRows.push(entry.row);
