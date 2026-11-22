@@ -175,6 +175,9 @@ function deliverFileEntry(file, withExtras) {
  * 投递这件事本身要说明的「跑完了」仍然在。
  *
  * 只收 mdPath 有值的文件：没落盘的产物没有任何可以指给人看的位置。
+ *
+ * 不带作业号：投递是给对话递一个地址，正文靠 mdPath 去读就够了。
+ * 作业号是给别的插件取结果用的（服务那条路），塞进聊天消息里只是一串噪声。
  */
 export function buildDeliverPayload(job) {
   const files = Array.isArray(job?.files) ? job.files : [];
@@ -182,7 +185,6 @@ export function buildDeliverPayload(job) {
   const success = files.filter((file) => file?.status === "done").length;
   const kept = files.filter((file) => typeof file?.mdPath === "string" && file.mdPath.trim());
   const base = {
-    jobId: typeof job?.jobId === "string" ? job.jobId : "",
     summary: `成功 ${success}/${total}`,
   };
 
