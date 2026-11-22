@@ -489,12 +489,12 @@ body.t-dark .di-input { color-scheme: dark; }
   cursor: pointer;
 }
 
-/* 窗口被拖得很窄时，两列勾选框会各自只剩半句话，改成上下排一列。
-   阈值按「两列各容得下最长那句」算：4.6em 标签 + 两列 → 约 420px。 */
-@media (max-width: 420px) {
+/* 窗口被拖窄时，两列勾选框会各自只剩半句话，改成上下排一列。
+   注意左缩进不跟着变：它必须和上面那三行的控件列对齐，否则一宽一窄之间
+   整块会从左缩进跳到最左边，看着像换了一个布局。 */
+@media (max-width: 450px) {
   .di-checks {
     grid-template-columns: 1fr;
-    padding-left: 0;
   }
 }
 

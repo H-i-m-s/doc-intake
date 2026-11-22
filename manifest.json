@@ -430,7 +430,9 @@
         "description": "选文件、定目录、手动跑一次",
         "route": "/panel.html",
         "cardForm": "flush",
-        "realization": "card"
+        "realization": "card",
+        "detachedDefaultSize": { "width": 380, "height": 600 },
+        "face": { "image": "face.svg" }
       }
     ]
   }
