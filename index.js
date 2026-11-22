@@ -114,6 +114,11 @@ export default defineApp(async (sdk) => {
       // allowCrossApp：别的 App 也能调。不给这一项就只本 App 自己能用，
       // 而对一个对外服务来说「只有自己能调」等于没开。
       await sdk.bus.handle(method, handler, { allowCrossApp: true });
+      // 成功也要留一行：以前只有失败会写日志，结果是“没报错”和“压根没跑”分不开。
+      // 这条日志是以后排查“别的 App 调不进来”的起点。
+      try {
+        await sdk.logger.info(`服务已注册：app:doc-intake/${method}（allowCrossApp）`);
+      } catch { /* 日志失败不影响注册 */ }
     } catch (error) {
       // 记日志本身也不允许把启动带崩，两层各管一层。
       try {
