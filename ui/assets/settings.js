@@ -1513,6 +1513,28 @@ function fieldTextOf(row) {
   return normalizeText(row.textContent);
 }
 
+/** 把一个字段拆成若干“一处命中”：
+ *
+ *   · 普通字段 → 它自己就是一处（标题、说明、当前值都算同一处）
+ *   · 降级链 → 每一行单独一处，「MinerU」与「MinerU（本地）」是两处，箭头得分开停
+ *
+ * 不拆的话，按一下箭头会从「MinerU」直接跳到下一个字段，把链里第二个命中跨过去——
+ * 人眼看着有两处红了，箭头却只停一次，就是这里的事。 */
+function hitUnitsOf(row) {
+  const chainRows = [...row.querySelectorAll(".gs-chain-row")];
+  if (chainRows.length === 0) {
+    return [{ el: row, text: fieldTextOf(row) }];
+  }
+  // 字段头部（标题 + 说明）单独算一处：把链行抽掉再取字，不然整块说明会被算进第一行。
+  const clone = row.cloneNode(true);
+  for (const stale of clone.querySelectorAll(".gs-chain-row")) stale.remove();
+  const headerText = normalizeText(clone.textContent);
+  return [
+    { el: row, text: headerText },
+    ...chainRows.map((chainRow) => ({ el: chainRow, text: fieldTextOf(chainRow) })),
+  ];
+}
+
 function buildSearchIndex() {
   searchEntries.length = 0;
   for (const row of ui.root.querySelectorAll(".gs-field")) {
@@ -1520,8 +1542,8 @@ function buildSearchIndex() {
     const groupTitle = row.closest(".gs-group")?.querySelector(".gs-group__title")?.textContent || "";
     searchEntries.push({
       row,
-      // 计数与上色只看这一串：字段自己的文字（含未展开的选项与链行）。
-      text: fieldTextOf(row),
+      // 命中单位：计数、上色、跳转都按这个粒度走。
+      units: hitUnitsOf(row),
       // 下面两串只负责“让它显示出来”，不参与计数、上色、跳转。
       keyText: normalizeText(row.dataset.key || ""),
       context: normalizeText([cardTitle, groupTitle].join(" ")),
@@ -1556,7 +1578,7 @@ function applySearch(raw) {
   let visibleCount = 0;
   for (const entry of searchEntries) {
     const pass = !active
-      || matchesTokens(entry.text, tokens)
+      || entry.units.some((unit) => matchesTokens(unit.text, tokens))
       || matchesTokens(entry.keyText, tokens)
       || matchesTokens(entry.context, tokens);
     entry.row.classList.toggle("gs-field--filtered", active && !pass);
@@ -1565,13 +1587,13 @@ function applySearch(raw) {
       continue;
     }
     visibleCount += 1;
-    // 算数的是字段自己那串字（含未展开的选项与降级链行）。只靠字段名或分组名留下的字段
-    // 依然显示，但不计数、不上色、箭头也不停。
-    const exact = matchesTokensExact(entry.text, tokens);
-    entry.row.classList.toggle("gs-field--fuzzy", !exact);
-    if (exact) matchRows.push(entry.row);
+    // 算数的是“一处命中”：字段自己的文字里写了这几个字，或者降级链里哪一行写了。
+    // 只靠字段名/分组名留下来的字段依然显示，但不计数、不上色、箭头也不停。
+    const hits = entry.units.filter((unit) => matchesTokensExact(unit.text, tokens));
+    entry.row.classList.toggle("gs-field--fuzzy", hits.length === 0);
+    for (const unit of hits) matchRows.push(unit.el);
   }
-  const hits = matchRows.length;
+  const hitCount = matchRows.length;
 
   // 搜索期间放开条件显隐：用户是带着目标来搜的，搜到了却因为没选那个后端而看不见，
   // 比看得见更容易出问题。
@@ -1603,16 +1625,16 @@ function applySearch(raw) {
 
   ui.searchClear.hidden = !active;
   ui.searchCount.hidden = !active;
-  ui.searchNav.hidden = !active || hits === 0;
-  ui.searchEmpty.hidden = !active || hits > 0;
-  if (active && hits === 0) {
+  ui.searchNav.hidden = !active || hitCount === 0;
+  ui.searchEmpty.hidden = !active || hitCount > 0;
+  if (active && hitCount === 0) {
     ui.searchEmpty.textContent = visibleCount > 0
       ? `没有精确匹配「${String(raw).trim()}」的项，下面是模糊相关项。`
       : `没有匹配「${String(raw).trim()}」的设置项。`;
   }
 
   // 打字时只把游览位置归到第一个，不滚页面：边打边跳会把人抛出去。
-  setCurrent(active && hits > 0 ? 0 : -1, false);
+  setCurrent(active && hitCount > 0 ? 0 : -1, false);
 }
 
 // ---------------------------------------------------------------- 命中导航
