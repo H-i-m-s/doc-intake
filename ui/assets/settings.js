@@ -1591,6 +1591,37 @@ function updateMatchLabel() {
 
 let flashTimer = 0;
 
+/** 把某一项滚到“刚好看得见”的位置：顶端让开吸顶的搜索框。
+ *
+ * 不用 scrollIntoView：block:"center" 会把目标送到视口正中，而顶部还压着一条吸顶的
+ * 搜索框，落到中间的行反而看不全；block:"start" 又会被那条框盖住。所以自己算：
+ * 滚动容器 = document.scrollingElement，偏移量 = 吸顶框所占的那一条。 */
+const SCROLL_GAP = 16;
+
+function scrollRowIntoView(row) {
+  const scroller = document.scrollingElement || document.documentElement;
+  if (!scroller || scroller.scrollHeight <= scroller.clientHeight) {
+    // 页面自己不可滚（宿主把内容高度整个交给 iframe 时）→ 交给浏览器去找最近的可滚祖先。
+    // 它滚不了父文档，但至少能处理内层容器。
+    try { row.scrollIntoView({ block: "nearest" }); } catch { /* 算了 */ }
+    return;
+  }
+
+  // 吸顶时搜索框占的高度 = 它的 top 偏移 + 自身高度
+  let band = 0;
+  if (ui.searchWrap) {
+    const top = parseFloat(getComputedStyle(ui.searchWrap).top) || 0;
+    band = top + ui.searchWrap.offsetHeight;
+  }
+
+  const wanted = scroller.scrollTop + row.getBoundingClientRect().top - band - SCROLL_GAP;
+  const limit = scroller.scrollHeight - scroller.clientHeight;
+  scroller.scrollTo({
+    top: Math.max(0, Math.min(wanted, limit)),
+    behavior: REDUCED_MOTION ? "auto" : "smooth",
+  });
+}
+
 /** 跳到的位置闪一下：淡入、停一会儿、淡出。不做常驻的整行底色——
  *  那看起来像“选中了”，而这里只是“刚跳过来”，让人眼抓到就够了。 */
 function flashRow(row) {
@@ -1609,9 +1640,7 @@ function setCurrent(index, scroll) {
   if (index >= 0 && index < matchRows.length) {
     const row = matchRows[index];
     if (scroll) {
-      try {
-        row.scrollIntoView({ block: "center", behavior: REDUCED_MOTION ? "auto" : "smooth" });
-      } catch { /* 老引擎不认参数，就当不滚 */ }
+      scrollRowIntoView(row);
       flashRow(row);
     }
   }
