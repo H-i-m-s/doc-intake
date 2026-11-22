@@ -392,12 +392,6 @@
             "default": "",
             "description": "留空就用系统文档目录下的 doc-intake（不写死盘符，按各自的机器算）"
           },
-          "serviceReadRoots": {
-            "type": "string",
-            "title": "允许其它插件读取的目录",
-            "default": "",
-            "description": "服务入口只会接受这些目录下的路径。一行一个或分号分隔；留空表示一律拒绝外部路径。卡片与工具不受此限制。"
-          },
           "cleanupEnabled": {
             "type": "boolean",
             "title": "自动清理工作区",

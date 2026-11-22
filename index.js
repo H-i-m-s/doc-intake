@@ -105,14 +105,7 @@ export default defineApp(async (sdk) => {
     // 读配置的写法与工具入口保持同一套：原始配置 + getSettings 归一。
     readSettings: async () => {
       const raw = (await sdk.config.getAll()) || {};
-      const settings = getSettings({ config: { get: (key) => raw[key] } });
-      // getSettings 是提取用的规范化视图，里面没有 serviceReadRoots：那一条只对服务入口有意义，
-      // 提取侧用不到。服务要靠它做路径准入，所以在这里就地补上，
-      // 不去改 lib/settings.js —— 那会把一个用不到的字段塞给全部调用方。
-      return {
-        ...settings,
-        serviceReadRoots: typeof raw.serviceReadRoots === "string" ? raw.serviceReadRoots : "",
-      };
+      return getSettings({ config: { get: (key) => raw[key] } });
     },
     logger: sdk.logger,
   });
