@@ -970,6 +970,10 @@ mark.gs-hi {
 .gs-group--empty { display: none; }
 .gs-card--filtered { display: none; }
 
+/* 只是模糊命中的行：留着给人看，但压淡一点——它们不进计数、不上色、也不能跳，
+   长得跟精确命中一样会让人以为箭头数少了。 */
+.gs-field--fuzzy { opacity: 0.72; }
+
 /* 有内容时浮动：吸顶 + 一道投影，导航按钮随时够得着；空着时这几条完全不生效，
    它就是个普通页头。top 用变量是为了让上面那条 Token 提示先占位。 */
 .gs-search--floating {

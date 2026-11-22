@@ -34,7 +34,21 @@ export function isSubsequence(hay, needle) {
   return true;
 }
 
-/** 一个词是否命中一段归一化文本。 */
+/** 一个词是否「精确」命中：只认同为归一化后的子串。
+ *  设置搜索里精确与模糊要分开：精确的才算数（计数、高亮、箭头跳转），
+ *  模糊的只让人看得见，不参与这三件事。 */
+export function tokenMatchesExact(hay, token) {
+  if (!token) return true;
+  return hay.includes(token);
+}
+
+/** 所有词都精确命中（AND）。 */
+export function matchesTokensExact(hay, tokens) {
+  if (!tokens || tokens.length === 0) return true;
+  return tokens.every((token) => tokenMatchesExact(hay, token));
+}
+
+/** 一个词是否命中一段归一化文本（子串优先，两个字以上再退到子序列）。 */
 export function tokenMatches(hay, token) {
   if (!token) return true;
   if (hay.includes(token)) return true;

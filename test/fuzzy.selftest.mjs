@@ -5,7 +5,7 @@
 // 只测 ui/assets/fuzzy.js：页面上的显隐、折叠、空态都由人看，这一层保证
 // 「什么算命中」不退化成什么都命中或什么都不命中。
 
-import { normalizeText, parseQuery, isSubsequence, tokenMatches, matchesTokens, highlightRanges } from "../ui/assets/fuzzy.js";
+import { normalizeText, parseQuery, isSubsequence, tokenMatches, matchesTokens, matchesTokensExact, highlightRanges } from "../ui/assets/fuzzy.js";
 
 let pass = 0;
 const fails = [];
@@ -62,6 +62,15 @@ check("按说明里的词搜", matchesTokens(save, parseQuery("结构化")), tru
 
 // 中文串不该被英文单字误伤
 check("中文文本不吃英文单字子序列", matchesTokens(normalizeText("并发与重试 最多同时跑几个"), parseQuery("xy")), false);
+
+// 精确与模糊分两档：精确的算数（计数/高亮/跳转），模糊的只显示
+const hints = normalizeText("MinerU 最大文件大小 无 Token 时走 Flash 模式");
+check("精确：子串算精确", matchesTokensExact(hints, parseQuery("mineru")), true);
+check("精确：子序列不算精确", matchesTokensExact(hints, parseQuery("mru")), false);
+check("模糊：子序列仍算命中", matchesTokens(hints, parseQuery("mru")), true);
+check("精确：多词都冲才算", matchesTokensExact(hints, parseQuery("mineru token")), true);
+check("精确：有一词模糊就不算", matchesTokensExact(hints, parseQuery("mineru mru")), false);
+check("精确：空查询不过滤", matchesTokensExact(hints, []), true);
 
 // ── 高亮区间：要把归一化后的命中位置映回原文下标 ──
 const rng = (text, query) => JSON.stringify(highlightRanges(text, parseQuery(query)));

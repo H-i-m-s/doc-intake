@@ -8,7 +8,7 @@ import { installThemeBridge } from "../theme-bridge.js";
 import { createUpdateApi } from "./update-api.mjs";
 import { installUpdateNotice } from "./update-notice.mjs";
 import { chainShiftOffsets, chainDragTo } from "./chain-shift.mjs";
-import { parseQuery, matchesTokens, normalizeText, highlightRanges } from "./fuzzy.js";
+import { parseQuery, matchesTokens, matchesTokensExact, normalizeText, highlightRanges } from "./fuzzy.js";
 
 const API = {
   config: "/config",
@@ -1540,10 +1540,19 @@ function applySearch(raw) {
   }
 
   matchRows = [];
+  let visibleCount = 0;
   for (const entry of searchEntries) {
-    const ok = !active || matchesTokens(entry.hay, tokens);
-    entry.row.classList.toggle("gs-field--filtered", active && !ok);
-    if (active && ok) matchRows.push(entry.row);
+    const pass = !active || matchesTokens(entry.hay, tokens);
+    entry.row.classList.toggle("gs-field--filtered", active && !pass);
+    if (!active || !pass) {
+      entry.row.classList.remove("gs-field--fuzzy");
+      continue;
+    }
+    visibleCount += 1;
+    // 精确与模糊分两档：模糊的只显示，不算数、不上色、不能跳。
+    const exact = matchesTokensExact(entry.hay, tokens);
+    entry.row.classList.toggle("gs-field--fuzzy", !exact);
+    if (exact) matchRows.push(entry.row);
   }
   const hits = matchRows.length;
 
@@ -1567,6 +1576,7 @@ function applySearch(raw) {
   }
 
   // 先拆旧的再画新的：高亮是 mark 包文字，叠着画会把上一次的位置带进来。
+  // 只给精确命中的行上色——模糊命中的行看得见就行。
   clearHighlights();
   if (active) paintHighlights(tokens);
 
@@ -1578,7 +1588,11 @@ function applySearch(raw) {
   ui.searchCount.hidden = !active;
   ui.searchNav.hidden = !active || hits === 0;
   ui.searchEmpty.hidden = !active || hits > 0;
-  if (active && hits === 0) ui.searchEmpty.textContent = `没有匹配「${String(raw).trim()}」的设置项。`;
+  if (active && hits === 0) {
+    ui.searchEmpty.textContent = visibleCount > 0
+      ? `没有精确匹配「${String(raw).trim()}」的项，下面是模糊相关项。`
+      : `没有匹配「${String(raw).trim()}」的设置项。`;
+  }
 
   // 打字时只把游览位置归到第一个，不滚页面：边打边跳会把人抛出去。
   setCurrent(active && hits > 0 ? 0 : -1, false);
@@ -1797,7 +1811,7 @@ function paintHighlights(tokens) {
     ...ui.root.querySelectorAll(".gs-group__title, .gs-card__title"),
   ];
   for (const el of targets) {
-    if (el.closest(".gs-field--filtered, .gs-group--empty, .gs-card--filtered")) continue;
+    if (el.closest(".gs-field--filtered, .gs-group--empty, .gs-card--filtered, .gs-field--fuzzy")) continue;
     paintHighlightsIn(el, tokens);
   }
 }
