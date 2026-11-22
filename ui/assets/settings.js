@@ -1597,29 +1597,80 @@ let flashTimer = 0;
  * 搜索框，落到中间的行反而看不全；block:"start" 又会被那条框盖住。所以自己算：
  * 滚动容器 = document.scrollingElement，偏移量 = 吸顶框所占的那一条。 */
 const SCROLL_GAP = 16;
+let scrollCheckTimer = 0;
+let rowScrollToken = 0;
 
+/** 请求滚动：优先平滑，不支持或抛错就硬落位。 */
+function requestScroll(el, top, smooth) {
+  try {
+    if (smooth && typeof el.scrollTo === "function") {
+      el.scrollTo({ top, behavior: "smooth" });
+      return;
+    }
+  } catch { /* 落到下一行去 */ }
+  el.scrollTop = top;
+}
+
+/** 把某一项滚到“刚好看得见”的位置，用平滑；并复查它到底动没动。
+ *
+ * 不假设滚动权在文档上：文档、body、行以上的每一个可滚祖先都试。平滑滚动是异步的，
+ * 700ms 后如果目标行还没进视口，就硬落位一次；再不行就在页面上直说——不然用户会以为
+ * 是自己没按对，而真正的可能是这一页被外层包着滚，插件碰不到。
+ */
 function scrollRowIntoView(row) {
-  const scroller = document.scrollingElement || document.documentElement;
-  if (!scroller || scroller.scrollHeight <= scroller.clientHeight) {
-    // 页面自己不可滚（宿主把内容高度整个交给 iframe 时）→ 交给浏览器去找最近的可滚祖先。
-    // 它滚不了父文档，但至少能处理内层容器。
-    try { row.scrollIntoView({ block: "nearest" }); } catch { /* 算了 */ }
-    return;
-  }
-
-  // 吸顶时搜索框占的高度 = 它的 top 偏移 + 自身高度
   let band = 0;
   if (ui.searchWrap) {
-    const top = parseFloat(getComputedStyle(ui.searchWrap).top) || 0;
-    band = top + ui.searchWrap.offsetHeight;
+    band = (parseFloat(getComputedStyle(ui.searchWrap).top) || 0) + ui.searchWrap.offsetHeight;
+  }
+  const smooth = !REDUCED_MOTION;
+  const token = ++rowScrollToken;
+
+  const doc = document.scrollingElement || document.documentElement;
+  const docScrollable = doc && doc.scrollHeight > doc.clientHeight + 1;
+  const el = row.getBoundingClientRect();
+
+  if (docScrollable) {
+    const limit = doc.scrollHeight - doc.clientHeight;
+    const wanted = Math.max(0, Math.min(doc.scrollTop + el.top - band - SCROLL_GAP, limit));
+    requestScroll(doc, wanted, smooth);
   }
 
-  const wanted = scroller.scrollTop + row.getBoundingClientRect().top - band - SCROLL_GAP;
-  const limit = scroller.scrollHeight - scroller.clientHeight;
-  scroller.scrollTo({
-    top: Math.max(0, Math.min(wanted, limit)),
-    behavior: REDUCED_MOTION ? "auto" : "smooth",
-  });
+  // 内层容器：从近到远，每个能滚的祖先都补偿一次（平滑）。文档能滚时这里是空转，
+  // 因为行与最近祖先之间的偏移会被上一步吞掉，只剩 0 像素。
+  const targets = [];
+  for (let node = row.parentElement; node; node = node.parentElement) {
+    if (node.scrollHeight <= node.clientHeight + 1) continue;
+    const box = node.getBoundingClientRect();
+    const limit = node.scrollHeight - node.clientHeight;
+    const wanted = Math.max(0, Math.min(node.scrollTop + el.top - box.top - SCROLL_GAP, limit));
+    requestScroll(node, wanted, smooth);
+    targets.push([node, wanted]);
+  }
+
+  // 复查：平滑跑完还没到位，就硬落位；仍不行就认输并说出来。
+  clearTimeout(scrollCheckTimer);
+  scrollCheckTimer = window.setTimeout(() => {
+    if (token !== rowScrollToken) return; // 期间又跳了，交给新的那次
+    const visible = () => {
+      const r = row.getBoundingClientRect();
+      return r.bottom > band && r.top < window.innerHeight - 8;
+    };
+    if (!visible()) {
+      if (docScrollable) {
+        const limit = doc.scrollHeight - doc.clientHeight;
+        doc.scrollTop = Math.max(0, Math.min(doc.scrollTop + row.getBoundingClientRect().top - band - SCROLL_GAP, limit));
+        if (document.body) document.body.scrollTop = doc.scrollTop;
+      }
+      for (const [node, top] of targets) node.scrollTop = top;
+    }
+    if (!searchActive) return;
+    if (visible()) {
+      ui.searchEmpty.hidden = true;
+    } else {
+      ui.searchEmpty.hidden = false;
+      ui.searchEmpty.textContent = "这一项的滚动不由插件页面控制，没能自动跳过去。";
+    }
+  }, 700);
 }
 
 /** 跳到的位置闪一下：淡入、停一会儿、淡出。不做常驻的整行底色——
