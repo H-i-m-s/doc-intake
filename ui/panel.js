@@ -10,7 +10,6 @@
 import { estimateTotalMs, fakePercent } from "./shared/progress.js";
 import { installThemeBridge } from "./theme-bridge.js";
 
-const PANEL_WIDTH = 460;
 /** 折叠区过渡时长，与 panel.css 里的 200ms 对齐；过渡跑完再兜一次上报。 */
 const FOLD_MS = 200;
 /** 用户可能停在系统文件对话框里很久，超时给足 10 分钟，别半路把选择收走。 */
@@ -438,7 +437,9 @@ function startPanel() {
   function reportSize() {
     const height = Math.ceil(panelEl.offsetHeight || 0);
     if (!(height > 0)) return;
-    try { hana?.ui?.resize?.({ height, width: PANEL_WIDTH }); } catch { /* 老宿主没有这路 */ }
+    // 只报高，不报宽：宽度是宿主给的（聊天列或拆窗的窗口宽度），我们一报就把它锁死在旧值上，
+    // 拖宽拖窄时内容也跟着不动。
+    try { hana?.ui?.resize?.({ height }); } catch { /* 老宿主没有这路 */ }
     try { window.parent?.postMessage({ type: "hana.card-resize", height }, "*"); } catch { /* 同上 */ }
   }
 

@@ -45,13 +45,16 @@ body.t-dark {
   --di-on-accent: var(--ui-on-accent, #14181c);
 }
 
+/* 宽度跟着宿主走：这张卡会被拆成独立窗口、也会出现在聊天列里，两种情况的宽度都不是 460。
+   写死一个宽度，结果就是窗口拉宽时内容不动、拉窄时右边被切掉。
+   高度方向允许滚动：窗口比内容矮时，宁可让用户自己往下滚，也不要把底部的按钮藏起来。 */
 html, body {
   margin: 0;
   padding: 0;
-  width: 460px;
-  /* 宽度固定，内容一律不许把它撑开：溢出在卡片里表现为被截断或被滚动，
-     而不是整卡变宽顶出宿主给的列宽。 */
-  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: transparent;
 }
 
@@ -66,7 +69,7 @@ body {
 /* 行距不用 gap：折叠区收起时高度必须是 0，而 flex 的 gap 会给零高度子项照样留间距。
    改成每一块自带上边距，收起时整体归零。 */
 .di-panel {
-  width: 460px;
+  width: 100%;
   max-width: 100%;
   padding: 12px 15px 14px;
   /* 下拉浮层打开时，靠这块底部留白给它腾地方；过渡成对，所以卡片变高也是渐变的。 */
@@ -484,6 +487,15 @@ body.t-dark .di-input { color-scheme: dark; }
   margin: 0;
   accent-color: var(--di-accent);
   cursor: pointer;
+}
+
+/* 窗口被拖得很窄时，两列勾选框会各自只剩半句话，改成上下排一列。
+   阈值按「两列各容得下最长那句」算：4.6em 标签 + 两列 → 约 420px。 */
+@media (max-width: 420px) {
+  .di-checks {
+    grid-template-columns: 1fr;
+    padding-left: 0;
+  }
 }
 
 /* ---------- 结果区 ---------- */
