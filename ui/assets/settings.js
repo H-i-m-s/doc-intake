@@ -1504,42 +1504,27 @@ let collapseBeforeSearch = null;
 let matchRows = [];
 let matchIndex = -1;
 
-/** 只取「屏幕上看得见」的文字。
+/** 字段自己的一整串文字：标题、说明、控件上的当前值、下拉里没展开的选项、降级链的每一行。
  *
- * row.textContent 会把 native <select> 里那些选项一并算进去——而下拉已经自绘，那些选项
- * 在下拉展开前并不在屏幕上。不排除它们，“默认解析后端”会因为选项里有 MinerU 而被算成
- * 精确命中，可那行字里根本没有 MinerU。 */
-function visibleTextOf(root) {
-  let out = "";
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    if (!node.nodeValue.trim()) continue;
-    const parent = node.parentElement;
-    if (!parent) continue;
-    if (parent.closest("select, option, datalist, [hidden], [aria-hidden='true']")) continue;
-    out += ` ${node.nodeValue}`;
-  }
-  return normalizeText(out);
+ * 这里不排除任何东西。搜 mineru 时，「默认解析后端」的 MinerU 写在没展开的下拉里，
+ * 「PDF 后端降级链」的 MinerU 写在链行里，这两处都算命中：用户要的是“这东西里有没有
+ * 这几个字”，不是“此刻屏幕上有没有露出来”。折叠起来的卡片同理，收起来不等于不存在。 */
+function fieldTextOf(row) {
+  return normalizeText(row.textContent);
 }
 
-function buildSearchIndex() {  searchEntries.length = 0;
+function buildSearchIndex() {
+  searchEntries.length = 0;
   for (const row of ui.root.querySelectorAll(".gs-field")) {
     const cardTitle = row.closest(".gs-card")?.querySelector(".gs-card__title")?.textContent || "";
     const groupTitle = row.closest(".gs-group")?.querySelector(".gs-group__title")?.textContent || "";
-    // 三段文本分开存，各自管不同的事：
-    //   visible = 界面上看得见的字（标题、说明、控件上显示的选项文案）
-    //   keyText = 字段名（mineruEnableTable 这种，界面上看不见）
-    //   context = 卡片名与分组名（属于环境，不属于这一项）
-    // 为什么非得拆：搜 mineru 时，「开启表格识别」的 key 含 mineru、又正好在 MinerU 组里，
-    // 但它界面上没有一个字写着 mineru。用户眼里的精确命中是“屏幕上写了这个词”，
-    // 所以只有 visible 参与计数、上色与跳转；另外两段只负责让它显示出来。
-    const context = normalizeText([cardTitle, groupTitle].join(" "));
     searchEntries.push({
       row,
-      visible: visibleTextOf(row),
+      // 计数与上色只看这一串：字段自己的文字（含未展开的选项与链行）。
+      text: fieldTextOf(row),
+      // 下面两串只负责“让它显示出来”，不参与计数、上色、跳转。
       keyText: normalizeText(row.dataset.key || ""),
-      context,
+      context: normalizeText([cardTitle, groupTitle].join(" ")),
     });
   }
 }
@@ -1571,7 +1556,7 @@ function applySearch(raw) {
   let visibleCount = 0;
   for (const entry of searchEntries) {
     const pass = !active
-      || matchesTokens(entry.visible, tokens)
+      || matchesTokens(entry.text, tokens)
       || matchesTokens(entry.keyText, tokens)
       || matchesTokens(entry.context, tokens);
     entry.row.classList.toggle("gs-field--filtered", active && !pass);
@@ -1580,11 +1565,9 @@ function applySearch(raw) {
       continue;
     }
     visibleCount += 1;
-    // 算数的是“这一行与它头顶的分组名/卡片名里写了这个词”：MinerU 组里的开关虽然自己
-    // 那行只写「开启 OCR」，但它上面的分组标题就是 MinerU，屏幕上看得见、也已经上了色，
-    // 那就该计数、该能跳。只有字段名（mineruEnableTable）和只靠子序列凑出来的不算。
-    const exact = matchesTokensExact(entry.visible, tokens)
-      || matchesTokensExact(entry.context, tokens);
+    // 算数的是字段自己那串字（含未展开的选项与降级链行）。只靠字段名或分组名留下的字段
+    // 依然显示，但不计数、不上色、箭头也不停。
+    const exact = matchesTokensExact(entry.text, tokens);
     entry.row.classList.toggle("gs-field--fuzzy", !exact);
     if (exact) matchRows.push(entry.row);
   }
@@ -1816,7 +1799,12 @@ function paintHighlightsIn(root, tokens) {
     acceptNode: (node) => (node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
   });
   const nodes = [];
-  while (walker.nextNode()) nodes.push(walker.currentNode);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    // 原生下拉被自绘控件盖住了，往 option 的文字里塞 mark 既看不见、也可能弄乱取值。
+    if (node.parentElement?.closest("select, option, datalist")) continue;
+    nodes.push(node);
+  }
 
   for (const node of nodes) {
     const text = node.nodeValue;
@@ -1838,12 +1826,9 @@ function paintHighlightsIn(root, tokens) {
 }
 
 function paintHighlights(tokens) {
-  // 字段行里已经包含了标题、说明、控件文案；分组标题与卡片标题单独补上——
-  // 有时命中的是「MinerU」这种组名，不标出来看不出为什么这一整组都在。
-  const targets = [
-    ...ui.root.querySelectorAll(".gs-field"),
-    ...ui.root.querySelectorAll(".gs-group__title, .gs-card__title"),
-  ];
+  // 只画在字段自己里面：标题、说明、控件显示值、降级链行。
+  // 卡片说明与分组标题不碰——它们不是字段，跟着上色会看着像“这一整片都写了这个词”。
+  const targets = ui.root.querySelectorAll(".gs-field");
   for (const el of targets) {
     if (el.closest(".gs-field--filtered, .gs-group--empty, .gs-card--filtered, .gs-field--fuzzy")) continue;
     paintHighlightsIn(el, tokens);
