@@ -1010,13 +1010,27 @@ mark.gs-hi {
 .gs-search__step:focus-visible { outline: 2px solid var(--gs-accent-ring); outline-offset: 1px; }
 .gs-search__step svg { width: 9px; height: 6px; display: block; }
 
-/* 当前停在哪个命中：左侧一道 accent 竖条 + 淡淡一层底。负外边距抵消内边距，
-   所以变成「当前」的时候字不会跳一下。 */
-.gs-field--current {
+/* 跳到哪个命中，那里闪一下：淡入、停留、淡出。不做常驻的整行底色——常驻会被读成
+   “这个字段被选中了”，而这里只是“刚跳过来”，一闪就够。 */
+@keyframes gs-flash-row {
+  0% { background-color: transparent; }
+  16% { background-color: color-mix(in srgb, var(--gs-accent) 16%, transparent); }
+  68% { background-color: color-mix(in srgb, var(--gs-accent) 16%, transparent); }
+  100% { background-color: transparent; }
+}
+
+.gs-field--flash {
+  /* 负外边距抵消内边距，背景铺得比文字宽一点，但字不会横跳 */
   margin: 0 -8px;
   padding-left: 8px;
   padding-right: 8px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--gs-accent) 9%, transparent);
-  box-shadow: inset 2px 0 0 var(--gs-accent);
+  animation: gs-flash-row 1.5s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gs-field--flash {
+    animation: none;
+    background-color: color-mix(in srgb, var(--gs-accent) 12%, transparent);
+  }
 }

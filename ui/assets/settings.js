@@ -1589,18 +1589,30 @@ function updateMatchLabel() {
   ui.searchCount.textContent = `${matchIndex + 1} / ${matchRows.length}`;
 }
 
-function setCurrent(index, scroll) {
-  for (const row of ui.root.querySelectorAll(".gs-field--current")) {
-    row.classList.remove("gs-field--current");
+let flashTimer = 0;
+
+/** 跳到的位置闪一下：淡入、停一会儿、淡出。不做常驻的整行底色——
+ *  那看起来像“选中了”，而这里只是“刚跳过来”，让人眼抓到就够了。 */
+function flashRow(row) {
+  for (const el of ui.root.querySelectorAll(".gs-field--flash")) {
+    el.classList.remove("gs-field--flash");
   }
+  // 连着两次跳同一个位置时，不移掉重排一下动画不会重放
+  void row.offsetWidth;
+  row.classList.add("gs-field--flash");
+  clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => row.classList.remove("gs-field--flash"), 1600);
+}
+
+function setCurrent(index, scroll) {
   matchIndex = index;
   if (index >= 0 && index < matchRows.length) {
     const row = matchRows[index];
-    row.classList.add("gs-field--current");
     if (scroll) {
       try {
         row.scrollIntoView({ block: "center", behavior: REDUCED_MOTION ? "auto" : "smooth" });
       } catch { /* 老引擎不认参数，就当不滚 */ }
+      flashRow(row);
     }
   }
   updateMatchLabel();
