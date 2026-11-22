@@ -45,7 +45,6 @@
 | `pipIndexUrl` | `string` | `""` | 自定义安装源地址，只在上面选 `custom` 时生效，要填完整的 index-url。 |
 | `defaultBackend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "paddleocr-local" \| "local"` | `"auto"` | 默认解析后端。工具与服务没显式指定时用它。 |
 | `defaultLanguage` | `string` | `"zh"` | 默认语言，透传给 OCR 与云端 API。 |
-| `txtEncoding` | `"auto" \| "utf-8" \| "gb18030" \| "gbk" \| "big5" \| "shift_jis" \| "euc-kr" \| "cp1252" \| "utf-16-le" \| "utf-16-be"` | `"auto"` | 解 `.txt` 时用哪种编码。`auto` 先看 BOM，再按候选集打分；判错了就钉成具体编码重跑。写错的编码名直接报错，不静默回落。 |
 | `includeMedia` | `boolean` | `true` | 默认是否提取媒体（图片/视频/音频）。 |
 | `barcodeScan` | `boolean` | `true` | 解析媒体里的二维码与条码，结果注在引用该媒体的那一行下面；未安装 `zxing-cpp` 时自动跳过并留一条 warning。 |
 

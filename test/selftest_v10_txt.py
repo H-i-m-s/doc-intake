@@ -12,12 +12,11 @@
   4. CRLF 与 CR 两种换行。
   5. Big5 与 GB18030 的区分：把 `獴眖衬碞⊿氨筁` 这类「Big5 被当 GB18030 解」的产物直接喂给
      打分，断言常用汉字占比与分数都掉到不可信那一边，而正确解出来的文本远在其上。
-  6. txtEncoding 覆盖：指对了逐字相等，指错了要出替换符 warning，不静默。
-  7. 三个错误路径：含 NUL 的二进制、空文件、全是空白。
-  8. 全判不出：「部分内容 + 报错」——正文照给，warnings 说清原因，confidence 记 0。
-  9. 接线：formats.json 里 .txt 登记为 txt，get_extractor 能拿到 TxtExtractor。
+  6. 三个错误路径：含 NUL 的二进制、空文件、全是空白。
+  7. 全判不出：「部分内容 + 报错」——正文照给，warnings 说清原因，confidence 记 0。
+  8. 接线：formats.json 里 .txt 登记为 txt，get_extractor 能拿到 TxtExtractor。
 
-不依赖 charset-normalizer：第 5、6、8 组用例会把查表那一步挡掉，让自建打分单独走一遍。
+不依赖 charset-normalizer：第 5、7 组用例会把查表那一步挡掉，让自建打分单独走一遍。
 """
 
 from __future__ import annotations
@@ -370,49 +369,11 @@ def case_big5_discriminator(root: str) -> Checker:
     return check
 
 
-def case_override(root: str) -> Checker:
-    """txtEncoding 覆盖：指对了不问 BOM，指错了要说话。"""
-    check = Checker()
-    print()
-    print("── 6. 指定编码 ──")
-
-    gbk_path = write_txt(root, "override_src.txt", ZH.encode("gbk"))
-    result = extract(gbk_path, {"txtEncoding": "gb18030"})
-    meta = result.metadata
-    check.ok(result.markdown == expected_text(ZH), "指对了：正文逐字相等")
-    check.ok(meta["encodingSource"] == "override", "指对了：encodingSource == override",
-             str(meta["encodingSource"]))
-    check.ok(meta["encodingConfidence"] == 1.0, "指对了且没有替换符：confidence == 1",
-             str(meta["encodingConfidence"]))
-    check.ok(not result.warnings, "指对了：没有 warning", str(result.warnings))
-
-    wrong = extract(gbk_path, {"txtEncoding": "utf-8"})
-    check.ok(wrong.metadata["replacementCount"] > 0, "指错了：正文里有替换符",
-             str(wrong.metadata["replacementCount"]))
-    check.ok(any("按指定编码 utf-8 解码" in w and "无法解码" in w for w in wrong.warnings),
-             "指错了：warning 说了「按指定编码 utf-8 解码，有 N 处无法解码」", str(wrong.warnings))
-    check.ok(wrong.metadata["encodingConfidence"] == 0.0, "指错了：confidence == 0",
-             str(wrong.metadata["encodingConfidence"]))
-
-    # 指定 gbk 覆盖到一份带 BOM 的文件上：BOM 不再参与判定，但字节照样解成原文。
-    bom_path = write_txt(root, "override_bom.txt", b"\xef\xbb\xbf" + ZH.encode("utf-8"))
-    result = extract(bom_path, {"txtEncoding": "utf-8"})
-    check.ok(result.markdown == expected_text(ZH), "覆盖模式下 BOM 也不进正文")
-    check.ok(result.metadata["hasBom"] is True, "覆盖模式仍然如实记 hasBom")
-
-    message = expect_error(lambda: extract(gbk_path, {"txtEncoding": "no-such-encoding"}))
-    check.ok("txtEncoding" in message, "编码名写错：报错点到了 txtEncoding", message)
-
-    check.ok(extract(gbk_path, {"txtEncoding": "auto"}).metadata["encodingSource"] != "override",
-             "auto：仍然走自动判定")
-    return check
-
-
 def case_errors(root: str) -> Checker:
     """三个错误路径：二进制、空文件、全空白。"""
     check = Checker()
     print()
-    print("── 7. 错误路径 ──")
+    print("── 6. 错误路径 ──")
 
     binary = write_txt(root, "binary.txt", b"\x00\x01\x02\x03" * 64)
     message = expect_error(lambda: extract(binary))
@@ -439,7 +400,7 @@ def case_forced(root: str) -> Checker:
     """全判不出：正文照给，warnings 说清原因，confidence 记 0。"""
     check = Checker()
     print()
-    print("── 8. 判不出来时的「部分内容 + 报错」──")
+    print("── 7. 判不出来时的「部分内容 + 报错」──")
 
     # 每个候选都解不开的字节：0x7F 不是任何一个中日韩编码的合法尾字节，0x81/0x8D/0x90
     # 在 cp1252 里没有定义。长度取单数，连 utf-16 两档都进不了候选。
@@ -474,7 +435,7 @@ def case_registry(root: str) -> Checker:
     """接线：格式清单与提取器注册表都得认 .txt。"""
     check = Checker()
     print()
-    print("── 9. 接线 ──")
+    print("── 8. 接线 ──")
 
     check.ok(formats.TYPE_BY_EXT.get(".txt") == "txt", "formats.json 里 .txt -> txt",
              str(formats.TYPE_BY_EXT.get(".txt")))
@@ -495,7 +456,7 @@ def self_test() -> int:
     def run(root: str) -> int:
         total = Checker()
         for case in (case_bom, case_autodetect, case_fidelity, case_newlines,
-                     case_big5_discriminator, case_override, case_errors, case_forced,
+                     case_big5_discriminator, case_errors, case_forced,
                      case_registry):
             check = case(root)
             total.passed += check.passed

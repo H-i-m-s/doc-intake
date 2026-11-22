@@ -61,23 +61,6 @@ const FIELDS = {
     type: "string",
     labels: { auto: "自动", mineru: "MinerU", oxr: "OXR（SoMark）", paddleocr: "PaddleOCR", "mineru-local": "MinerU（本地）", "paddleocr-local": "PaddleOCR（本地）", local: "本地（PyMuPDF）" },
   },
-  txtEncoding: {
-    title: "纯文本编码",
-    hint: "解 .txt 时按它读。保持「自动」会先看 BOM，再按常用字占比猜 GBK / Big5；猜错了就钉成具体编码重跑一次。",
-    type: "string",
-    labels: {
-      auto: "自动",
-      "utf-8": "UTF-8",
-      gb18030: "GB18030",
-      gbk: "GBK",
-      big5: "Big5",
-      shift_jis: "Shift-JIS",
-      "euc-kr": "EUC-KR",
-      cp1252: "CP1252",
-      "utf-16-le": "UTF-16 LE",
-      "utf-16-be": "UTF-16 BE",
-    },
-  },
   // options = 降级链的候选后端：勾选决定启用，拖拽决定先后，存回去仍是 "a>b" 这种字符串。
   // endpoint 指到对应的服务地址字段：地址没填时那一行的备注会换成「会被跳过」。
   pdfBackendChain: {
@@ -360,7 +343,6 @@ const FIELDS = {
 const BASIC_KEYS = [
   "pythonPath",
   "defaultBackend",
-  "txtEncoding",
   "pdfBackendChain",
   "imageBackendChain",
   "mineruCredentials",

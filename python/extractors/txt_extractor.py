@@ -455,7 +455,7 @@ def _rank_candidates(data: bytes) -> _Guess:
 
 
 def _resolve_auto(data: bytes, name: str) -> _Guess:
-    """没有 BOM、也没有指定编码时的完整判定链。"""
+    """没有 BOM 时的完整判定链：UTF-8 → 检测库与自建打分互校 → 兜底。"""
     if _nul_ratio(data) > NUL_RATIO_LIMIT:
         # 满篇 NUL 只可能是两件事：UTF-16（ASCII 正文一半字节为零），或者根本不是文本。
         # 候选打分里 utf-16 之外的编码都会把 NUL 数成控制符，落在「不像文本」那一边，
@@ -519,20 +519,6 @@ def _count_lines(text: str) -> int:
     return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
-def _override_codec(settings: Optional[dict]) -> str:
-    """读 settings.txtEncoding。auto 或空 → 空串（走自动判定）。"""
-    raw = str((settings or {}).get("txtEncoding") or "auto").strip()
-    if not raw or raw.lower() == "auto":
-        return ""
-    try:
-        return codecs.lookup(raw).name
-    except LookupError as exc:
-        raise TxtError(
-            f"设置里的 txtEncoding 不是可用的编码名：{raw}"
-            f"（可选 auto / utf-8 / gb18030 / gbk / big5 / shift_jis / euc-kr / cp1252 / utf-16-le / utf-16-be）"
-        ) from exc
-
-
 # ── 提取器 ──────────────────────────────────────────────────────────────
 
 
@@ -558,11 +544,8 @@ class TxtExtractor(BaseExtractor):
         if not data:
             raise TxtError(f"《{name}》是空文件")
 
-        override = _override_codec(self.settings)
         bom = _detect_bom(data)
-        if override:
-            guess = self._decode_override(data, override)
-        elif bom:
+        if bom:
             guess = self._decode_bom(data, bom, name)
         else:
             guess = _resolve_auto(data, name)
@@ -573,8 +556,6 @@ class TxtExtractor(BaseExtractor):
 
         replacements = text.count("\ufffd")
         warnings = list(guess.warnings)
-        if guess.source == "override" and replacements:
-            warnings.append(f"按指定编码 {guess.encoding} 解码，有 {replacements} 处无法解码")
         if guess.source == "bom" and replacements:
             warnings.append(
                 f"BOM 声明的是 {guess.encoding}，按它解码有 {replacements} 处对不上，"
@@ -613,14 +594,3 @@ class TxtExtractor(BaseExtractor):
             return _Guess(encoding, data[length:].decode(encoding), "bom", 1.0)
         except UnicodeDecodeError:
             return _Guess(encoding, data[length:].decode(encoding, "replace"), "bom", 0.0)
-
-    @staticmethod
-    def _decode_override(data: bytes, codec: str) -> _Guess:
-        """用户指定了编码：直接按它解，不再判 BOM 与候选。
-
-        指定编码是用户对字节的担保，所以这里连「NUL 占比超标就是二进制」都不拦——把
-        txtEncoding 设成 utf-16-le 的人，手里就是一份带大量 NUL 的 ASCII 正文。
-        解出替换符不报错，但要说一句：正文里那些位置真的解不开。
-        """
-        text = data.decode(codec, "replace")
-        return _Guess(codec, text, "override", 1.0 if "\ufffd" not in text else 0.0)
