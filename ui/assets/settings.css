@@ -867,3 +867,94 @@ body { padding: 0 12px; }
 .gs-num__step:hover { color: var(--gs-ink); background: var(--gs-tint); }
 .gs-num__step:active { transform: scale(0.9); }
 .gs-num__step svg { width: 8px; height: 6px; display: block; }
+
+/* ---------- 搜索 ---------- */
+/* 设置项几十个，靠翻很难找。搜索框留在页头，跟着内容滚——不吸顶，是因为
+   吸顶的还有那条 Token 提示，两块都抢 top:0 会叠在一起。 */
+.gs-search {
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.gs-search__box {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 0 8px 0 11px;
+  border: 1px solid var(--gs-line);
+  border-radius: var(--gs-radius-sm);
+  background: var(--gs-surface);
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+.gs-search__box:focus-within {
+  border-color: color-mix(in srgb, var(--gs-accent) 55%, var(--gs-line));
+  box-shadow: 0 0 0 3px var(--gs-accent-ring);
+}
+
+.gs-search__icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--gs-muted);
+}
+.gs-search__box:focus-within .gs-search__icon { color: var(--gs-accent); }
+
+.gs-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--gs-ink);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  outline: none;
+}
+.gs-search__input::placeholder { color: var(--gs-muted); }
+/* 自带的清除叉太小、深浅两套下的对比也不稳，改成自己的那个按钮 */
+.gs-search__input::-webkit-search-cancel-button,
+.gs-search__input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+
+.gs-search__count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gs-muted);
+  white-space: nowrap;
+}
+
+.gs-search__clear {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: var(--gs-soft);
+  color: var(--gs-sub);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s;
+}
+.gs-search__clear:hover { color: var(--gs-ink); background: var(--gs-tint); }
+.gs-search__clear:focus-visible { outline: 2px solid var(--gs-accent-ring); outline-offset: 1px; }
+
+.gs-search__empty {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--gs-muted);
+}
+
+/* 过滤只动 class，不碰 hidden 属性——那个是 meta.when 的条件显隐在用。
+   选择器带上父类来压过 .gs-field 自己的 display。 */
+.gs-field.gs-field--filtered { display: none; }
+.gs-group--empty { display: none; }
+.gs-card--filtered { display: none; }

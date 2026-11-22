@@ -1,0 +1,71 @@
+// 设置页搜索的模糊匹配自测（纯逻辑，不碰 DOM）。
+//
+//   node test/fuzzy.selftest.mjs
+//
+// 只测 ui/assets/fuzzy.js：页面上的显隐、折叠、空态都由人看，这一层保证
+// 「什么算命中」不退化成什么都命中或什么都不命中。
+
+import { normalizeText, parseQuery, isSubsequence, tokenMatches, matchesTokens } from "../ui/assets/fuzzy.js";
+
+let pass = 0;
+const fails = [];
+
+function check(name, actual, expected) {
+  if (Object.is(actual, expected)) {
+    pass += 1;
+  } else {
+    fails.push(`${name}：期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}`);
+  }
+}
+
+// 归一化：全角转半角、去空白、去标点、转小写
+check("NFKC 全角转半角", normalizeText("ＧＢＫ"), "gbk");
+check("去空白", normalizeText(" PDF  切割 "), "pdf切割");
+check("去中文标点", normalizeText("「自动」、GBK；Big5。"), "自动gbkbig5");
+check("转小写", normalizeText("SaveJson"), "savejson");
+check("空值不炸", normalizeText(null), "");
+
+// 分词：半角空格与全角空格都算分隔符
+check("空格分词", JSON.stringify(parseQuery("pdf 切")), JSON.stringify(["pdf", "切"]));
+check("全角空格也能分", JSON.stringify(parseQuery("后端\u3000降级")), JSON.stringify(["后端", "降级"]));
+check("空查询得到空数组", JSON.stringify(parseQuery("   ")), JSON.stringify([]));
+
+// 子序列
+check("子序列命中", isSubsequence("pdf切割", "pdf切"), true);
+check("子序列要讲顺序", isSubsequence("pdf切割", "切pdf"), false);
+check("空针命中", isSubsequence("abc", ""), true);
+
+// 单词命中：子串优先，两字以上才允许子序列
+const enc = normalizeText("纯文本编码 解 .txt 时按它读。保持「自动」会先看 BOM，再按常用字占比猜 GBK / Big5");
+check("子串命中中文", tokenMatches(enc, "编码"), true);
+check("子串命中编码名", tokenMatches(enc, "big5"), true);
+check("子串命中 gb18030 不存在时不该命中", tokenMatches(enc, "gb18030"), false);
+check("两字子序列命中", tokenMatches(enc, "文本编"), true);
+check("隔字子序列命中", tokenMatches(enc, "纯编"), true);
+check("两字允许子序列", tokenMatches(normalizeText("abc"), "ac"), true);
+check("单字只走子串", tokenMatches(normalizeText("abc"), "x"), false);
+check("单字子串照常命中", tokenMatches(normalizeText("abc"), "b"), true);
+check("完全不相干的词不命中", tokenMatches(enc, "并发"), false);
+
+// 多词是 AND
+const chain = normalizeText("PDF 后端降级链 勾选要启用的后端 按住任意一行上下拖就能调顺序 云端 本地");
+check("多词全中", matchesTokens(chain, parseQuery("pdf 降级")), true);
+check("多词有一词不中就不算", matchesTokens(chain, parseQuery("pdf 并发")), false);
+check("空查询不过滤", matchesTokens(chain, []), true);
+
+// 真实字段：saveJson 的 key 与标题都能搜到
+const save = normalizeText("saveJson 保存 JSON 与 Markdown 同名文件，方便别的程序直接读结构化结果");
+check("按 key 搜", matchesTokens(save, parseQuery("savejson")), true);
+check("按 key 首字母子序列搜", matchesTokens(save, parseQuery("sj")), true);
+check("按中文标题搜", matchesTokens(save, parseQuery("保存")), true);
+check("按说明里的词搜", matchesTokens(save, parseQuery("结构化")), true);
+
+// 中文串不该被英文单字误伤
+check("中文文本不吃英文单字子序列", matchesTokens(normalizeText("并发与重试 最多同时跑几个"), parseQuery("xy")), false);
+
+if (fails.length) {
+  console.error(`通过 ${pass} 项，失败 ${fails.length} 项`);
+  for (const line of fails) console.error("  ✗ " + line);
+  process.exit(1);
+}
+console.log(`通过 ${pass} 项，失败 0 项`);

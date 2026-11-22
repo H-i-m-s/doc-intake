@@ -338,6 +338,29 @@ if (!py) {
       }
     }
   }
+
+  // 6c) 前端纯逻辑自测：只有不碰 DOM 的小模块能进这里（现在是设置页搜索的模糊匹配）。
+  // 页面的显隐、折叠、空态靠人看，这一层只保证「什么算命中」不退化成什么都命中。
+  const JS_SELFTESTS = ["fuzzy.selftest.mjs"];
+  for (const name of JS_SELFTESTS) {
+    const script = join(ROOT, "test", name);
+    if (!existsSync(script)) {
+      note(`test/${name} 不存在，跳过`);
+      continue;
+    }
+    const r = spawnSync(process.execPath, [join("test", name)], {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60000,
+    });
+    const out = `${r.stdout || ""}${r.stderr || ""}`.trim().split("\n").filter((l) => l.trim());
+    if (r.error || r.status !== 0) {
+      fail(`前端自测未通过：test/${name}（退出码 ${r.status ?? "?"}）${out.length ? "\n    " + out.slice(-6).join("\n    ") : ""}`);
+    } else {
+      testCount += 1;
+      info(`test/${name} 通过`);
+    }
+  }
 }
 
 // ── 7) builders 文档必须随包发布 ────────────────────────────────────────────

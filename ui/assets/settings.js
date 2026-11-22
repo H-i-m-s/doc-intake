@@ -8,6 +8,7 @@ import { installThemeBridge } from "../theme-bridge.js";
 import { createUpdateApi } from "./update-api.mjs";
 import { installUpdateNotice } from "./update-notice.mjs";
 import { chainShiftOffsets, chainDragTo } from "./chain-shift.mjs";
+import { parseQuery, matchesTokens, normalizeText } from "./fuzzy.js";
 
 const API = {
   config: "/config",
@@ -410,6 +411,10 @@ const ui = {
   cleanupCard: el("sec-cleanup-log"),
   cleanupList: el("cleanup-log-list"),
   cleanupClear: el("btn-clear-cleanup-log"),
+  search: el("gs-search"),
+  searchClear: el("gs-search-clear"),
+  searchCount: el("gs-search-count"),
+  searchEmpty: el("gs-search-empty"),
 };
 
 let loaded = {};            // 服务端读回的配置（对比用）
@@ -1311,6 +1316,7 @@ function buildField(key) {
   const meta = FIELDS[key];
   const row = document.createElement("div");
   row.className = "gs-field" + (meta.wide ? " gs-field--wide" : "");
+  row.dataset.key = key; // 搜索按 key 也能找到字段
 
   const label = document.createElement("div");
   label.className = "gs-field__label";
@@ -1466,6 +1472,90 @@ function buildAllFields() {
     ui.adv.appendChild(box);
   }
   if (ui.depsSourceFields) ui.depsSourceFields.appendChild(buildFieldSet("", DEPS_KEYS));
+}
+
+// ---------------------------------------------------------------- 搜索
+//
+// 设置项几十个，光靠翻很难找。不做排序、不改 DOM 顺序：命中的留下，其余的用 class
+// 收起。不用 hidden 属性，那个还要留给 meta.when 的条件显隐。
+// 搜索期间强制展开折叠区，清空后恢复用户原来的开合状态。
+
+const searchEntries = [];
+let searchActive = false;
+let collapseBeforeSearch = null;
+
+function buildSearchIndex() {
+  searchEntries.length = 0;
+  for (const row of ui.root.querySelectorAll(".gs-field")) {
+    const cardTitle = row.closest(".gs-card")?.querySelector(".gs-card__title")?.textContent || "";
+    const groupTitle = row.closest(".gs-group")?.querySelector(".gs-group__title")?.textContent || "";
+    // row.textContent 已经包含标题、说明、选项文案与 placeholder，
+    // 所以搜「gb18030」能找到编码下拉，搜「云端」能找到降级链里的备注。
+    const hay = normalizeText([cardTitle, groupTitle, row.dataset.key || "", row.textContent].join(" "));
+    searchEntries.push({ row, hay });
+  }
+}
+
+function setSectionsForSearch(on) {
+  if (!advCollapsible || !depsCollapsible) return;
+  if (on) {
+    collapseBeforeSearch = { adv: advCollapsible.isOpen(), deps: depsCollapsible.isOpen() };
+    advCollapsible.set(true);
+    depsCollapsible.set(true);
+  } else if (collapseBeforeSearch) {
+    advCollapsible.set(collapseBeforeSearch.adv);
+    depsCollapsible.set(collapseBeforeSearch.deps);
+    collapseBeforeSearch = null;
+  }
+}
+
+function applySearch(raw) {
+  const tokens = parseQuery(raw);
+  const active = tokens.length > 0;
+  if (active !== searchActive) {
+    searchActive = active;
+    setSectionsForSearch(active);
+    // 搜索时被强行放出来的条件字段，清空后得按规则收回去
+    if (!active) syncFieldVisibility();
+  }
+
+  let hits = 0;
+  for (const entry of searchEntries) {
+    const ok = !active || matchesTokens(entry.hay, tokens);
+    entry.row.classList.toggle("gs-field--filtered", active && !ok);
+    if (active && ok) hits += 1;
+  }
+
+  // 搜索期间放开条件显隐：用户是带着目标来搜的，搜到了却因为没选那个后端而看不见，
+  // 比看得见更容易出问题。
+  if (active) {
+    for (const { row } of conditionalRows) {
+      if (!row.classList.contains("gs-field--filtered")) row.hidden = false;
+    }
+  }
+
+  for (const group of ui.root.querySelectorAll(".gs-group")) {
+    const any = group.querySelector(".gs-field:not(.gs-field--filtered)");
+    group.classList.toggle("gs-group--empty", active && !any);
+  }
+  for (const card of ui.root.querySelectorAll(".gs-card")) {
+    // 「关于」「清理记录」这类没有设置字段的卡，搜索时不参与
+    const hasFields = !!card.querySelector(".gs-field");
+    const any = card.querySelector(".gs-field:not(.gs-field--filtered)");
+    card.classList.toggle("gs-card--filtered", active && (!hasFields || !any));
+  }
+
+  ui.searchClear.hidden = !active;
+  ui.searchCount.hidden = !active;
+  if (active) ui.searchCount.textContent = hits > 0 ? `${hits} 项` : "无";
+  ui.searchEmpty.hidden = !active || hits > 0;
+  if (active && hits === 0) ui.searchEmpty.textContent = `没有匹配「${String(raw).trim()}」的设置项。`;
+}
+
+function clearSearch() {
+  if (!ui.search) return;
+  ui.search.value = "";
+  applySearch("");
 }
 
 // 复用高级项那套「分组标题 + 字段」的外观。title 传空就只要字段，不要标题（也就没有那条延长线）。
@@ -2187,6 +2277,32 @@ function wire() {
   depsCollapsible = createCollapsible(ui.depsToggle, ui.depsBody, false);
   // 用户自己点过折叠开关，之后就不再替他自动展开
   ui.depsToggle.addEventListener("click", () => { depsUserToggled = true; });
+
+  if (ui.search) {
+    ui.search.addEventListener("input", () => applySearch(ui.search.value));
+    ui.search.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && ui.search.value) {
+        event.stopPropagation();
+        clearSearch();
+      } else if (event.key === "Enter") {
+        // 这一页没有 form，回车不该冒到宿主那边去
+        event.preventDefault();
+      }
+    });
+    ui.searchClear.addEventListener("click", () => {
+      clearSearch();
+      ui.search.focus();
+    });
+    // 键盘直接起搜：不在输入框里时按 / 。Esc 已在输入框里处理，这里不抢。
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+      const tag = (event.target?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || event.target?.isContentEditable) return;
+      event.preventDefault();
+      ui.search.focus();
+      ui.search.select();
+    });
+  }
 }
 
 async function reloadConfig() {
@@ -2203,6 +2319,7 @@ async function reloadConfig() {
 
 (async function boot() {
   buildAllFields();
+  buildSearchIndex();
   wire();
   syncTheme();
   try { hana.theme?.subscribe?.(() => syncTheme()); } catch {}
