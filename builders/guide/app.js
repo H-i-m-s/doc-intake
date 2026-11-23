@@ -970,5 +970,24 @@
     });
   }
 
+  /* 强调色上的文字颜色：按背景亮度自动选深色或浅色。
+     宿主的强调色随主题变，深色主题下的强调色往往偏亮，配白字才看得清。 */
+  function refreshAccentContrast() {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue("--g-accent-rgb") || "";
+    var parts = raw.trim().split(/[\s,]+/).map(Number).filter(function (n) { return !isNaN(n); });
+    if (parts.length < 3) return;
+    var luminance = (0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]) / 255;
+    document.documentElement.style.setProperty(
+      "--g-on-accent",
+      luminance > 0.55 ? "#10141c" : "#f4f7fc",
+    );
+  }
+
+  refreshAccentContrast();
+  if (window.matchMedia) {
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    if (mq.addEventListener) mq.addEventListener("change", refreshAccentContrast);
+  }
+
   activate((location.hash || "#start").replace("#", "") || "start");
 })();

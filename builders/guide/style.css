@@ -1095,12 +1095,14 @@ table.matrix tr:last-child td { border-bottom: 0; }
   text-align: center;
   font-size: 11.4px;
   font-weight: 600;
-  color: #1a1620;
-  background: linear-gradient(180deg, #f2a9d4, #e58bc2);
+  color: var(--g-on-accent, #10141c);
+  background: var(--g-accent);
   border-radius: 7px;
   padding: 6px 0;
   margin: 8px 0 9px;
 }
+
+/* 强调色上的文字颜色由脚本按背景亮度写入 --g-on-accent，不在这里写死 */
 
 .gui-adv {
   display: flex;
