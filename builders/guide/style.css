@@ -1014,18 +1014,70 @@ table.matrix tr:last-child td { border-bottom: 0; }
 }
 
 /* ── 面板示意图 ─────────────────────────────────── */
-.gui-wrap {
+/* 两列共用一套行：左侧是面板，右侧说明与左侧同行的项目对齐 */
+.gui-grid {
+  position: relative;
   display: grid;
-  grid-template-columns: 236px 1fr;
-  gap: 12px;
+  grid-template-columns: 244px 1fr;
+  column-gap: 16px;
+  row-gap: 5px;
   align-items: start;
 }
 
-.gui-win {
+/* 面板外框：伪元素画一层底，只盖左侧那一列 */
+.gui-grid::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 244px;
   border: 1px solid var(--g-line);
   border-radius: 11px;
-  overflow: hidden;
   background: var(--g-ground);
+  pointer-events: none;
+}
+
+.gui-frame {
+  display: none;
+}
+
+.gui-cell {
+  min-width: 0;
+  position: relative;
+}
+
+.gui-cell.is-title {
+  padding: 7px 10px;
+  border-radius: 10px 10px 0 0;
+  background: rgba(140, 170, 220, 0.06);
+  border-bottom: 1px solid var(--g-line);
+}
+
+.gui-cell.is-body { padding: 0 10px; }
+
+.gui-cell.is-foot { padding: 0 10px 12px; }
+
+.gui-cell.is-pad { padding-top: 7px; }
+
+.gui-note {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 9px;
+  align-items: baseline;
+  align-self: center;
+}
+
+.gui-note-k {
+  font-size: 11.4px;
+  font-weight: 600;
+  color: var(--g-ink);
+}
+
+.gui-note-v {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--g-soft);
 }
 
 .gui-title {
@@ -1054,8 +1106,6 @@ table.matrix tr:last-child td { border-bottom: 0; }
   color: var(--g-mute);
 }
 
-.gui-body { padding: 9px 10px 10px; }
-
 .gui-row {
   display: grid;
   grid-template-columns: 52px 1fr;
@@ -1063,6 +1113,8 @@ table.matrix tr:last-child td { border-bottom: 0; }
   align-items: center;
   margin-bottom: 4px;
 }
+
+.gui-row.is-field { margin-bottom: 5px; }
 
 .gui-label {
   font-size: 10.8px;
@@ -1080,13 +1132,13 @@ table.matrix tr:last-child td { border-bottom: 0; }
 }
 
 .gui-area {
-  min-height: 34px;
+  min-height: 32px;
   border: 1px solid var(--g-line);
   border-radius: 6px;
   padding: 5px 7px;
   font-size: 10.2px;
   color: var(--g-mute);
-  margin-bottom: 7px;
+  margin-bottom: 6px;
 }
 
 .gui-area.is-mono { font-family: var(--g-mono); color: var(--g-soft); }
@@ -1099,7 +1151,7 @@ table.matrix tr:last-child td { border-bottom: 0; }
   background: var(--g-accent);
   border-radius: 7px;
   padding: 6px 0;
-  margin: 8px 0 9px;
+  margin: 6px 0 8px;
 }
 
 /* 强调色上的文字颜色由脚本按背景亮度写入 --g-on-accent，不在这里写死 */
@@ -1115,11 +1167,10 @@ table.matrix tr:last-child td { border-bottom: 0; }
 .gui-adv-chev { font-size: 9px; color: var(--g-mute); }
 .gui-adv-label { font-size: 11px; color: var(--g-soft); }
 
-.gui-inner {
+.gui-checks {
   display: grid;
-  gap: 4px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--g-line);
+  gap: 3px;
+  margin-top: 6px;
 }
 
 .gui-field {
@@ -1128,12 +1179,6 @@ table.matrix tr:last-child td { border-bottom: 0; }
   padding: 4px 7px;
   font-size: 10.2px;
   color: var(--g-soft);
-}
-
-.gui-checks {
-  display: grid;
-  gap: 3px;
-  margin-top: 5px;
 }
 
 .gui-check {
@@ -1156,27 +1201,6 @@ table.matrix tr:last-child td { border-bottom: 0; }
 }
 
 .gui-check-text { font-size: 10.2px; color: var(--g-soft); }
-
-.gui-fields { display: grid; gap: 5px; }
-
-.gui-field-row {
-  display: grid;
-  grid-template-columns: 68px 1fr;
-  gap: 9px;
-  align-items: baseline;
-}
-
-.gui-field-k {
-  font-size: 11.4px;
-  font-weight: 600;
-  color: var(--g-ink);
-}
-
-.gui-field-v {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--g-soft);
-}
 
 /* 长图分割示意图 */
 .fig-longpic {

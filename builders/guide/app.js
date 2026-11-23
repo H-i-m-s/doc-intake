@@ -369,7 +369,26 @@
 
     gui: function () {
       var box = figWrap("gui");
-      var win = el("div", "gui-win");
+      var grid = el("div", "gui-grid");
+
+      function left(node, row, cls) {
+        var c = el("div", "gui-cell" + (cls ? " " + cls : ""));
+        if (node) c.appendChild(node);
+        c.style.gridRow = String(row);
+        c.style.gridColumn = "1";
+        grid.appendChild(c);
+        return c;
+      }
+
+      function note(label, text, row, span) {
+        var n = el("div", "gui-note");
+        n.appendChild(el("span", "gui-note-k", label));
+        n.appendChild(el("span", "gui-note-v", text));
+        n.style.gridRow = span ? row + " / span " + span : String(row);
+        n.style.gridColumn = "2";
+        grid.appendChild(n);
+        return n;
+      }
 
       var title = el("div", "gui-title");
       title.appendChild(el("span", "gui-title-text", "文档提取"));
@@ -378,9 +397,7 @@
       acts.appendChild(el("span", "gui-act", "□"));
       acts.appendChild(el("span", "gui-act", "×"));
       title.appendChild(acts);
-      win.appendChild(title);
-
-      var body = el("div", "gui-body");
+      left(title, 1, "is-title");
 
       var srcRow = el("div", "gui-row");
       srcRow.appendChild(el("span", "gui-label", "源"));
@@ -388,52 +405,58 @@
       btns.appendChild(el("span", "gui-btn", "选文件"));
       btns.appendChild(el("span", "gui-btn", "选文件夹"));
       srcRow.appendChild(btns);
-      body.appendChild(srcRow);
-      body.appendChild(el("div", "gui-area", "每行一个文件或文件夹"));
+      left(srcRow, 2, "is-body");
+      note("源", "选文件 / 选文件夹，或直接粘贴路径，每行一个", 2);
+
+      left(el("div", "gui-area", "每行一个文件或文件夹"), 3, "is-body");
 
       var saveRow = el("div", "gui-row");
       saveRow.appendChild(el("span", "gui-label", "保存到"));
       var sb = el("div", "gui-btns");
       sb.appendChild(el("span", "gui-btn", "浏览…"));
       saveRow.appendChild(sb);
-      body.appendChild(saveRow);
-      body.appendChild(el("div", "gui-area is-mono", "D:\\Agent\\Doc-intake"));
+      left(saveRow, 4, "is-body");
+      note("保存到", "输出目录，留空则用设置里的默认位置", 4);
 
-      body.appendChild(el("div", "gui-run", "开始提取"));
+      left(el("div", "gui-area is-mono", "D:\\Agent\\Doc-intake"), 5, "is-body");
+
+      left(el("div", "gui-run", "开始提取"), 6, "is-body is-pad");
 
       var adv = el("div", "gui-adv");
       adv.appendChild(el("span", "gui-adv-chev", "▾"));
       adv.appendChild(el("span", "gui-adv-label", "高级选项"));
-      body.appendChild(adv);
+      left(adv, 7, "is-body is-pad");
 
-      var inner = el("div", "gui-inner");
       [
-        ["解析后端", "自动"],
-        ["页码范围", "如 1-20，留空为全部"],
-        ["语言", "zh"]
+        ["解析后端", "自动", 8],
+        ["页码范围", "如 1-20，留空为全部", 9],
+        ["语言", "zh", 10]
       ].forEach(function (r) {
-        var row = el("div", "gui-row");
+        var row = el("div", "gui-row is-field");
         row.appendChild(el("span", "gui-label", r[0]));
         row.appendChild(el("div", "gui-field", r[1]));
-        inner.appendChild(row);
+        left(row, r[2], "is-body");
       });
+      note("解析后端", "自动 · MinerU · OXR（SoMark）· PaddleOCR · 本地 MinerU · 本地", 8);
+      note("页码范围", "如 1-20，留空为全部", 9);
+      note("语言", "识别语言，如 zh", 10);
+
       var checks = el("div", "gui-checks");
       [
         ["提取图片与媒体", true],
         ["另存 JSON", true],
         ["只做图片分割测试", false],
         ["只返回状态（不返回正文）", false]
-      ].forEach(function (c) {
+      ].forEach(function (c, i) {
         var lab = el("label", "gui-check");
         lab.appendChild(el("span", "gui-box" + (c[1] ? " is-on" : "")));
         lab.appendChild(el("span", "gui-check-text", c[0]));
         checks.appendChild(lab);
       });
-      inner.appendChild(checks);
-      body.appendChild(inner);
+      left(checks, 11, "is-foot is-last");
+      note("开关", "提取图片与媒体 · 另存 JSON · 只做图片分割测试 · 只返回状态（不返回正文）", 11, 4);
 
-      win.appendChild(body);
-      box.appendChild(win);
+      box.appendChild(grid);
       return box;
     },
 
@@ -834,17 +857,7 @@
     page.appendChild(bridge);
 
     var gui = section(data.guiTitle, data.guiLead);
-    var guiWrap = el("div", "gui-wrap");
-    guiWrap.appendChild(FIGURES.gui());
-    var guiList = el("div", "gui-fields");
-    data.guiFields.forEach(function (f) {
-      var row = el("div", "gui-field-row");
-      row.appendChild(el("span", "gui-field-k", f.k));
-      row.appendChild(el("span", "gui-field-v", f.v));
-      guiList.appendChild(row);
-    });
-    guiWrap.appendChild(guiList);
-    gui.appendChild(guiWrap);
+    gui.appendChild(FIGURES.gui());
     gui.appendChild(el("p", "bc-note", data.guiNote));
     page.appendChild(gui);
 
