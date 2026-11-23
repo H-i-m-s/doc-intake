@@ -54,7 +54,7 @@ const res = await sdk.bus.requestService(
   "ok": true,
   "app": "doc-intake",
   "inputs": [ { "key": "sources", "type": "string[]", "required": true, "description": "…" } ],
-  "backends": ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"],
+  "backends": ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "local"],
   "formats": [".pdf", ".docx", ".png", "…"],
   "waits": { "defaultMs": 20000, "maxMs": 600000 },
   "markdown": "默认返回全文"

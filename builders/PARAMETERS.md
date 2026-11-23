@@ -12,7 +12,7 @@
 |------|------|:---:|--------|------|
 | `source` | `string[]` | 是 | — | 文件或目录路径列表。目录会被展开成里面所有支持格式的文件；也容忍单个字符串。 |
 | `outputDir` | `string` | 否 | 由自动保存与保存路径决定 | 保存目录。不传时按设置里的自动保存、保存路径与 `summaryOnly` 规则裁决，见「输出与自动保存」。 |
-| `backend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "paddleocr-local" \| "local"` | 否 | `"auto"` | 解析后端。`auto` 按文件类型走默认降级链；显式给一档时**链上就只有这一档**，不再向后降级，且该档需要的凭证或地址没配时直接报错。电子书（EPUB / FB2 / CBZ / MOBI 等）不受它影响，一律本地解析，只在 `warnings` 里提一句。 |
+| `backend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "local"` | 否 | `"auto"` | 解析后端。`auto` 按文件类型走默认降级链；显式给一档时**链上就只有这一档**，不再向后降级，且该档需要的凭证或地址没配时直接报错。电子书（EPUB / FB2 / CBZ / MOBI 等）不受它影响，一律本地解析，只在 `warnings` 里提一句。 |
 | `pageRange` | `string` | 否 | 全部页 | PDF 页码范围，形如 `"1-5,10,15-20"`，1-based。其他格式忽略。 |
 | `language` | `string` | 否 | 设置里的默认语言（出厂 `zh`） | 文档语言，透传给 OCR 与云端 API，影响识别语种。 |
 | `includeMedia` | `boolean` | 否 | `true` | 是否提取并保存图片/视频/音频。只有用户明确说不要媒体时才传 `false`；「保存 JSON」「正文可省略」「只返回摘要」都不等于不要媒体。 |
@@ -43,7 +43,7 @@
 | `pythonPath` | `string` | `""` | Python 可执行文件路径，如 `<conda 目录>/envs/<环境名>/python.exe`。**必填**，不填则工具直接回 `PYTHON_PATH_NOT_CONFIGURED`。 |
 | `pipIndexMode` | `"inherit" \| "official" \| "tuna" \| "aliyun" \| "custom"` | `"inherit"` | 设置页「一键安装」装依赖时用的源。`inherit` 表示不传源，让 pip 读自己的 pip.ini 与环境变量。 |
 | `pipIndexUrl` | `string` | `""` | 自定义安装源地址，只在上面选 `custom` 时生效，要填完整的 index-url。 |
-| `defaultBackend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "paddleocr-local" \| "local"` | `"auto"` | 默认解析后端。工具与服务没显式指定时用它。 |
+| `defaultBackend` | `"auto" \| "mineru" \| "oxr" \| "paddleocr" \| "mineru-local" \| "local"` | `"auto"` | 默认解析后端。工具与服务没显式指定时用它。 |
 | `defaultLanguage` | `string` | `"zh"` | 默认语言，透传给 OCR 与云端 API。 |
 | `includeMedia` | `boolean` | `true` | 默认是否提取媒体（图片/视频/音频）。 |
 | `barcodeScan` | `boolean` | `true` | 解析媒体里的二维码与条码，结果注在引用该媒体的那一行下面；未安装 `zxing-cpp` 时自动跳过并留一条 warning。 |
@@ -52,8 +52,8 @@
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `pdfBackendChain` | `string` | `""` | PDF 降级链。留空 = `mineru → oxr → paddleocr → mineru-local → paddleocr-local → local`。分隔符接受 `>`、`;`、`,`、换行。链上缺凭证（MinerU / OXR / PaddleOCR 无 Token）或缺地址（两个自建服务的 endpoint 为空）的档位会被自动剔除，不会白失败一次。 |
-| `imageBackendChain` | `string` | `""` | 图片降级链。留空 = `oxr → paddleocr → paddleocr-local`。同一个分隔符规则；`paddleocr-local` 没填地址时被剔除，等于默认行为不变。 |
+| `pdfBackendChain` | `string` | `""` | PDF 降级链。留空 = `mineru → oxr → paddleocr → mineru-local → local`。分隔符接受 `>`、`;`、`,`、换行。链上缺凭证（MinerU / OXR / PaddleOCR 无 Token）或缺地址（两个自建服务的 endpoint 为空）的档位会被自动剔除，不会白失败一次。 |
+| `imageBackendChain` | `string` | `""` | 图片降级链。留空 = `oxr → paddleocr`。同一个分隔符规则。 |
 | `formulaChain` | `string[]` | `["local"]` | 公式识别降级链，**顺序即优先级**。`local`（现有 OMML + MathType 转换器）永远首位、不可取消，它是前置条件而不是可选后端；`texo` / `plus-m` 是本机小模型，要装了才参与（未装静默剔除，只记一条 debug）。图片不落盘的公式才会走到它：成功时正文换成 `$latex$`，那张预览图既不写入 `images`、也不留在输出目录。只在设置页配置，**不进工具参数**，也没有 per-call 覆盖。 |
 | `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF。切割在插件 Python 进程内按 `splitChunkPages` 生成内存 PDF bytes 直接上传，**不会**在源文件目录留下 `*_chunks` 文件夹或 chunk PDF。 |
 | `splitChunkPages` | `number` | `180` | 内存分块时每块页数，取小于 MinerU 200 页上限的值。 |
@@ -145,8 +145,6 @@ Token 检测不在工具列表里，它不是「提取文档」这类活，而�
 守护脚本是 `python/mineru_service.py`，状态文件在宿主的 `dataDir/mineru-service/`：`service.json`（自己与子进程的 pid、端口、kit 路径）、`activity`（最后活跃时间，由 App 每次解析前刷新）、`service.log`（服务端输出）。杀死只认这三样同时成立：`service.json` 记的 pid 活着、命令行含 `mineru-kit`、端口对得上。用户在 8000 上自己起的实例永远不在这条路上——没 `service.json` 就不接管、也不在同一个端口再起一个。
 
 两件容易误会的事：一次首次解析会花 179 秒左右加载模型（后续请求快），所以「醒一次用一下」适合低频大文件，不适合连续小文件；`mineruLocalIdleSeconds = 0` 是每次解析完立刻关，代价是下一次又要冷启动。
-| `paddleLocalEndpoint` | `string` | `""` | 自建 PaddleX Serving 地址，如 `http://127.0.0.1:8080`。留空 = 不启用这一档。 |
-
 ### 图片分割
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -253,4 +251,4 @@ Token 检测不在工具列表里，它不是「提取文档」这类活，而�
 3. **服务入口的读取范围默认是空的。** 空着不是「全放开」，而是一律拒收外部路径；第一次接进来报 `PATH_NOT_ALLOWED` 多半是这个原因，而不是路径写错。
 4. **`summaryOnly` 不是「只探测文件在不在」。** 它照常解析、照常落盘，只是不回正文；拿它当轻量预检会白烧一遍额度。
 5. **保存下来的 JSON 与工具返回的路径块不是同一套路径。** 前者是相对路径（便于整个目录搬走），后者是绝对路径（便于当场读取）。
-6. **图片链没有本地兜底。** 默认 `oxr → paddleocr → paddleocr-local`，三档都没配就整链失败；纯离线场景必须先起一个 PaddleX 或自建服务。
+6. **图片链只有云端两档。** 默认 `oxr → paddleocr`，两个 Token 都没配就整链失败；纯离线场景要文字，只能自己想办法（本地那条路目前不接图片 OCR）。

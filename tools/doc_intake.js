@@ -454,7 +454,7 @@ export const parameters = {
     },
     backend: {
       type: "string",
-      enum: ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"],
+      enum: ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "local"],
       description: "解析后端（可选，默认 auto）。电子书不受这个参数影响，一律本地解析。",
     },
     pageRange: {

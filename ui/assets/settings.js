@@ -64,7 +64,7 @@ const FIELDS = {
     title: "默认解析后端",
     hint: "调用工具时未指定后端就按它走。一般保持「自动」。",
     type: "string",
-    labels: { auto: "自动", mineru: "MinerU", oxr: "OXR（SoMark）", paddleocr: "PaddleOCR", "mineru-local": "MinerU（本地）", "paddleocr-local": "PaddleOCR（本地）", local: "本地（PyMuPDF）" },
+    labels: { auto: "自动", mineru: "MinerU", oxr: "OXR（SoMark）", paddleocr: "PaddleOCR", "mineru-local": "MinerU（本地）", local: "本地（PyMuPDF）" },
   },
   // options = 降级链的候选后端：勾选决定启用，拖拽决定先后，存回去仍是 "a>b" 这种字符串。
   // endpoint 指到对应的服务地址字段：地址没填时那一行的备注会换成「会被跳过」。
@@ -78,7 +78,6 @@ const FIELDS = {
       { value: "oxr", label: "OXR（SoMark）", note: "云端" },
       { value: "paddleocr", label: "PaddleOCR", note: "云端" },
       { value: "mineru-local", label: "MinerU（本地）", note: "填地址或启动器路径", endpoint: "mineruLocalEndpoint", altEndpoint: "mineruKitPath", altSkipText: "地址和启动器路径都没填，会被跳过" },
-      { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
       { value: "local", label: "本地（PyMuPDF）", note: "始终可用" },
     ],
   },
@@ -90,7 +89,6 @@ const FIELDS = {
     options: [
       { value: "oxr", label: "OXR（SoMark）", note: "云端" },
       { value: "paddleocr", label: "PaddleOCR", note: "云端" },
-      { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
     ],
   },
   // 公式兜底链：存的是字符串数组（顺序即优先级），local 固定第一行且不可取消。
@@ -261,13 +259,6 @@ const FIELDS = {
   paddleUseSealRecognition: { title: "印章识别", type: "boolean" },
   paddleUseTableRecognition: { title: "表格识别", type: "boolean" },
   paddleUseFormulaRecognition: { title: "公式识别", type: "boolean" },
-  paddleLocalEndpoint: {
-    title: "PaddleOCR 本地服务地址",
-    hint: "PaddleX Serving 地址，例如 http://127.0.0.1:8080，留空则不启用本地 PaddleOCR",
-    type: "string",
-    wide: true,
-    placeholder: "例如 http://127.0.0.1:8080",
-  },
 
   // ---- PDF 切割 ----
   autoSplitLargePDF: {
@@ -372,7 +363,7 @@ const BASIC_KEYS = [
 
 const ADVANCED_GROUPS = [
   { title: "MinerU", keys: ["mineruModelVersion", "mineruEnableOCR", "mineruEnableFormula", "mineruEnableTable", "mineruFlashMaxMB", "mineruFlashMaxPages", "mineruPrecisionMaxMB", "mineruPrecisionMaxPages", "mineruLocalEndpoint", "mineruLocalApiKey", "mineruLocalTier", "mineruLocalAutoStart", "mineruKitPath", "mineruLocalPort", "mineruLocalIdleSeconds"] },
-  { title: "PaddleOCR", keys: ["paddleUseDocOrientationClassify", "paddleUseDocUnwarping", "paddleUseChartRecognition", "paddleUseSealRecognition", "paddleUseTableRecognition", "paddleUseFormulaRecognition", "paddleLocalEndpoint"] },
+  { title: "PaddleOCR", keys: ["paddleUseDocOrientationClassify", "paddleUseDocUnwarping", "paddleUseChartRecognition", "paddleUseSealRecognition", "paddleUseTableRecognition", "paddleUseFormulaRecognition"] },
   { title: "公式", keys: ["formulaChain"] },
   { title: "PDF 切割", keys: ["autoSplitLargePDF", "splitChunkPages"] },
   { title: "图片分割", keys: ["splitImageThreshold", "splitImageTolerance", "splitImageBlankRatio", "splitImageMinBlank"] },

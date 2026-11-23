@@ -37,7 +37,7 @@ MinerU / OXR（SoMark）/ PaddleOCR 的凭证是否有效，由用户在 App 设
 |---|---|---|
 | `source` | `string[]` | 必填。传文件路径、多个文件路径或文件夹路径。 |
 | `outputDir` | `string` | 只有用户明确要求保存到特定位置时传；用户未指定时不传。 |
-| `backend` | `string` | 只有用户指定后端时传：`auto`、`mineru`、`oxr`、`paddleocr`、`mineru-local`、`paddleocr-local`、`local`。 |
+| `backend` | `string` | 只有用户指定后端时传：`auto`、`mineru`、`oxr`、`paddleocr`、`mineru-local`、`local`。 |
 | `pageRange` | `string` | 用户指定 PDF 页码时传，例如 `1-5,10`。 |
 | `language` | `string` | 用户指定 OCR/识别语言时传；否则不传。 |
 | `includeMedia` | `boolean` | 默认就是 `true`，通常不要传。只有用户明确说“不要提取媒体”“不要保存图片/视频/音频”“只要纯文本”时才传 `false`。用户说“保存 JSON”“正文可省略”“只返回摘要”时仍然提取媒体，不能据此传 `false`。 |
@@ -62,15 +62,15 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 默认不传 `backend`，应用会自行按文件类型和设置中的降级链处理（即若用户无明确的特殊要求，你无须传递backend，不得自作主张选择用哪个backend）。以下信息仅作为工具调用阐述，极少数情况才会用到
 
-- PDF：默认 mineru > oxr > paddleocr > mineru-local > paddleocr-local > local（云端优先、自建服务居中、本地解析兜底）；用户设置中存在自行配置项
-- 图片：默认 oxr > paddleocr > paddleocr-local，同样可被用户设置覆盖。
+- PDF：默认 mineru > oxr > paddleocr > mineru-local > local（云端优先、自建服务居中、本地解析兜底）；用户设置中存在自行配置项
+- 图片：默认 oxr > paddleocr，同样可被用户设置覆盖。
 - `oxr` 指 SoMark（云端），没填 OXR Token 时这一档会被自动跳过，不会报错。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM、HTML：走本地 Python 解析；旧版 DOC/XLS/PPT 会先由配置的转换层转为 OOXML，再复用对应现代格式适配器。
 - 电子书（EPUB / FB2 / FBZ / CBZ / MOBI / AZW / AZW3 / PRC）：**永远走本地**，不进降级链。云端几档做不了电子书，即使设置里的默认后端是 oxr 也照本地解析，并在 `warnings` 里说一句。CBZ（漫画）默认只按页序出图、不主动 OCR；要文字就让用户明确要走图片链。MOBI/AZW 需要可选依赖 `mobi`（GPL-3.0，插件不打包它），没装时返回的是可读的安装提示，把原话转给用户，别自己去 pip install。有 DRM 的书会被明确拒绝，不要尝试绕过。
 - 纯文本（`.txt`）：也就地解析，编码全自动判（BOM → UTF-8 → 检测库 → 自建打分），没有手动指定编码的入口。看 `metadata.encoding` 知道它按什么读的，`encodingConfidence` 低或 `replacementCount` 大于 0 时，**必须在回答里告诉用户可能认错了编码**，不要把乱码当正文总结，也不要声称自己换过编码重试。正文是逐字保真的，没有标题也没有段落重组，不要替它补。
 - 用户要求不上传 PDF 或只用本地解析时传 `backend="local"`。
 - 不要因为本地解析失败就自行改写参数；根据返回的 `warnings` 判断是否需要建议用户改用其他后端。
-- 本地部署时可用 `mineru-local` / `paddleocr-local`，需先在设置里填本地服务地址。`mineru-local` 另有一条自管路：地址留空、填好 `mineru-kit.exe` 路径，插件会在真用到时才拉起服务，空闲后自己关掉。首次解析要加载模型（百秒量级），慢是正常的，不意味着挂了。它只调用你装好的 MinerU，不提供安装服务。
+- 本地部署时可用 `mineru-local`：地址留空、填好 `mineru-kit.exe` 路径，插件会在真用到时才拉起服务，空闲后自己关掉。首次解析要加载模型（百秒量级），慢是正常的，不意味着挂了。它只调用你装好的 MinerU，不提供安装服务。
 
 ## 4. 结果处理
 

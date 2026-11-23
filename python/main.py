@@ -307,7 +307,7 @@ def _barcode_only_result(args, settings: dict, file_type: str, output_dir: Optio
 
 
 # PDF 后端降级链留空时的自动档：先云端 MinerU，再 SoMark（OXR），再 PaddleOCR，
-# 然后两个自建服务，最后本地。
+# 然后自建的本地 MinerU，最后本地。
 # 自建服务排在云端后面：填了地址才生效，没填的会在选链时被剔除。
 # OXR 同理由 Token 决定去留：没填 oxrTokens 时这一档会被跳过，不进链路、不留失败记录。
 DEFAULT_PDF_BACKEND_CHAIN = [
@@ -315,18 +315,25 @@ DEFAULT_PDF_BACKEND_CHAIN = [
     "oxr",
     "paddleocr",
     "mineru-local",
-    "paddleocr-local",
     "local",
 ]
 
-# 图片链留空时的兜底：云端 SoMark（OXR）优先，其次云端 PaddleOCR，最后自建 PaddleX。
-# 末尾的 paddleocr-local 没填本地地址时会被剔除，留着不改变默认行为。
-DEFAULT_IMAGE_BACKEND_CHAIN = ["oxr", "paddleocr", "paddleocr-local"]
+# 图片链留空时的兜底：云端 SoMark（OXR）优先，其次云端 PaddleOCR。
+DEFAULT_IMAGE_BACKEND_CHAIN = ["oxr", "paddleocr"]
+
+# 认得的所有后端 id。用户存的旧链里可能还留着已经下线的档位，
+# 选链时按这张表过滤，不然会拿着不存在的后端去跑，最后死在一个 KeyError 上。
+KNOWN_BACKENDS = {
+    "mineru",
+    "oxr",
+    "paddleocr",
+    "mineru-local",
+    "local",
+}
 
 # 自建后端只有填了地址才算可用，键是后端 id，值是必须填的设置项。
 _LOCAL_BACKEND_REQUIREMENTS = {
     "mineru-local": "mineruLocalEndpoint",
-    "paddleocr-local": "paddleLocalEndpoint",
 }
 
 # 需要 Token 才有意义的云端后端：键是后端 id，值是必须非空的设置项。
@@ -378,18 +385,25 @@ def select_backend_chain(
     logger = get_logger("backend_selector")
 
     if explicit_backend and explicit_backend != "auto":
+        if explicit_backend not in KNOWN_BACKENDS:
+            raise ValueError(
+                f"后端 {explicit_backend} 不在这个版本支持的后端列表里"
+                f"（可用：{'、'.join(sorted(KNOWN_BACKENDS))}）"
+            )
         if not _backend_configured(explicit_backend, settings):
             if explicit_backend in _TOKEN_BACKEND_REQUIREMENTS:
                 raise ValueError(
                     f"后端 {explicit_backend} 需要先在设置里填写 OXR Token"
                 )
-            required = _LOCAL_BACKEND_REQUIREMENTS[explicit_backend]
+            required = _LOCAL_BACKEND_REQUIREMENTS.get(explicit_backend)
             if explicit_backend == "mineru-local":
                 raise ValueError(
                     "本地 MinerU 还没就绪：设置里既没填「MinerU 本地服务地址」，也没填"
                     "「MinerU 启动器路径」（mineruKitPath），插件无从拉起自管实例。"
                     "到设置页「高级设置 → MinerU」里填一次 mineru-kit.exe 的完整路径即可。"
                 )
+            if not required:
+                raise ValueError(f"后端 {explicit_backend} 不在这个版本支持的后端列表里")
             raise ValueError(
                 f"后端 {explicit_backend} 需要先在设置里填写「{required}」"
             )
@@ -406,6 +420,10 @@ def select_backend_chain(
 
     usable: list[str] = []
     for backend in chain:
+        if backend not in KNOWN_BACKENDS:
+            # 已经下线的档位（旧配置里可能还留着）：跳过，当它不存在。
+            logger.info("跳过未知后端", backend=backend)
+            continue
         if _backend_configured(backend, settings):
             usable.append(backend)
             continue
@@ -709,20 +727,6 @@ def _extract_with_backend(
             language=language,
             include_images=include_images,
             credentials=available_credentials,
-            pdf_bytes=pdf_bytes,
-            display_name=display_name,
-        )
-
-    elif backend == "paddleocr-local":
-        from paddle_local_client import PaddleLocalClient
-        client = PaddleLocalClient(settings)
-        return client.extract(
-            source=source,
-            output_dir=output_dir,
-            page_range=page_range,
-            language=language,
-            include_images=include_images,
-            keys=available_credentials,
             pdf_bytes=pdf_bytes,
             display_name=display_name,
         )

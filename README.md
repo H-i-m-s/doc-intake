@@ -316,7 +316,7 @@ doc-intake/
 
 | 格式 | 扩展名 | 后端 | 说明 |
 |------|--------|------|------|
-| PDF | `.pdf` | MinerU → OXR → PaddleOCR → MinerU 本地 → PaddleOCR 本地 → Local | 链式降级，扫描件走 OCR；缺凭证或缺地址的档位自动剔除 |
+| PDF | `.pdf` | MinerU → OXR → PaddleOCR → MinerU 本地 → Local | 链式降级，扫描件走 OCR；缺凭证或缺地址的档位自动剔除 |
 | Word | `.docx` | Local | 文本/表格/公式/图片/视频/音频 |
 | Word（旧版） | `.doc` | Local（Office COM → `.docx`） | 转换后复用 DOCX 提取器；复杂内容可能有兼容性差异 |
 | PowerPoint | `.pptx` | Local | 文本/表格/公式/图片/视频/音频 |
@@ -324,7 +324,7 @@ doc-intake/
 | Excel | `.xlsx` / `.xlsm` | Local | 表格/图片锚定 |
 | Excel（旧版） | `.xls` | Local（Office COM → `.xlsx`） | 转换后复用 XLSX 提取器；宏不保留，复杂对象需验证 |
 | HTML | `.html` / `.htm` | Local | 元数据/链接/代码块/远程媒体 |
-| 图片 | `.jpg` `.jpeg` `.png` `.bmp` `.tiff` `.tif` `.webp` `.gif` | OXR → PaddleOCR → PaddleOCR 本地 | 自动长图分割 |
+| 图片 | `.jpg` `.jpeg` `.png` `.bmp` `.tiff` `.tif` `.webp` `.gif` | OXR → PaddleOCR | 自动长图分割 |
 | 电子书（EPUB） | `.epub` | Local | 章节成标题层级、目录取 nav 或 ncx、图片按原始字节落盘；字体混淆照常解，内容加密直接报 |
 | 电子书（FB2） | `.fb2` / `.fbz` | Local | section 嵌套深度成标题层级，图片从 `<binary>` 的 base64 解出 |
 | 漫画 | `.cbz` | Local | 按页名自然序出图（`page2` 在 `page10` 前），不主动 OCR |

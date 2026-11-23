@@ -25,7 +25,6 @@ export const PAGE_SECONDS = {
   "oxr": 0.35,
   "mineru-local": 1.0,
   "paddleocr": 0.4,
-  "paddleocr-local": 0.8,
 };
 
 /** 固定开销：进程启动、上传、排队、落盘。不随页数增长，所以单独加一项。 */

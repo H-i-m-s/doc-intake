@@ -46,7 +46,7 @@ const SPEC = {
   pythonPath: { type: "string", default: "" },
   pipIndexMode: { type: "string", enum: ["inherit", "official", "tuna", "aliyun", "custom"], default: "inherit" },
   pipIndexUrl: { type: "string", default: "" },
-  defaultBackend: { type: "string", enum: ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"], default: "auto" },
+  defaultBackend: { type: "string", enum: ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "local"], default: "auto" },
   pdfBackendChain: { type: "string", default: "" },
   imageBackendChain: { type: "string", default: "" },
   // 公式兜底链：字符串数组，顺序即优先级。local 永远在首位（前置条件，不可取消），
@@ -67,7 +67,6 @@ const SPEC = {
   mineruLocalPort: { type: "number", default: 8010 },
   mineruLocalIdleSeconds: { type: "number", default: 300 },
   mineruLocalAutoStart: { type: "boolean", default: true },
-  paddleLocalEndpoint: { type: "string", default: "" },
   paddleUseDocOrientationClassify: { type: "boolean", default: false },
   paddleUseDocUnwarping: { type: "boolean", default: true },
   paddleUseChartRecognition: { type: "boolean", default: true },
