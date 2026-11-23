@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
 </p>
 
-<h1 align="center">Doc Intake</h1>
+<h1 align="center">Doc-Intake</h1>
 
 <p align="center">
   Hana v2 App · 文档与图片内容提取<br>

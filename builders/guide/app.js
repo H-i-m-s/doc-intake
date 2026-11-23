@@ -1,6 +1,6 @@
-/* doc-intake 使用向导 · 交互
+/* Doc-Intake 使用向导 · 交互
  * 页面全部由 content.js 渲染；三层页面堆在同一个网格单元里，
- * 所以切换页签只改变可见性，不改变卡片高度。
+ * 切换页签只改变可见性，卡片高度取最高的那一页。
  */
 (function () {
   "use strict";
@@ -32,19 +32,21 @@
     return box;
   }
 
-  /* 一块可点击的列表 + 固定高度的说明区。
-     说明区高度用 CSS 的 min-height 预留，点击时只换文字，卡片不会跳动。 */
-  function listWithCaption(items, capText, onPick) {
+  /* 可点列表 + 固定高度说明区：点击只换文字，卡片不跳 */
+  function listWithCaption(items, renderItem, initial, onPick) {
     var wrap = el("div", "picker");
     var list = el("div", "pick-list");
-    var cap = el("p", "cap");
-    cap.textContent = capText;
+    var cap = el("div", "cap");
+    cap.appendChild(el("p", "cap-main"));
+    cap.appendChild(el("p", "cap-why"));
+
+    function show(item) {
+      cap.children[0].textContent = item.note || item.tip || "";
+      cap.children[1].textContent = item.why || "";
+    }
 
     items.forEach(function (item, i) {
-      var btn = el("button", "pick");
-      btn.type = "button";
-      btn.dataset.idx = String(i);
-      btn.appendChild(el("span", "pick-name", item.label));
+      var btn = renderItem(item, i);
       btn.setAttribute("aria-pressed", i === 0 ? "true" : "false");
       if (i === 0) btn.classList.add("is-on");
       btn.addEventListener("click", function () {
@@ -54,52 +56,228 @@
         });
         btn.classList.add("is-on");
         btn.setAttribute("aria-pressed", "true");
-        cap.textContent = onPick(item);
+        show(item);
+        if (onPick) onPick(item);
       });
       list.appendChild(btn);
     });
 
+    show(items[0]);
     wrap.appendChild(list);
     wrap.appendChild(cap);
     return wrap;
   }
 
+  /* ── 表格与折叠块 ───────────────────────────────── */
+  function table(columns, rows) {
+    var t = el("table", "cmp");
+    var thead = el("thead");
+    var tr = el("tr");
+    columns.forEach(function (c, i) {
+      var th = el("th", i === 0 ? "cmp-key" : null, c);
+      tr.appendChild(th);
+    });
+    thead.appendChild(tr);
+    t.appendChild(thead);
+
+    var tbody = el("tbody");
+    rows.forEach(function (r) {
+      var row = el("tr");
+      r.forEach(function (cell, i) {
+        row.appendChild(el("td", i === 0 ? "cmp-key" : null, cell));
+      });
+      tbody.appendChild(row);
+    });
+    t.appendChild(tbody);
+    return t;
+  }
+
+  function fold(data) {
+    var box = el("details", "fold");
+    var sum = el("summary", "fold-sum");
+    sum.appendChild(el("span", "fold-title", data.title));
+    if (data.hint) sum.appendChild(el("span", "fold-hint", data.hint));
+    box.appendChild(sum);
+    var body = el("div", "fold-body");
+    body.appendChild(table(data.columns, data.rows));
+    box.appendChild(body);
+    return box;
+  }
+
+  /* ── 示意图 ─────────────────────────────────────── */
+  function figWrap(kind, caption) {
+    var box = el("figure", "fig fig-" + kind);
+    return box;
+  }
+
+  var FIGURES = {
+    layout: function () {
+      var box = figWrap("layout");
+      var pair = el("div", "fig-pair");
+
+      var cloud = el("div", "fig-side");
+      cloud.appendChild(el("p", "fig-label", "云端：先切版面"));
+      var pageA = el("div", "mini-page");
+      pageA.appendChild(el("div", "mp-title"));
+      var cols = el("div", "mp-cols");
+      cols.appendChild(el("div", "mp-col"));
+      cols.appendChild(el("div", "mp-col"));
+      pageA.appendChild(cols);
+      pageA.appendChild(el("div", "mp-table"));
+      cloud.appendChild(pageA);
+
+      var local = el("div", "fig-side");
+      local.appendChild(el("p", "fig-label", "纯本地：按文字流读"));
+      var pageB = el("div", "mini-page");
+      for (var i = 0; i < 6; i++) pageB.appendChild(el("div", "mp-line"));
+      local.appendChild(pageB);
+
+      pair.appendChild(cloud);
+      pair.appendChild(local);
+      box.appendChild(pair);
+      return box;
+    },
+
+    crop: function () {
+      var box = figWrap("crop");
+      var flow = el("div", "fig-flow");
+      var page = el("div", "mini-page is-small");
+      page.appendChild(el("div", "mp-line"));
+      page.appendChild(el("div", "mp-line is-short"));
+      var hot = el("div", "mp-hot");
+      page.appendChild(hot);
+      page.appendChild(el("div", "mp-line is-short"));
+
+      var crop = el("div", "mini-crop");
+      crop.textContent = "公式";
+
+      flow.appendChild(page);
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(crop);
+      flow.appendChild(el("span", "fig-arrow", "→"));
+
+      var outs = el("div", "fig-outs");
+      outs.appendChild(el("span", "fig-out is-bad", "插图"));
+      outs.appendChild(el("span", "fig-out is-bad", "纯文本"));
+      outs.appendChild(el("span", "fig-out is-good", "小模型：LaTeX"));
+      flow.appendChild(outs);
+      box.appendChild(flow);
+      return box;
+    },
+
+    path: function () {
+      var box = figWrap("path");
+      var flow = el("div", "fig-flow is-stack");
+      [
+        ["原生公式", "LaTeX"],
+        ["MathType 对象", "LaTeX"],
+        ["预览图", "图片"]
+      ].forEach(function (pair) {
+        var row = el("div", "fig-row");
+        row.appendChild(el("span", "fig-node", pair[0]));
+        row.appendChild(el("span", "fig-arrow", "→"));
+        row.appendChild(el("span", "fig-node is-out", pair[1]));
+        flow.appendChild(row);
+      });
+      var last = el("div", "fig-row");
+      last.appendChild(el("span", "fig-node", "预览图"));
+      last.appendChild(el("span", "fig-arrow", "→"));
+      last.appendChild(el("span", "fig-node", "小模型"));
+      last.appendChild(el("span", "fig-arrow", "→"));
+      last.appendChild(el("span", "fig-node is-out", "LaTeX 或仍留图"));
+      flow.appendChild(last);
+      box.appendChild(flow);
+      return box;
+    },
+
+    arrow: function () {
+      var box = figWrap("arrow");
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 260 92");
+      svg.setAttribute("class", "fig-svg");
+      svg.innerHTML =
+        '<text x="0" y="12" class="svg-cap">旧：按像素直读</text>' +
+        '<line x1="14" y1="30" x2="120" y2="30" class="svg-dash"/>' +
+        '<line x1="70" y1="34" x2="120" y2="34" class="svg-dash"/>' +
+        '<path d="M120 24 l14 6 -14 6 z" class="svg-head"/>' +
+        '<text x="0" y="66" class="svg-cap">现在：按矢量重绘</text>' +
+        '<line x1="14" y1="82" x2="128" y2="82" class="svg-solid"/>' +
+        '<path d="M128 74 l16 8 -16 8 z" class="svg-head"/>';
+      box.appendChild(svg);
+      return box;
+    },
+
+    volume: function () {
+      var box = figWrap("volume");
+      var row = el("div", "fig-vols");
+      [
+        ["D 盘产物", "D 盘回收站"],
+        ["C 盘产物", "C 盘回收站"]
+      ].forEach(function (p) {
+        var col = el("div", "fig-vol");
+        col.appendChild(el("span", "vol-disk", p[0]));
+        col.appendChild(el("span", "fig-arrow", "↓"));
+        col.appendChild(el("span", "vol-bin", p[1]));
+        row.appendChild(col);
+      });
+      box.appendChild(row);
+      return box;
+    },
+
+    chunk: function () {
+      var box = figWrap("chunk");
+      var bar = el("div", "fig-chunks");
+      for (var i = 0; i < 4; i++) bar.appendChild(el("div", "chunk", "第 " + (i + 1) + " 块"));
+      box.appendChild(bar);
+      var row = el("div", "fig-row is-center");
+      row.appendChild(el("span", "fig-arrow", "↓ 按原顺序合并"));
+      box.appendChild(row);
+      box.appendChild(el("div", "chunk is-whole", "一份 Markdown"));
+      return box;
+    },
+
+    guard: function () {
+      var box = figWrap("guard");
+      var row = el("div", "fig-flow");
+      row.appendChild(el("span", "fig-node", "不认识的容器"));
+      row.appendChild(el("span", "fig-arrow", "→"));
+      row.appendChild(el("span", "fig-out is-good", "直接说明不支持"));
+      row.appendChild(el("span", "fig-arrow", "✕"));
+      row.appendChild(el("span", "fig-out is-bad", "猜出来的乱码正文"));
+      box.appendChild(row);
+      return box;
+    }
+  };
+
   /* ── 入门 ─────────────────────────────────────────── */
-  function renderStart(data) {
+  function renderStart(data, cmp) {
     var page = el("div", "page");
     page.dataset.page = "start";
 
-    var steps = section(data.stepsTitle, data.stepsHint);
-    var stepWrap = el("div", "picker");
-    var stepList = el("div", "steps");
-    var cap = el("p", "cap");
-    cap.textContent = data.steps[0].tip;
-
-    data.steps.forEach(function (s, i) {
-      var row = el("button", "step");
-      row.type = "button";
-      row.setAttribute("aria-pressed", i === 0 ? "true" : "false");
-      if (i === 0) row.classList.add("is-on");
-      row.appendChild(el("span", "step-no", s.no));
-      var body = el("span", "step-body");
-      body.appendChild(el("span", "step-title", s.title));
-      body.appendChild(el("span", "step-text", s.text));
-      row.appendChild(body);
-      row.addEventListener("click", function () {
-        Array.prototype.forEach.call(stepList.children, function (n) {
-          n.classList.remove("is-on");
-          n.setAttribute("aria-pressed", "false");
-        });
-        row.classList.add("is-on");
-        row.setAttribute("aria-pressed", "true");
-        cap.textContent = s.tip;
-      });
-      stepList.appendChild(row);
+    var what = section(data.whatTitle);
+    data.whatText.forEach(function (p) {
+      what.appendChild(el("p", "para", p));
     });
+    var chips = el("div", "chips");
+    data.chips.forEach(function (c, i) {
+      chips.appendChild(el("span", "chip" + (i === 0 ? " is-accent" : ""), c));
+    });
+    what.appendChild(chips);
+    page.appendChild(what);
 
-    stepWrap.appendChild(stepList);
-    stepWrap.appendChild(cap);
-    steps.appendChild(stepWrap);
+    var steps = section(data.stepsTitle, data.stepsHint);
+    steps.appendChild(
+      listWithCaption(data.steps, function (s) {
+        var row = el("button", "step");
+        row.type = "button";
+        row.appendChild(el("span", "step-no", s.no));
+        var body = el("span", "step-body");
+        body.appendChild(el("span", "step-title", s.title));
+        body.appendChild(el("span", "step-text", s.text));
+        row.appendChild(body);
+        return row;
+      })
+    );
     page.appendChild(steps);
 
     var entries = section(data.entriesTitle);
@@ -137,6 +315,22 @@
     formats.appendChild(el("p", "foot-note", data.formatsNote));
     page.appendChild(formats);
 
+    var folds = el("div", "folds");
+    folds.appendChild(fold(cmp.startCompare));
+    folds.appendChild(fold(cmp.startTools));
+    page.appendChild(folds);
+
+    var pits = section(data.pitfallsTitle);
+    var pitList = el("div", "rows");
+    data.pitfalls.forEach(function (p) {
+      var row = el("div", "row is-pit");
+      row.appendChild(el("span", "row-name", p.title));
+      row.appendChild(el("span", "row-text", p.text));
+      pitList.appendChild(row);
+    });
+    pits.appendChild(pitList);
+    page.appendChild(pits);
+
     return page;
   }
 
@@ -146,32 +340,32 @@
     page.dataset.page = "advanced";
 
     var chains = section(data.chainsTitle, data.chainsHint);
-    var first = data.chains[0];
-
-    var cap = el("p", "cap");
-    cap.textContent = first.steps[0].note;
-
-    var chainList = el("div", "pick-list");
+    var cap = el("div", "cap");
+    cap.appendChild(el("p", "cap-main"));
+    cap.appendChild(el("p", "cap-why"));
     var flow = el("div", "flow");
+    var chainList = el("div", "pick-list");
 
-    function paintFlow(chain) {
+    function paint(chain) {
       flow.innerHTML = "";
+      cap.children[0].textContent = chain.steps[0].note;
+      cap.children[1].textContent = "为什么这样排：" + chain.why;
       chain.steps.forEach(function (s, i) {
         var pill = el("button", "pill");
         pill.type = "button";
         pill.textContent = s.label;
+        if (i === 0) pill.classList.add("is-on");
         pill.addEventListener("click", function () {
           Array.prototype.forEach.call(flow.querySelectorAll(".pill"), function (n) {
             n.classList.remove("is-on");
           });
           pill.classList.add("is-on");
-          cap.textContent = s.note;
+          cap.children[0].textContent = s.note;
+          cap.children[1].textContent = s.why ? "为什么在这：" + s.why : "";
         });
         flow.appendChild(pill);
         if (i < chain.steps.length - 1) flow.appendChild(el("span", "arrow", "›"));
       });
-      var head = flow.querySelector(".pill");
-      if (head) head.classList.add("is-on");
     }
 
     data.chains.forEach(function (chain, i) {
@@ -187,21 +381,19 @@
         });
         btn.classList.add("is-on");
         btn.setAttribute("aria-pressed", "true");
-        paintFlow(chain);
-        cap.textContent = chain.steps[0].note;
+        paint(chain);
       });
       chainList.appendChild(btn);
     });
 
-    paintFlow(first);
-
+    paint(data.chains[0]);
     chains.appendChild(chainList);
     chains.appendChild(flow);
     chains.appendChild(cap);
     page.appendChild(chains);
 
     var pick = section(data.pickTitle, data.pickHint);
-    var advice = el("p", "cap");
+    var advice = el("p", "cap-solo");
     var pickList = el("div", "pick-list pick-grid");
     var pickFlow = el("div", "flow");
 
@@ -238,6 +430,43 @@
     pick.appendChild(advice);
     page.appendChild(pick);
 
+    var prov = section(data.providersTitle, data.providersHint);
+    var provGrid = el("div", "providers");
+    data.providers.forEach(function (p) {
+      var card = el("div", "provider");
+      card.appendChild(el("p", "provider-name", p.name));
+      card.appendChild(el("p", "provider-line", p.line));
+      card.appendChild(el("p", "provider-cost", "代价：" + p.cost));
+      provGrid.appendChild(card);
+    });
+    prov.appendChild(provGrid);
+    page.appendChild(prov);
+
+    var pathBox = section(data.pathTitle, data.pathHint);
+    pathBox.appendChild(
+      listWithCaption(data.path, function (s) {
+        var pill = el("button", "pill");
+        pill.type = "button";
+        pill.textContent = s.label;
+        return pill;
+      })
+    );
+    page.appendChild(pathBox);
+
+    var opts = section(data.optionsTitle, data.optionsHint);
+    var optList = el("div", "opts");
+    data.options.forEach(function (o) {
+      var row = el("div", "opt");
+      var head = el("div", "opt-head");
+      head.appendChild(el("span", "opt-key", o.k));
+      head.appendChild(el("span", "opt-val", o.v));
+      row.appendChild(head);
+      row.appendChild(el("p", "opt-why", "为什么：" + o.why));
+      optList.appendChild(row);
+    });
+    opts.appendChild(optList);
+    page.appendChild(opts);
+
     var blocks = section(data.blocksTitle);
     var grid = el("div", "grid2");
     data.blocks.forEach(function (b) {
@@ -269,7 +498,9 @@
     data.items.forEach(function (item) {
       var row = el("div", "why");
       row.appendChild(el("p", "why-q", item.q));
+      if (item.figure && FIGURES[item.figure]) row.appendChild(FIGURES[item.figure]());
       row.appendChild(el("p", "why-a", item.a));
+      row.appendChild(el("p", "why-so", item.so));
       list.appendChild(row);
     });
     box.appendChild(list);
@@ -284,7 +515,7 @@
   footEl.textContent = G.foot;
 
   var pages = {
-    start: renderStart(G.start),
+    start: renderStart(G.start, { startCompare: G.startCompare, startTools: G.startTools }),
     advanced: renderAdvanced(G.advanced),
     why: renderWhy(G.why)
   };
