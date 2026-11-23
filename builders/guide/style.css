@@ -110,24 +110,19 @@ h1 {
   outline-offset: 2px;
 }
 
-/* 三页堆在同一单元格：切换只换可见性，卡片高度取最高那页 */
-.pages {
-  display: grid;
-  margin-top: 12px;
-}
+/* 三页同一位置：只渲染当前页，切页时高度随内容变，不留空白 */
+.pages { margin-top: 12px; }
 
-.page {
-  grid-area: 1 / 1;
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.16s ease;
-}
+.page { display: none; }
 
 .page.is-on {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
+  display: block;
+  animation: page-in 0.16s ease;
+}
+
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
 }
 
 /* 通用块 */
@@ -486,7 +481,7 @@ h1 {
 }
 
 /* ── 折叠块与对比表 ─────────────────────────────── */
-.folds { margin-top: 10px; display: grid; gap: 7px; }
+.folds { margin-top: 10px; display: grid; gap: 9px; }
 
 .fold {
   border: 1px solid var(--g-line);
@@ -499,11 +494,14 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
-  padding: 10px 13px;
+  gap: 2px 8px;
+  padding: 11px 13px;
   cursor: pointer;
   list-style: none;
 }
+
+.fold-title { flex: 0 0 auto; }
+.fold-hint { flex: 1 1 100%; }
 
 .fold-sum::-webkit-details-marker { display: none; }
 
