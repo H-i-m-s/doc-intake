@@ -491,9 +491,37 @@
     var page = el("div", "page");
     page.dataset.page = "why";
 
-    var box = section(null);
-    box.appendChild(el("p", "why-intro", data.intro));
+    page.appendChild(el("p", "why-intro is-standalone", data.intro));
 
+    var princ = section(data.principlesTitle);
+    var pGrid = el("div", "principles");
+    data.principles.forEach(function (p) {
+      var card = el("div", "principle");
+      var head = el("div", "principle-head");
+      head.appendChild(el("span", "principle-no", p.no));
+      head.appendChild(el("h3", "principle-title", p.title));
+      card.appendChild(head);
+      card.appendChild(el("p", "principle-text", p.text));
+      pGrid.appendChild(card);
+    });
+    princ.appendChild(pGrid);
+    page.appendChild(princ);
+
+    var pipe = section(data.pipeTitle, data.pipeHint);
+    var steps = el("ol", "pipe");
+    data.pipeline.forEach(function (step, i) {
+      var row = el("li", "pipe-row");
+      row.appendChild(el("span", "pipe-no", (i + 1 < 10 ? "0" : "") + (i + 1)));
+      var body = el("div", "pipe-body");
+      body.appendChild(el("p", "pipe-t", step.t));
+      body.appendChild(el("p", "pipe-d", step.d));
+      row.appendChild(body);
+      steps.appendChild(row);
+    });
+    pipe.appendChild(steps);
+    page.appendChild(pipe);
+
+    var mech = section(data.mechTitle, data.mechHint);
     var list = el("div", "why-list");
     data.items.forEach(function (item) {
       var row = el("div", "why");
@@ -503,8 +531,8 @@
       row.appendChild(el("p", "why-so", item.so));
       list.appendChild(row);
     });
-    box.appendChild(list);
-    page.appendChild(box);
+    mech.appendChild(list);
+    page.appendChild(mech);
 
     return page;
   }

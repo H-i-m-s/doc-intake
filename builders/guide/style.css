@@ -650,6 +650,87 @@ table.cmp td:not(.cmp-key) { white-space: normal; min-width: 96px; }
   color: var(--g-mute);
 }
 
+/* ── 原理：三条取向与流水线 ───────────────────── */
+.why-intro.is-standalone {
+  margin: 0 0 10px;
+  font-size: 12.2px;
+  line-height: 1.6;
+  color: var(--g-mute);
+}
+
+.principles { display: grid; gap: 8px; }
+
+.principle {
+  padding: 10px 12px 11px;
+  border-radius: 11px;
+  background: rgba(140, 170, 220, 0.04);
+}
+
+.principle-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.principle-no {
+  font-family: var(--g-mono);
+  font-size: 10.5px;
+  color: rgba(var(--g-accent-rgb), 0.85);
+}
+
+.principle-title {
+  margin: 0;
+  font-size: 12.4px;
+  font-weight: 600;
+}
+
+.principle-text {
+  margin: 4px 0 0;
+  padding-left: 22px;
+  font-size: 11.6px;
+  line-height: 1.62;
+  color: var(--g-soft);
+}
+
+.pipe {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.pipe-row {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid var(--g-line);
+}
+
+.pipe-row:first-child { border-top: 0; padding-top: 0; }
+.pipe-row:last-child { padding-bottom: 0; }
+
+.pipe-no {
+  font-family: var(--g-mono);
+  font-size: 10.5px;
+  color: var(--g-mute);
+  padding-top: 2px;
+}
+
+.pipe-t {
+  margin: 0;
+  font-size: 12.2px;
+  font-weight: 600;
+}
+
+.pipe-d {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--g-mute);
+}
+
 /* ── 原理：一句结论 ───────────────────────────── */
 .why-so {
   margin: 4px 0 0;
