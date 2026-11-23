@@ -1,12 +1,14 @@
 """DOCX 文档提取器"""
 from __future__ import annotations
 
+import os
 import posixpath
 import re
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+import formula_fallback
 from .base import BaseExtractor, ExtractionResult
 from legacy_converter import (
     LegacyConversionError,
@@ -122,6 +124,11 @@ class DocxExtractor(BaseExtractor):
         # 本次提取里被拦掉的空白预览(zip 内路径)。_extract_text 据此在公式原位置
         # 连占位都不留,而不是落到「找不到预览」那个显眼记号上。
         self._blank_previews: set[str] = set()
+        # 公式兜底链(把预览图交小模型认一遍)。每次 extract 重置,见 _start_fallback。
+        self._formula: "formula_fallback.FormulaFallback | None" = None
+        self._images_ledger: list[str] | None = None
+        self._warnings_ledger: list[str] | None = None
+        self._zf = None
 
     @property
     def mathtype_converter(self):
@@ -133,6 +140,64 @@ class DocxExtractor(BaseExtractor):
             except ImportError:
                 self._mathtype_converter = None
         return self._mathtype_converter
+
+    # ---- 公式兜底链 ----
+
+    def _start_formula_fallback(self, result: ExtractionResult, zf) -> None:
+        """开账：链、编号、警告与图片账本。链为空时照样建对象，recover 直接返回。"""
+        self._formula = formula_fallback.FormulaFallback(self.settings)
+        self._images_ledger = result.images
+        self._warnings_ledger = result.warnings
+        self._zf = zf
+
+    def _stop_formula_fallback(self) -> None:
+        if self._formula is not None:
+            self._formula.close()
+        self._zf = None
+
+    def _formula_entries(self) -> list[dict]:
+        entries = self._formula.entries if self._formula is not None else []
+        return entries
+
+    def _recover_formula_preview(self, preview: ExtractedMedia, index: int) -> str | None:
+        """把公式预览图交链识别。认出来就返回 LaTeX，并把这张图从账上去掉。
+
+        只有「转不出 LaTeX 的公式对象自带预览图」走这里。普通插图、空白预览、
+        OMML 失败那一路都不在这条链上（调用点本身就把它们排除了）。
+        """
+        runner = self._formula
+        if runner is None or not runner.active:
+            return None
+
+        image_path = preview.local_path
+        if not (image_path and os.path.isfile(image_path)):
+            # 没有输出目录时媒体没有真正落盘（local_path 是 zip 内路径），
+            # 临时取一份给模型看
+            image_path = runner.materialize(self._zf, preview.original_path) if self._zf is not None else None
+        if not image_path:
+            return None
+
+        latex, backend = runner.recover(image_path, index)
+        if not latex:
+            return None
+
+        if self._warnings_ledger is not None:
+            self._warnings_ledger.append(f"第 {index} 条公式由 {backend} 还原（原为图片）")
+        self._drop_formula_image(preview)
+        return latex
+
+    def _drop_formula_image(self, preview: ExtractedMedia) -> None:
+        """成功转成 LaTeX 后，这张预览图不再算产出：从 images 里摘掉，文件删掉。"""
+        ledger = self._images_ledger
+        if isinstance(ledger, list) and preview.local_path in ledger:
+            ledger.remove(preview.local_path)
+        path = preview.local_path
+        try:
+            if path and os.path.isfile(path):
+                os.unlink(path)
+        except OSError:
+            # 删不掉（被占用之类）不阻塞正文：图片已经不在账上了，正文里也不会引用它
+            logger.debug("公式预览图未能删除", path=path)
 
     def extract(
         self,
@@ -186,13 +251,23 @@ class DocxExtractor(BaseExtractor):
                 {m.original_path: m for m in media_list} if include_images else {}
             )
 
+            # 公式兜底链要在正文阶段跑:成功时那张 PNG 不能留在 result.images 里,
+            # 所以账本必须是 result.images 这个对象本身,而不是它的副本。
+            self._start_formula_fallback(result, zf)
+
             # 提取文本
             stem = path.stem
-            result.markdown = self._extract_text(
-                zf, stem, path.name, include_images, media_map, mathtype_equations
-            )
+            try:
+                result.markdown = self._extract_text(
+                    zf, stem, path.name, include_images, media_map, mathtype_equations
+                )
+            finally:
+                self._stop_formula_fallback()
 
         result.metadata = {"format": "docx", "reader": "docx_extractor"}
+        entries = self._formula_entries()
+        if entries:
+            result.metadata["formulaFallbacks"] = entries
         return result
 
     def _handle_legacy_doc(self, path: Path, output_dir: str | None, include_images: bool) -> ExtractionResult:
@@ -811,15 +886,21 @@ class DocxExtractor(BaseExtractor):
             r_id = _attr_by_local_name(child, "id")
             if "Equation" not in prog_id or not r_id:
                 continue
+            # 编号按公式对象在文档里的出现次序发，跟正文顺序对得上。
+            index = self._formula.next_index() if self._formula is not None else 0
             if r_id in mathtype_map:
                 rendered.append(f"${mathtype_map[r_id]}$")
                 continue
             preview = ole_preview_map.get(r_id)
             if preview is _BLANK_PREVIEW:
                 # 预览本身是空白图(空公式)：转换层已经删了文件并记了 warning，
-                # 公式原位置什么都不留，也不补占位文字。
+                # 公式原位置什么都不留，也不补占位文字。空白预览不送链。
                 continue
             if preview is not None:
+                latex = self._recover_formula_preview(preview, index)
+                if latex:
+                    rendered.append(f"${latex}$")
+                    continue
                 rendered.append(self._render_media(preview, stem, alt="formula"))
             else:
                 # 转不出 LaTeX、连预览图也找不到：留一个显眼记号，不让公式悄悄消失。

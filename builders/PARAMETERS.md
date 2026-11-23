@@ -54,6 +54,7 @@
 |--------|------|--------|------|
 | `pdfBackendChain` | `string` | `""` | PDF 降级链。留空 = `mineru → oxr → paddleocr → mineru-local → paddleocr-local → local`。分隔符接受 `>`、`;`、`,`、换行。链上缺凭证（MinerU / OXR / PaddleOCR 无 Token）或缺地址（两个自建服务的 endpoint 为空）的档位会被自动剔除，不会白失败一次。 |
 | `imageBackendChain` | `string` | `""` | 图片降级链。留空 = `oxr → paddleocr → paddleocr-local`。同一个分隔符规则；`paddleocr-local` 没填地址时被剔除，等于默认行为不变。 |
+| `formulaChain` | `string[]` | `["local"]` | 公式识别降级链，**顺序即优先级**。`local`（现有 OMML + MathType 转换器）永远首位、不可取消，它是前置条件而不是可选后端；`texo` / `plus-m` 是本机小模型，要装了才参与（未装静默剔除，只记一条 debug）。图片不落盘的公式才会走到它：成功时正文换成 `$latex$`，那张预览图既不写入 `images`、也不留在输出目录。只在设置页配置，**不进工具参数**，也没有 per-call 覆盖。 |
 | `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF。切割在插件 Python 进程内按 `splitChunkPages` 生成内存 PDF bytes 直接上传，**不会**在源文件目录留下 `*_chunks` 文件夹或 chunk PDF。 |
 | `splitChunkPages` | `number` | `180` | 内存分块时每块页数，取小于 MinerU 200 页上限的值。 |
 

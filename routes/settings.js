@@ -49,6 +49,9 @@ const SPEC = {
   defaultBackend: { type: "string", enum: ["auto", "mineru", "oxr", "paddleocr", "mineru-local", "paddleocr-local", "local"], default: "auto" },
   pdfBackendChain: { type: "string", default: "" },
   imageBackendChain: { type: "string", default: "" },
+  // 公式兜底链：字符串数组，顺序即优先级。local 永远在首位（前置条件，不可取消），
+  // 后面是可选的本地小模型。不进 tools/doc_intake.js 的入参，也没有 per-call 覆盖。
+  formulaChain: { type: "array", default: ["local"] },
   mineruCredentials: { type: "string", default: "" },
   mineruModelVersion: { type: "string", enum: ["vlm", "pipeline", "MinerU-HTML"], default: "vlm" },
   mineruEnableOCR: { type: "boolean", default: true },
@@ -199,9 +202,103 @@ const DEP_CATALOG = [
     level: "optional",
     pip: "xlrd>=2.0.1",
   },
+  // 公式兜底小模型的 Python 依赖：只有启用小模型时才用得上，其余格式一概不碰。
+  {
+    id: "onnxruntime",
+    module: "onnxruntime",
+    dists: ["onnxruntime"],
+    name: "onnxruntime",
+    purpose: "公式兜底小模型的推理运行时（CPU）；只在下文的 texo / plus-m 启用时才需要",
+    level: "optional",
+    pip: "onnxruntime>=1.17.0",
+  },
+  {
+    id: "tokenizers",
+    module: "tokenizers",
+    dists: ["tokenizers"],
+    name: "tokenizers",
+    purpose: "公式模型的 token 编解码（读模型自带的 tokenizer.json / yml 里的词表），两个小模型都要",
+    level: "optional",
+    pip: "tokenizers>=0.15.0",
+  },
+  // 下面两项不是 pip 库，是公式兜底链的本地小模型权重：照样在 DEP_CATALOG 里登记
+  // （id、体积、许可、落盘位置都在这一份里），但不进 pip 依赖表，也不参与 pip 安装。
+  // 插件分发包不含任何权重、也不含模型代码，装不装都不影响现有任何格式。
+  {
+    id: "texo",
+    module: "",
+    dists: [],
+    name: "Texo（公式兜底）",
+    purpose:
+      "公式预览图的兜底识别：encoder + decoder ONNX，约 76 MB，纯 onnxruntime 推理。" +
+      "权重许可 AGPL-3.0；插件本身不打包它，装与不装都不影响现有格式",
+    level: "optional",
+    pip: "",
+    model: "texo",
+  },
+  {
+    id: "plus-m",
+    module: "",
+    dists: [],
+    name: "PP-FormulaNet-Plus-M（公式兜底）",
+    purpose:
+      "公式预览图的兜底识别：约 591 MB ONNX。原始权重许可 Apache-2.0，" +
+      "但实际下载的 ONNX 转档来自 MinerU 的模型仓库，那份是 AGPL-3.0；插件不打包它。" +
+      "预处理参数与字符表从模型自带的 yml 读，需要 PyYAML",
+    level: "optional",
+    pip: "",
+    model: "plus-m",
+  },
 ];
 
-const DEP_BY_PIP = new Map(DEP_CATALOG.map((dep) => [dep.pip, dep]));
+// 公式兜底小模型的权重清单。落盘位置：<插件数据目录>/models/<dir>/，卸载就是删这个子目录。
+// 体积是「约」数，给设置页写文案用；真实占用由文件系统算（装了以后会略大于这个数）。
+const FORMULA_MODELS = [
+  {
+    id: "texo",
+    name: "Texo",
+    dir: "texo",
+    sizeMb: 76,
+    license: "AGPL-3.0",
+    files: ["onnx/encoder_model.onnx", "onnx/decoder_model.onnx", "onnx/tokenizer.json"],
+  },
+  {
+    id: "plus-m",
+    name: "PP-FormulaNet-Plus-M",
+    dir: "plus-m",
+    sizeMb: 591,
+    license: "Apache-2.0（权重）/ AGPL-3.0（下载的 ONNX 转档）",
+    files: ["PP-FormulaNet_plus-M.onnx", "PP-FormulaNet_plus-M_inference.yml"],
+  },
+];
+
+const FORMULA_MODELS_SCRIPT = path.join(CURRENT_DIR, "..", "python", "formula_models.py");
+
+// pip 依赖表只列真正的库。两个公式模型是下载的权重，单独走 /formula-models。
+const PIP_DEPS = DEP_CATALOG.filter((dep) => !dep.model);
+
+// 能被 /install 装的包：只认 pip 依赖表里的发行规格（模型权重不在这里）。
+const DEP_BY_PIP = new Map(PIP_DEPS.map((dep) => [dep.pip, dep]));
+
+// 公式兜底链的合法后端。顺序是「固定前缀 + 可排的后备」：local 永远第一。
+const FORMULA_CHAIN_IDS = ["local", "texo", "plus-m"];
+
+// 一条链的规范化：丢掉不认得的、去重、local 逼到首位。
+// 设置里存的是数组，但手写 "local>texo" 这种字符串也认（老配置 / 手工改）。
+function normalizeFormulaChain(raw) {
+  const items = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? raw.split(/[;,>\n]+/)
+      : [];
+  const picked = [];
+  for (const item of items) {
+    const id = String(item || "").trim();
+    if (!FORMULA_CHAIN_IDS.includes(id) || picked.includes(id)) continue;
+    picked.push(id);
+  }
+  return ["local", ...picked.filter((id) => id !== "local")];
+}
 
 // pip 安装源。这里只放「有名字的公共镜像」，自定义那个由 pipIndexUrl 单独给。
 // inherit 的含义是「什么都不传」：pip 会自己去读 pip.ini 与环境变量，插件不替它做决定。
@@ -278,8 +375,16 @@ function validatePatch(patch) {
     if (meta.type === "boolean" && typeof value !== "boolean") {
       return { ok: false, message: `${key} 必须是布尔值` };
     }
+    if (meta.type === "array") {
+      if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+        return { ok: false, message: `${key} 必须是字符串数组` };
+      }
+      result[key] = value;
+      continue;
+    }
     result[key] = value;
   }
+  if (result.formulaChain) result.formulaChain = normalizeFormulaChain(result.formulaChain);
   return { ok: true, value: result };
 }
 
@@ -299,6 +404,8 @@ async function readConfig(ctx) {
     const value = stored[key];
     if (value !== undefined && value !== null) merged[key] = value;
   }
+  // 链存进存储后可能被手改过（数组/字符串都行），读回来一律拿数组。
+  merged.formulaChain = normalizeFormulaChain(merged.formulaChain);
   return merged;
 }
 
@@ -361,7 +468,7 @@ function runPython(pythonExe, args, stdinPayload, timeoutMs) {
 }
 
 function emptyDepState(reason) {
-  return DEP_CATALOG.map((dep) => ({
+  return PIP_DEPS.map((dep) => ({
     id: dep.id,
     name: dep.name,
     module: dep.module,
@@ -391,7 +498,7 @@ async function detectDeps(ctx) {
   }
 
   const payload = JSON.stringify(
-    DEP_CATALOG.map((dep) => ({ id: dep.id, module: dep.module, dists: dep.dists })),
+    PIP_DEPS.map((dep) => ({ id: dep.id, module: dep.module, dists: dep.dists })),
   );
   const run = await runPython(
     pythonExe,
@@ -430,7 +537,7 @@ async function detectDeps(ctx) {
   }
 
   const byId = new Map((Array.isArray(parsed.results) ? parsed.results : []).map((r) => [r.id, r]));
-  const libs = DEP_CATALOG.map((dep) => {
+  const libs = PIP_DEPS.map((dep) => {
     const hit = byId.get(dep.id) || {};
     return {
       id: dep.id,
@@ -493,6 +600,59 @@ async function installDeps(ctx, packages) {
     stderr: (run.stderr || "").slice(-6000),
     error: run.ok ? null : (run.error || `pip 退出码 ${run.code}`),
   };
+}
+
+// ---------------------------------------------------------------- 公式兜底小模型
+
+// 权重目录：<插件数据目录>/models/<dir>/。宿主没给 dataDir 就交空串，调用方据此报错，
+// 不自己猜一个路径——猜出来的位置在宿主换存储布局后会静默写丢。
+function formulaModelsRoot(ctx) {
+  const dir = typeof ctx?.dataDir === "string" ? ctx.dataDir : "";
+  return dir ? path.join(dir, "models") : "";
+}
+
+function dirSizeBytes(dir) {
+  let total = 0;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) total += dirSizeBytes(full);
+    else if (entry.isFile()) {
+      try {
+        total += fs.statSync(full).size;
+      } catch {
+        /* 读不到单个文件不影响「装没装」的判定 */
+      }
+    }
+  }
+  return total;
+}
+
+// 每个模型的真实状态：装没装（看文件）、实际占多少、文件清单。
+// 前端只消费这一份，不自己拼路径也不猜体积。
+function formulaModelState(ctx) {
+  const root = formulaModelsRoot(ctx);
+  return FORMULA_MODELS.map((model) => {
+    const dir = root ? path.join(root, model.dir) : "";
+    const files = model.files.map((rel) => ({
+      name: rel,
+      present: dir ? fs.existsSync(path.join(dir, rel)) : false,
+    }));
+    return {
+      id: model.id,
+      name: model.name,
+      sizeMb: model.sizeMb,
+      license: model.license,
+      installed: files.every((item) => item.present),
+      bytes: dir ? dirSizeBytes(dir) : 0,
+      files,
+    };
+  });
 }
 
 // 包根 manifest.json 的 version。这是本 App 版本的唯一事实源：发版脚本
@@ -644,6 +804,81 @@ app.get("/config", async (c) => {
     } catch (error) {
       // 间隔非法是这里唯一的预料内错误：setIntervalMinutes 带着自己的文案抛。
       return c.json({ ok: false, error: error?.message || String(error) }, 400);
+    }
+  });
+
+  // ---- 公式兜底小模型权重 ------------------------------------------------
+  // 这三个端点是「用户显式点击才下载」的唯一入口：权重大、许可是 AGPL，不能跟着
+  // 插件分发，也不能在旁边悄悄预取。安装走 Python（与 pip 安装同一条式），
+  // 卸载就是删子目录——装、卸、查三件事都对齐同一份清单（FORMULA_MODELS）。
+  app.get("/formula-models", (c) => {
+    try {
+      return c.json({ ok: true, root: formulaModelsRoot(ctx), models: formulaModelState(ctx) });
+    } catch (error) {
+      return c.json({ ok: false, error: `读取公式模型状态失败：${error?.message || error}` }, 500);
+    }
+  });
+
+  app.post("/formula-models/install", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const id = String(body?.id || "");
+    const model = FORMULA_MODELS.find((item) => item.id === id);
+    if (!model) return c.json({ ok: false, error: "只接受清单里登记的公式模型" }, 400);
+
+    const root = formulaModelsRoot(ctx);
+    if (!root) return c.json({ ok: false, error: "宿主没有给出插件数据目录，权重无处可放。" }, 500);
+
+    const config = await readConfig(ctx);
+    const pythonExe = String(config.pythonPath || "").trim();
+    if (!pythonExe) {
+      return c.json({ ok: false, error: "尚未配置 pythonPath，没法下载权重。" }, 400);
+    }
+
+    try {
+      // 权重最大 591 MB，网络慢的时候十分钟打不住，给足 30 分钟。
+      const run = await runPython(
+        pythonExe,
+        [FORMULA_MODELS_SCRIPT, "install", id, "--dir", root],
+        "",
+        1800000,
+      );
+      let parsed = null;
+      const lastLine = String(run.stdout || "").trim().split(/\r?\n/).filter(Boolean).pop() || "";
+      try {
+        parsed = JSON.parse(lastLine);
+      } catch {
+        parsed = null;
+      }
+      return c.json({
+        ok: run.ok === true && parsed?.ok === true,
+        id,
+        error: parsed?.error || (run.ok ? null : `下载进程退出码 ${run.code}`),
+        log: (run.stderr || "").slice(-4000),
+        models: formulaModelState(ctx),
+      });
+    } catch (error) {
+      return c.json({ ok: false, error: `下载失败：${error?.message || error}` }, 500);
+    }
+  });
+
+  app.post("/formula-models/remove", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const id = String(body?.id || "");
+    const model = FORMULA_MODELS.find((item) => item.id === id);
+    if (!model) return c.json({ ok: false, error: "只接受清单里登记的公式模型" }, 400);
+
+    const root = formulaModelsRoot(ctx);
+    if (!root) return c.json({ ok: false, error: "宿主没有给出插件数据目录。" }, 500);
+    const target = path.join(root, model.dir);
+    // 双保险：删的必须是 <dataDir>/models/<清单里的 dir>，不接受任何拼接出来的路径。
+    if (path.dirname(target) !== root) {
+      return c.json({ ok: false, error: "目标路径不在模型目录里，已拒绝删除。" }, 400);
+    }
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      return c.json({ ok: true, id, models: formulaModelState(ctx) });
+    } catch (error) {
+      return c.json({ ok: false, error: `卸载失败：${error?.message || error}` }, 500);
     }
   });
 

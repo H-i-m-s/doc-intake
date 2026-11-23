@@ -554,6 +554,35 @@ body { padding: 0 12px; }
 /* 地址没填：只是提醒，不是错，但不能淡到看不清 */
 .gs-chain-note[data-kind="skip"] { color: color-mix(in srgb, var(--gs-muted) 88%, transparent); }
 
+/* 固定第一行（公式链的 local）：前置条件，不是可选后端——不可拖、不可取消。 */
+.gs-chain-row--fixed { cursor: default; }
+.gs-chain-row--fixed:hover { background: color-mix(in srgb, var(--gs-ink) 5%, transparent); }
+.gs-chain-row--fixed .gs-chain-box { cursor: default; }
+
+/* 行尾那个「安装 / 卸载」：小号文字按钮，不抢主行的注意力 */
+.gs-chain-act {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--gs-ink) 16%, transparent);
+  border-radius: calc(6px * var(--gs-radius-base));
+  background: transparent;
+  color: var(--gs-accent);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gs-chain-act:hover { background: color-mix(in srgb, var(--gs-accent) 10%, transparent); }
+.gs-chain-act[data-kind="remove"] { color: var(--gs-muted); }
+.gs-chain-act:disabled { color: var(--gs-muted); cursor: default; opacity: 0.8; }
+
+/* 模型行：没装就是灰的（勾了不生效，所以干脆不许勾）；已装才是正常行。 */
+.gs-chain-row[data-state="missing"] .gs-chain-name { color: var(--gs-muted); }
+.gs-chain-row[data-state="missing"] .gs-chain-box:checked { background: color-mix(in srgb, var(--gs-accent) 45%, transparent); border-color: transparent; }
+.gs-chain-row[data-state="missing"] .gs-chain-note { color: color-mix(in srgb, var(--gs-muted) 92%, transparent); }
+.gs-chain-row[data-state="busy"] .gs-chain-box { opacity: 0.5; }
+
 .gs-chain-empty { font-size: 12px; line-height: 1.5; color: var(--gs-muted); }
 
 /* ---------- 高级设置的折叠头 ---------- */

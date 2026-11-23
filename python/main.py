@@ -1423,6 +1423,10 @@ def save_result(result: ExtractionResult, source: str, output_dir: str, save_jso
                     "barcodeCodes": (result.metadata or {}).get("barcodeCodes"),
                 },
             }
+            # 公式兜底链的台账：只记成功还原的那几条（成功时预览图已被拿掉）。
+            # 没有就整个键省掉，不写一个空数组冒充「跑过且全都失败」。
+            if meta.get("formulaFallbacks"):
+                json_data["metadata"]["formulaFallbacks"] = meta["formulaFallbacks"]
             # 电子书与纯文本的书卷气字段跟 compact_meta 用同一份白名单，别让落盘 JSON
             # 比返回值少一半信息——拿着 JSON 的人也想看编码和章节数。
             for key in _BOOK_META_KEYS:

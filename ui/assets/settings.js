@@ -14,6 +14,9 @@ const API = {
   config: "/config",
   deps: "/deps",
   install: "/install",
+  formulaModels: "/formula-models",
+  formulaInstall: "/formula-models/install",
+  formulaRemove: "/formula-models/remove",
   validate: "/validate",
   tokenStatus: "/token-status",
   tokenProbe: "/token-status/probe",
@@ -24,6 +27,8 @@ const API = {
 const STATUS_TIMEOUT_MS = 15000;
 const DEPS_TIMEOUT_MS = 90000;
 const INSTALL_TIMEOUT_MS = 660000;
+// 公式小模型最大 591 MB，网络慢的时候十分钟打不住；服务端给的是 30 分钟。
+const MODEL_INSTALL_TIMEOUT_MS = 1860000;
 const READY_TIMEOUT_MS = 8000;
 // 多把 Token 并行探测，每把单次预算 15s；放宽到 60s 留出排队余量。
 const VALIDATE_TIMEOUT_MS = 60000;
@@ -86,6 +91,20 @@ const FIELDS = {
       { value: "oxr", label: "OXR（SoMark）", note: "云端" },
       { value: "paddleocr", label: "PaddleOCR", note: "云端" },
       { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
+    ],
+  },
+  // 公式兜底链：存的是字符串数组（顺序即优先级），local 固定第一行且不可取消。
+  // 两个小模型没装时置灰；装/卸都在行尾那个按钮里，状态来自 /formula-models。
+  formulaChain: {
+    title: "公式识别降级链",
+    hint: "公式对象（MathType / Equation）转不出 LaTeX 时，把它的预览图交给本地小模型识别；认出来就用 LaTeX 换掉那张图，图片不再落盘。本地转换器始终先跑、不可取消；小模型要装了才会参与。只在这里配置，不影响任何调用参数。",
+    type: "chain",
+    array: true,
+    wide: true,
+    options: [
+      { value: "local", label: "本地（OMML + MathType）", note: "始终启用", fixed: true },
+      { value: "texo", label: "Texo", note: "本地小模型", model: "texo", sizeMb: 76 },
+      { value: "plus-m", label: "PP-FormulaNet-Plus-M", note: "本地小模型", model: "plus-m", sizeMb: 591 },
     ],
   },
   mineruCredentials: {
@@ -354,6 +373,7 @@ const BASIC_KEYS = [
 const ADVANCED_GROUPS = [
   { title: "MinerU", keys: ["mineruModelVersion", "mineruEnableOCR", "mineruEnableFormula", "mineruEnableTable", "mineruFlashMaxMB", "mineruFlashMaxPages", "mineruPrecisionMaxMB", "mineruPrecisionMaxPages", "mineruLocalEndpoint", "mineruLocalApiKey", "mineruLocalTier", "mineruLocalAutoStart", "mineruKitPath", "mineruLocalPort", "mineruLocalIdleSeconds"] },
   { title: "PaddleOCR", keys: ["paddleUseDocOrientationClassify", "paddleUseDocUnwarping", "paddleUseChartRecognition", "paddleUseSealRecognition", "paddleUseTableRecognition", "paddleUseFormulaRecognition", "paddleLocalEndpoint"] },
+  { title: "公式", keys: ["formulaChain"] },
   { title: "PDF 切割", keys: ["autoSplitLargePDF", "splitChunkPages"] },
   { title: "图片分割", keys: ["splitImageThreshold", "splitImageTolerance", "splitImageBlankRatio", "splitImageMinBlank"] },
   { title: "并发与重试", keys: ["maxConcurrent", "maxConcurrentLocal", "maxRetries", "retryBaseDelayMs", "keyRetryOnFailure", "notifyKeyFailure"] },
@@ -1128,15 +1148,21 @@ const CHAIN_ROW_GAP = 2;
 let chainDrag = null;
 // 每个链控件一份「地址备注刷新」函数：地址字段一变就调它们重算备注。
 const chainRefreshers = new Set();
+// 公式兜底小模型的状态（/formula-models）：每个模型行注册一个刷新函数，
+// 状态一到、下载一结束就从这里推下去。
+const modelRowRefreshers = new Set();
+const formulaModelState = { loading: false, error: "", data: null, busy: {} };
 
-// 降级链字符串 → 后端值数组：> 和 ; 两种分隔符都认，清单外的值直接丢掉，
+// 降级链字符串（或数组）→ 后端值数组：> 和 ; 两种分隔符都认，清单外的值直接丢掉，
 // 重复出现的只留第一次。read / write / isDirty 共用这一套口径。
+// 公式链存的是数组，所以这里两种形态都要吃得下。
 function chainValues(raw, options) {
   const known = options.map((opt) => opt.value);
   const seen = new Set();
   const out = [];
-  for (const part of String(raw ?? "").split(CHAIN_SEP)) {
-    const value = part.trim();
+  const parts = Array.isArray(raw) ? raw : String(raw ?? "").split(CHAIN_SEP);
+  for (const part of parts) {
+    const value = String(part ?? "").trim();
     if (!value || !known.includes(value) || seen.has(value)) continue;
     seen.add(value);
     out.push(value);
@@ -1211,11 +1237,11 @@ function endChainDrag() {
 }
 
 // 用 pointer 事件而不是 HTML5 draggable：Electron 里的默认拖影难看且不可控。
-// 整张卡片都能拖，只有勾选框拦下 pointerdown：那里要的是勾选，不是排序。
-function wireChainDrag(row, list) {
+// 整张卡片都能拖，只有勾选框与行尾按钮拦下 pointerdown：那里要的是勾选 / 点击，不是排序。
+function wireChainDrag(row, list, onCommit) {
   row.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    if (event.target?.closest?.(".gs-chain-box")) return;
+    if (event.target?.closest?.(".gs-chain-box, .gs-chain-act")) return;
     endChainDrag();
     // 行高与布局位置拖拽全程不变：按下时量一次存着，之后不再碰几何。
     // 存的是未叠加 transform 的原位，让位过渡怎么跑都不会影响落点判定。
@@ -1295,6 +1321,7 @@ function wireChainDrag(row, list) {
     for (const el of rows) el.style.transition = "";
     chainReleaseHandle(row, drag.pointerId);
     onDraftChange();
+    if (typeof onCommit === "function") onCommit();
   };
 
   row.addEventListener("pointerup", (event) => finish(event, true));
@@ -1312,6 +1339,8 @@ function buildChainControl(meta) {
   wrap.appendChild(list);
 
   const rows = new Map();
+  // 公式链存数组；PDF / 图片链仍存 "a>b" 字符串。
+  const asArray = meta.array === true;
 
   for (const opt of meta.options) {
     const row = document.createElement("div");
@@ -1332,15 +1361,39 @@ function buildChainControl(meta) {
     note.textContent = opt.note || "";
 
     row.append(box, name, note);
-    list.appendChild(row);
-    rows.set(opt.value, { row, box, note, option: opt });
+    const entry = { row, box, note, option: opt, action: null };
+    rows.set(opt.value, entry);
 
-    // 勾选框不禁用：允许先勾上再去填地址，不逼用户来回跑
+    if (opt.fixed) {
+      // 前置条件：固定第一行、已勾、不可取消、不可拖。
+      row.dataset.fixed = "1";
+      row.classList.add("gs-chain-row--fixed");
+      box.checked = true;
+      box.disabled = true;
+      list.appendChild(row);
+      continue;
+    }
+
+    if (opt.model) {
+      // 本地小模型：没装时置灰，行尾那个按钮负责装/卸（状态来自 /formula-models）。
+      row.dataset.model = opt.model;
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = "gs-chain-act";
+      action.addEventListener("click", () => void toggleFormulaModel(entry));
+      row.appendChild(action);
+      entry.action = action;
+      modelRowRefreshers.add(() => refreshModelRow(entry));
+    }
+
+    list.appendChild(row);
+
+    // 勾选框不禁用：允许先勾上再去填地址，不逼用户来回跑（模型行另有一套禁用规则）
     box.addEventListener("change", () => {
       syncEmptyHint();
       onDraftChange();
     });
-    wireChainDrag(row, list);
+    wireChainDrag(row, list, pinFixedRows);
   }
 
   // 全不勾时提醒一下真正会用的内置顺序（这条只是提示，不进 read()）
@@ -1356,6 +1409,15 @@ function buildChainControl(meta) {
     let any = false;
     for (const entry of rows.values()) if (entry.box.checked) any = true;
     empty.hidden = any;
+  }
+
+  // 固定行永远排在最上面：拖拽只允许在可选行之间换位。
+  function pinFixedRows() {
+    const fixedRows = meta.options
+      .filter((opt) => opt.fixed)
+      .map((opt) => rows.get(opt.value)?.row)
+      .filter(Boolean);
+    for (let i = fixedRows.length - 1; i >= 0; i -= 1) list.insertBefore(fixedRows[i], list.firstChild);
   }
 
   // 本地后端依赖一项配置：填了就可用，空着就直说它会被跳过。只碰备注，不动勾选。
@@ -1385,7 +1447,11 @@ function buildChainControl(meta) {
       const entry = rows.get(el.dataset.value);
       if (entry && entry.box.checked) picked.push(el.dataset.value);
     }
-    return picked.join(">");
+    if (!asArray) return picked.join(">");
+    // 存数组时固定项永远在首位，不受 DOM 顺序影响
+    const fixedValues = meta.options.filter((opt) => opt.fixed).map((opt) => opt.value);
+    const fixedPicked = fixedValues.filter((value) => picked.includes(value));
+    return fixedPicked.concat(picked.filter((value) => !fixedPicked.includes(value)));
   }
 
   function write(value) {
@@ -1402,7 +1468,11 @@ function buildChainControl(meta) {
       const entry = rows.get(v);
       if (entry) list.appendChild(entry.row);
     }
-    for (const [v, entry] of rows) entry.box.checked = chosen.has(v);
+    for (const [v, entry] of rows) {
+      // 固定项永远勾着（它不是一个可选后端）
+      entry.box.checked = entry.option.fixed ? true : chosen.has(v);
+    }
+    pinFixedRows();
     syncEmptyHint();
     // 这一轮写完之后再算一遍备注，那时地址字段已经有值了
     queueMicrotask(refreshNotes);
@@ -1413,6 +1483,152 @@ function buildChainControl(meta) {
   chainRefreshers.add(refreshNotes);
 
   return { node: wrap, read, write, type: "chain" };
+}
+
+// ---------------------------------------------------------------- 公式小模型的装 / 卸
+
+function formulaModelById(id) {
+  const models = formulaModelState.data?.models;
+  return Array.isArray(models) ? models.find((item) => item.id === id) || null : null;
+}
+
+function refreshModelRows() {
+  for (const refresh of modelRowRefreshers) refresh();
+}
+
+/** 一个模型行的状态：未装置灰 + 「点此安装」，已装显示实际占用 + 「卸载」。 */
+function refreshModelRow(entry) {
+  const option = entry.option;
+  const action = entry.action;
+  if (!action) return;
+  const sizeText = `约 ${option.sizeMb} MB`;
+  const busy = formulaModelState.busy[option.model] === true;
+
+  if (busy) {
+    entry.row.dataset.state = "busy";
+    entry.note.textContent = `正在下载（${sizeText}）…`;
+    entry.box.disabled = true;
+    action.hidden = false;
+    action.disabled = true;
+    action.textContent = "下载中…";
+    delete action.dataset.confirm;
+    return;
+  }
+
+  const state = formulaModelById(option.model);
+  if (!state) {
+    // 还没拿到状态（或读失败了）：不编造一个「未安装」出来，只把按钮收起来。
+    entry.row.dataset.state = "unknown";
+    entry.note.textContent = formulaModelState.error ? "状态读取失败" : "状态读取中…";
+    entry.note.dataset.kind = formulaModelState.error ? "err" : "";
+    entry.box.disabled = true;
+    action.hidden = true;
+    return;
+  }
+
+  delete entry.note.dataset.kind;
+  action.hidden = false;
+  action.disabled = false;
+  if (state.installed) {
+    entry.row.dataset.state = "installed";
+    entry.note.textContent = `已安装，占用 ${humanBytes(state.bytes)}`;
+    entry.box.disabled = false;
+    action.dataset.kind = "remove";
+    if (action.dataset.confirm !== "1") action.textContent = "卸载";
+    return;
+  }
+  entry.row.dataset.state = "missing";
+  entry.note.textContent = `未安装（${sizeText}），点此安装`;
+  // 没装就不能勾：勾了也不会生效，不如直说
+  entry.box.disabled = true;
+  action.dataset.kind = "install";
+  action.textContent = "安装";
+  delete action.dataset.confirm;
+}
+
+// 卸载是不可撤销的（要重新下几百 MB），所以走两下：先问一句，再真删。
+// 四秒内不按第二次就自己收回，不把一个「确认卸载？」一直挂在界面上。
+async function toggleFormulaModel(entry) {
+  const option = entry.option;
+  const state = formulaModelById(option.model);
+  if (!state || formulaModelState.busy[option.model]) return;
+
+  if (!state.installed) {
+    await installFormulaModel(option.model);
+    return;
+  }
+
+  if (entry.action.dataset.confirm !== "1") {
+    entry.action.dataset.confirm = "1";
+    entry.action.textContent = "确认卸载？";
+    setTimeout(() => {
+      if (entry.action?.dataset.confirm === "1") {
+        delete entry.action.dataset.confirm;
+        refreshModelRow(entry);
+      }
+    }, 4000);
+    return;
+  }
+  delete entry.action.dataset.confirm;
+  await removeFormulaModel(option.model);
+}
+
+async function installFormulaModel(id) {
+  formulaModelState.busy[id] = true;
+  refreshModelRows();
+  setNote("正在下载权重，体积较大，别关这个页面…");
+  try {
+    const { data } = await withTimeout(
+      apiPost(API.formulaInstall, { id }),
+      MODEL_INSTALL_TIMEOUT_MS,
+      "下载公式模型",
+    );
+    if (Array.isArray(data?.models)) formulaModelState.data = { ...(formulaModelState.data || {}), models: data.models };
+    if (!data?.ok) throw new Error(data?.error || "下载失败");
+    setNote("权重装好了。勾上它就能参与公式兜底，下一次提取就会用上。", "ok");
+  } catch (error) {
+    setNote(`下载失败：${error?.message || error}`, "err");
+  } finally {
+    delete formulaModelState.busy[id];
+    refreshModelRows();
+  }
+}
+
+async function removeFormulaModel(id) {
+  formulaModelState.busy[id] = true;
+  refreshModelRows();
+  setNote("正在卸载…");
+  try {
+    const { data } = await withTimeout(
+      apiPost(API.formulaRemove, { id }),
+      STATUS_TIMEOUT_MS,
+      "卸载公式模型",
+    );
+    if (Array.isArray(data?.models)) formulaModelState.data = { ...(formulaModelState.data || {}), models: data.models };
+    if (!data?.ok) throw new Error(data?.error || "卸载失败");
+    setNote("权重已删掉。它在链上的勾选状态还留着，重新装上就能继续用。", "ok");
+  } catch (error) {
+    setNote(`卸载失败：${error?.message || error}`, "err");
+  } finally {
+    delete formulaModelState.busy[id];
+    refreshModelRows();
+  }
+}
+
+async function loadFormulaModels() {
+  formulaModelState.loading = true;
+  refreshModelRows();
+  try {
+    const { data } = await withTimeout(api(API.formulaModels), STATUS_TIMEOUT_MS, "读取公式模型状态");
+    if (!data || data.ok === false) throw new Error(data?.error || "后端返回失败");
+    formulaModelState.data = { models: data.models || [], root: data.root || "" };
+    formulaModelState.error = "";
+  } catch (error) {
+    formulaModelState.error = String(error?.message || error);
+  } finally {
+    formulaModelState.loading = false;
+    refreshModelRows();
+  }
 }
 
 function buildField(key) {
@@ -2073,6 +2289,9 @@ function readAll() {
       out[key] = num;
     } else if (meta.type === "boolean") {
       out[key] = !!control.read();
+    } else if (meta.type === "chain" && meta.array) {
+      // 公式链存数组（顺序即优先级），不能像 PDF / 图片链那样拼成字符串
+      out[key] = control.read();
     } else {
       out[key] = String(control.read());
     }
@@ -2105,7 +2324,9 @@ function currentValues() {
   const out = {};
   for (const [key, control] of controls) {
     const meta = FIELDS[key];
-    out[key] = meta.type === "boolean" ? !!control.read() : String(control.read());
+    if (meta.type === "boolean") out[key] = !!control.read();
+    else if (meta.type === "chain" && meta.array) out[key] = control.read();
+    else out[key] = String(control.read());
   }
   return out;
 }
@@ -2114,16 +2335,17 @@ function isDirty() {
   const now = currentValues();
   for (const key of Object.keys(FIELDS)) {
     const meta = FIELDS[key];
-    const a = String(now[key]);
-    const b = String(loaded[key] ?? "");
-    // 降级链存的是字符串，读回来时已经把 "a;b" 规范化成 "a>b"，直接比字符串会在刚打开页就误报改动。
-    // 两边都拆成后端数组逐项比，顺序也算。（只认清单内的值，跟控件里的解析一致）
+    // 降级链存的是字符串（公式链是数组），读回来时已经把 "a;b" 规范化成 "a>b"，
+    // 直接比会在刚打开页就误报改动。两边都拆成后端数组逐项比，顺序也算。
+    // （只认清单内的值，跟控件里的解析一致）
     if (meta.type === "chain") {
-      const left = chainValues(a, meta.options);
-      const right = chainValues(b, meta.options);
+      const left = chainValues(now[key], meta.options);
+      const right = chainValues(loaded[key], meta.options);
       if (left.length !== right.length || left.some((v, i) => v !== right[i])) return true;
       continue;
     }
+    const a = String(now[key]);
+    const b = String(loaded[key] ?? "");
     // 多值字段显示时做过规范化，比较也得用同一套，否则一进页就报“有未保存的改动”
     if (meta.lines ? normalizeLines(a) !== normalizeLines(b) : a !== b) return true;
   }
@@ -2806,6 +3028,7 @@ async function reloadConfig() {
     setNote(`读取设置失败：${error?.message || error}`, "err");
   }
   void loadDeps();
+  void loadFormulaModels();
   void probeTokenBar();
 }
 
@@ -2846,5 +3069,6 @@ async function reloadConfig() {
   }
   ui.root.setAttribute("aria-busy", "false");
   void loadDeps();
+  void loadFormulaModels();
   void probeTokenBar();
 })();

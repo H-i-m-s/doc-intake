@@ -15,6 +15,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .base import BaseExtractor, ExtractionResult
+import formula_fallback
 from legacy_converter import (
     LegacyConversionError,
     convert_legacy_document,
@@ -60,6 +61,11 @@ class PptxExtractor(BaseExtractor):
         super().__init__(settings)
         self.omml_converter = OmmlToLatexConverter()
         self._mathtype_converter = None
+        # 公式兜底链：每次 extract 重置。PPTX 的媒体是「正文引用到了才落盘」，
+        # 所以链上一旦认出来，那张预览图天然不会被抽取、也不会进 result.images。
+        self._formula: "formula_fallback.FormulaFallback | None" = None
+        self._warnings_ledger: list[str] | None = None
+        self._zf = None
 
     @property
     def mathtype_converter(self):
@@ -104,10 +110,16 @@ class PptxExtractor(BaseExtractor):
             media_records = self._assign_numbers(used_media, zf, result.warnings)
 
             # 第四步：提取内容(markdown)
-            result.markdown = self._extract_content(
-                slides, media_records, mathtype_equations, zf,
-                path.name, include_images
-            )
+            # 公式兜底链在正文阶段跑：认出来了就返回 $…$，那张预览图不构成引用，
+            # 第五步自然不会把它的 PNG 写进输出目录。
+            self._start_formula_fallback(result, zf)
+            try:
+                result.markdown = self._extract_content(
+                    slides, media_records, mathtype_equations, zf,
+                    path.name, include_images
+                )
+            finally:
+                self._stop_formula_fallback()
 
             # 第五步：抽取媒体文件
             # 只抽 markdown 里真正引用到的媒体。公式 OLE 的预览图现在一律收集进来
@@ -136,7 +148,37 @@ class PptxExtractor(BaseExtractor):
             "reader": "pptx_extractor",
             "slides": len(slides),
         }
+        entries = self._formula.entries if self._formula is not None else []
+        if entries:
+            result.metadata["formulaFallbacks"] = entries
         return result
+
+    # ========== 公式兜底链 ==========
+
+    def _start_formula_fallback(self, result: ExtractionResult, zf) -> None:
+        self._formula = formula_fallback.FormulaFallback(self.settings)
+        self._warnings_ledger = result.warnings
+        self._zf = zf
+
+    def _stop_formula_fallback(self) -> None:
+        if self._formula is not None:
+            self._formula.close()
+        self._zf = None
+
+    def _recover_formula_preview(self, media_path: str, index: int) -> str | None:
+        """预览图（zip 内 EMF/WMF/图片）交链识别。返回 LaTeX 或 None。"""
+        runner = self._formula
+        if runner is None or not runner.active or not media_path:
+            return None
+        image_path = runner.materialize(self._zf, media_path) if self._zf is not None else None
+        if not image_path:
+            return None
+        latex, backend = runner.recover(image_path, index)
+        if not latex:
+            return None
+        if self._warnings_ledger is not None:
+            self._warnings_ledger.append(f"第 {index} 条公式由 {backend} 还原（原为图片）")
+        return latex
 
     # ========== MathType 公式映射 ==========
 
@@ -829,6 +871,8 @@ class PptxExtractor(BaseExtractor):
         rId = ole.get(f"{_R_NS}id", "")
 
         if "Equation" in prog_id:
+            # 编号按公式对象在全文里的出现次序发，跟 slide 顺序一致。
+            index = self._formula.next_index() if self._formula is not None else 0
             # 本页的 rId → LaTeX 映射由 _extract_content 统一构建后逐层传进来。
             # 这里曾自己用空列表重建映射，导致映射恒为空、MathType 解出的 LaTeX 被丢弃，
             # 只能退回预览图（没有预览图的公式则彻底消失）。
@@ -837,6 +881,14 @@ class PptxExtractor(BaseExtractor):
 
             preview = self._get_ole_preview(graphic_frame, media_records, zf)
             if preview:
+                # 预览图先给小模型试一次：认出来就用 LaTeX 换掉图片。
+                # 链为空时连关系表都不再扫一遍。
+                if self._formula is not None and self._formula.active:
+                    info = self._get_ole_preview_info(graphic_frame, media_records, zf)
+                    if info is not None:
+                        latex = self._recover_formula_preview(info["original_path"], index)
+                        if latex:
+                            return f"${latex}$"
                 return preview
         return ""
 
@@ -852,10 +904,36 @@ class PptxExtractor(BaseExtractor):
                             return preview
         return None
 
+    def _get_ole_preview_info(self, graphic_frame, media_records, zf):
+        """与 _get_ole_preview 同一套匹配，但返回媒体记录（链需要 zip 内原路径）。"""
+        for child in graphic_frame.iter():
+            tag = _local_name(child.tag)
+            if tag == "Fallback":
+                for blip in self._find_all(child, "blip"):
+                    embed = blip.get(f"{_R_NS}embed", "")
+                    if embed:
+                        info = self._find_preview_info_by_rid(embed, media_records, zf)
+                        if info is not None:
+                            return info
+        return None
+
     def _find_preview_by_rid(self, rid, media_records, zf):
         stem = getattr(self, '_current_stem', '')
-        # 只在当前 slide 的 rels 里找。rId 是每页独立编号的(slide1 和 slide5 都有
-        # rId3)，跨页搜索会把别的页的预览图当成本页的，挂上错误的公式图片。
+        info = self._find_preview_info_by_rid(rid, media_records, zf)
+        if info is None:
+            return None
+        return format_media_ref(
+            f"{stem}_media/{info['new_name']}",
+            "image",
+            info.get("alt", "formula") or "formula",
+        )
+
+    def _find_preview_info_by_rid(self, rid, media_records, zf):
+        """rId → 当前页预览图的媒体记录（只在当前 slide 的 rels 里找）。
+
+        rId 是每页独立编号的(slide1 和 slide5 都有 rId3)，跨页搜索会把别的页的预览图
+        当成本页的，挂上错误的公式图片。
+        """
         slide_path = getattr(self, '_current_slide_path', None)
         if not slide_path:
             return None
@@ -871,11 +949,7 @@ class PptxExtractor(BaseExtractor):
             if original_path in media_records:
                 info = media_records[original_path]
                 if info["kind"] == "image":
-                    return format_media_ref(
-                        f"{stem}_media/{info['new_name']}",
-                        "image",
-                        info.get("alt", "formula") or "formula",
-                    )
+                    return {**info, "original_path": original_path}
         return None
 
     def _extract_pic_media(self, elem, media_records, zf, stem, slide_path):

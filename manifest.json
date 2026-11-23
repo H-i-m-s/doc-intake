@@ -73,6 +73,12 @@
             "default": "",
             "description": "留空 = 自动 oxr>paddleocr>paddleocr-local。用 > 或 ; 分隔，按顺序尝试"
           },
+          "formulaChain": {
+            "type": "array",
+            "title": "公式识别降级链",
+            "default": ["local"],
+            "description": "有序后端 id 列表：local（OMML + MathType，永远在首位、不可取消）→ 已安装的小模型（texo / plus-m）。只在这里配置，不进工具参数"
+          },
           "mineruCredentials": {
             "type": "string",
             "title": "MinerU Token",
