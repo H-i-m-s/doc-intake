@@ -142,7 +142,7 @@
             "type": "string",
             "title": "MinerU 启动器路径",
             "default": "",
-            "description": "必填（仅自动拉起时）。填 mineru-kit.exe 的完整路径，例如 E:\\Conda\\envs_dirs\\mineru\\Scripts\\mineru-kit.exe。只认文件，不认目录"
+            "description": "必填（仅自动拉起时）。填 mineru-kit.exe 的完整路径，例如 C:\\miniconda3\\envs\\mineru\\Scripts\\mineru-kit.exe。只认文件，不认目录"
           },
           "mineruLocalPort": {
             "type": "number",

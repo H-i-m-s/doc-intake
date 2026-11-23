@@ -37,7 +37,7 @@
 | 配置项 | v1 | v2 |
 |---|---|---|
 | `pdfBackendChain` | 数组，如 `["mineru","local"]` | **字符串**，用 `>` 或 `;` 分隔，如 `mineru>paddleocr>local`；留空 = 自动 |
-| `savePath` | 默认写死 `D:\Agent` | 留空 = 系统文档目录下的 `doc-intake`（按各自机器算，不写死盘符） |
+| `savePath` | 默认写死在插件目录里 | 留空 = 系统文档目录下的 `doc-intake`（按各自机器算，不写死盘符） |
 
 **和 v1 一样的地方**：文件夹路径照旧自动展开、媒体提取、公式转 LaTeX、降级链、保存策略、
 `doc_intake` 工具的名字与参数全部不变。

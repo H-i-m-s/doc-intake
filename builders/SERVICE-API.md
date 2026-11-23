@@ -27,8 +27,8 @@
 const res = await sdk.bus.requestService(
   "app:doc-intake/extract",
   {
-    sources: ["D:\\文档\\报告.pdf"],
-    outputDir: "D:\\文档\\out",
+    sources: ["C:\\Users\\me\\Documents\\报告.pdf"],
+    outputDir: "C:\\Users\\me\\Documents\\out",
   },
   { timeout: 60000 }
 );

@@ -58,7 +58,7 @@ const FIELDS = {
     type: "string",
     wide: true,
     picker: "file",
-    placeholder: "例如 E:\\Miniconda\\envs\\Agent\\python.exe",
+    placeholder: "例如 C:\\miniconda3\\envs\\doc-intake\\python.exe",
   },
   defaultBackend: {
     title: "默认解析后端",
@@ -239,7 +239,7 @@ const FIELDS = {
     type: "string",
     wide: true,
     picker: "file",
-    placeholder: "例如 E:\\Conda\\envs_dirs\\mineru\\Scripts\\mineru-kit.exe",
+    placeholder: "例如 C:\\miniconda3\\envs\\mineru\\Scripts\\mineru-kit.exe",
   },
   mineruLocalPort: {
     title: "自管实例端口",

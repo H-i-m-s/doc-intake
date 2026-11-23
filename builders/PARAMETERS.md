@@ -133,7 +133,7 @@ Token 检测不在工具列表里，它不是「提取文档」这类活，而�
 | `mineruLocalEndpoint` | `string` | `""` | 自建 MinerU 服务地址，如 `http://127.0.0.1:8000`。留空 = 用插件自管的实例；填了就用填的这个，只探活，不会替它启动也不会替它停。 |
 | `mineruLocalApiKey` | `string` | `""` | 自建 MinerU 的 API Key，服务端用 `--api-key` 启动时才需要，一般留空。 |
 | `mineruLocalTier` | `"" \| "flash" \| "basic" \| "standard" \| "advanced"` | `""` | 自建 MinerU 的档位，留空按服务端默认。选服务端没装的档会被拒（`GET /v1/tiers` 能看到的才算有）。 |
-| `mineruKitPath` | `string` | `""` | `mineru-kit.exe` 的完整路径，如 `E:\Conda\envs_dirs\mineru\Scripts\mineru-kit.exe`。只在自动拉起时需要，只认文件不认目录。 |
+| `mineruKitPath` | `string` | `""` | `mineru-kit.exe` 的完整路径，如 `C:\miniconda3\envs\mineru\Scripts\mineru-kit.exe`。只在自动拉起时需要，只认文件不认目录。 |
 | `mineruLocalPort` | `number` | `8010` | 自管实例的起始端口。被占就自动往后找邻位（最多试 21 个），解析用的地址跟实际端口走。 |
 | `mineruLocalIdleSeconds` | `number` | `300` | 空闲多少秒后卸载自管实例。`0` = 每次解析完立刻关。 |
 | `mineruLocalAutoStart` | `boolean` | `true` | 关掉后只用已在运行的服务，不再自动拉起。 |
