@@ -1013,6 +1013,169 @@ table.matrix tr:last-child td { border-bottom: 0; }
   color: var(--g-mute);
 }
 
+/* ── 面板示意图 ─────────────────────────────────── */
+.gui-wrap {
+  display: grid;
+  grid-template-columns: 236px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.gui-win {
+  border: 1px solid var(--g-line);
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--g-ground);
+}
+
+.gui-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--g-line);
+  background: rgba(140, 170, 220, 0.06);
+}
+
+.gui-title-text {
+  font-size: 11.4px;
+  font-weight: 600;
+  color: var(--g-ink);
+}
+
+.gui-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.gui-act {
+  font-size: 10px;
+  color: var(--g-mute);
+}
+
+.gui-body { padding: 9px 10px 10px; }
+
+.gui-row {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.gui-label {
+  font-size: 10.8px;
+  color: var(--g-soft);
+}
+
+.gui-btns { display: flex; gap: 5px; justify-content: flex-end; }
+
+.gui-btn {
+  font-size: 10.2px;
+  padding: 2px 7px;
+  border: 1px solid var(--g-line);
+  border-radius: 5px;
+  color: var(--g-soft);
+}
+
+.gui-area {
+  min-height: 34px;
+  border: 1px solid var(--g-line);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 10.2px;
+  color: var(--g-mute);
+  margin-bottom: 7px;
+}
+
+.gui-area.is-mono { font-family: var(--g-mono); color: var(--g-soft); }
+
+.gui-run {
+  text-align: center;
+  font-size: 11.4px;
+  font-weight: 600;
+  color: #1a1620;
+  background: linear-gradient(180deg, #f2a9d4, #e58bc2);
+  border-radius: 7px;
+  padding: 6px 0;
+  margin: 8px 0 9px;
+}
+
+.gui-adv {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-top: 1px solid var(--g-line);
+}
+
+.gui-adv-chev { font-size: 9px; color: var(--g-mute); }
+.gui-adv-label { font-size: 11px; color: var(--g-soft); }
+
+.gui-inner {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--g-line);
+}
+
+.gui-field {
+  border: 1px solid var(--g-line);
+  border-radius: 5px;
+  padding: 4px 7px;
+  font-size: 10.2px;
+  color: var(--g-soft);
+}
+
+.gui-checks {
+  display: grid;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.gui-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gui-box {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--g-line);
+  flex: 0 0 auto;
+}
+
+.gui-box.is-on {
+  background: rgba(var(--g-accent-rgb), 0.7);
+  border-color: transparent;
+}
+
+.gui-check-text { font-size: 10.2px; color: var(--g-soft); }
+
+.gui-fields { display: grid; gap: 5px; }
+
+.gui-field-row {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 9px;
+  align-items: baseline;
+}
+
+.gui-field-k {
+  font-size: 11.4px;
+  font-weight: 600;
+  color: var(--g-ink);
+}
+
+.gui-field-v {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--g-soft);
+}
+
 /* 长图分割示意图 */
 .fig-longpic {
   display: grid;

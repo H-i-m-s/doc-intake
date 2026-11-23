@@ -367,6 +367,76 @@
       return box;
     },
 
+    gui: function () {
+      var box = figWrap("gui");
+      var win = el("div", "gui-win");
+
+      var title = el("div", "gui-title");
+      title.appendChild(el("span", "gui-title-text", "文档提取"));
+      var acts = el("div", "gui-acts");
+      acts.appendChild(el("span", "gui-act", "—"));
+      acts.appendChild(el("span", "gui-act", "□"));
+      acts.appendChild(el("span", "gui-act", "×"));
+      title.appendChild(acts);
+      win.appendChild(title);
+
+      var body = el("div", "gui-body");
+
+      var srcRow = el("div", "gui-row");
+      srcRow.appendChild(el("span", "gui-label", "源"));
+      var btns = el("div", "gui-btns");
+      btns.appendChild(el("span", "gui-btn", "选文件"));
+      btns.appendChild(el("span", "gui-btn", "选文件夹"));
+      srcRow.appendChild(btns);
+      body.appendChild(srcRow);
+      body.appendChild(el("div", "gui-area", "每行一个文件或文件夹"));
+
+      var saveRow = el("div", "gui-row");
+      saveRow.appendChild(el("span", "gui-label", "保存到"));
+      var sb = el("div", "gui-btns");
+      sb.appendChild(el("span", "gui-btn", "浏览…"));
+      saveRow.appendChild(sb);
+      body.appendChild(saveRow);
+      body.appendChild(el("div", "gui-area is-mono", "D:\\Agent\\Doc-intake"));
+
+      body.appendChild(el("div", "gui-run", "开始提取"));
+
+      var adv = el("div", "gui-adv");
+      adv.appendChild(el("span", "gui-adv-chev", "▾"));
+      adv.appendChild(el("span", "gui-adv-label", "高级选项"));
+      body.appendChild(adv);
+
+      var inner = el("div", "gui-inner");
+      [
+        ["解析后端", "自动"],
+        ["页码范围", "如 1-20，留空为全部"],
+        ["语言", "zh"]
+      ].forEach(function (r) {
+        var row = el("div", "gui-row");
+        row.appendChild(el("span", "gui-label", r[0]));
+        row.appendChild(el("div", "gui-field", r[1]));
+        inner.appendChild(row);
+      });
+      var checks = el("div", "gui-checks");
+      [
+        ["提取图片与媒体", true],
+        ["另存 JSON", true],
+        ["只做图片分割测试", false],
+        ["只返回状态（不返回正文）", false]
+      ].forEach(function (c) {
+        var lab = el("label", "gui-check");
+        lab.appendChild(el("span", "gui-box" + (c[1] ? " is-on" : "")));
+        lab.appendChild(el("span", "gui-check-text", c[0]));
+        checks.appendChild(lab);
+      });
+      inner.appendChild(checks);
+      body.appendChild(inner);
+
+      win.appendChild(body);
+      box.appendChild(win);
+      return box;
+    },
+
     dispatch: function () {
       var box = figWrap("dispatch");
       var top = el("div", "fig-flow is-center");
@@ -762,6 +832,21 @@
     bridge.appendChild(el("h3", "bridge-title", data.bridgeTitle));
     bridge.appendChild(el("p", "bridge-text", data.bridgeText));
     page.appendChild(bridge);
+
+    var gui = section(data.guiTitle, data.guiLead);
+    var guiWrap = el("div", "gui-wrap");
+    guiWrap.appendChild(FIGURES.gui());
+    var guiList = el("div", "gui-fields");
+    data.guiFields.forEach(function (f) {
+      var row = el("div", "gui-field-row");
+      row.appendChild(el("span", "gui-field-k", f.k));
+      row.appendChild(el("span", "gui-field-v", f.v));
+      guiList.appendChild(row);
+    });
+    guiWrap.appendChild(guiList);
+    gui.appendChild(guiWrap);
+    gui.appendChild(el("p", "bc-note", data.guiNote));
+    page.appendChild(gui);
 
     return page;
   }
