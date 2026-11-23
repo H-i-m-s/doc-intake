@@ -339,8 +339,17 @@ _LOCAL_BACKEND_REQUIREMENTS = {
 
 # 需要 Token 才有意义的云端后端：键是后端 id，值是必须非空的设置项。
 # 与上面那张表分开：自建后端缺地址是「没部署」，缺 Token 是「没登录」，报错话术不一样。
+# mineru 故意不列在这里：它的公开接口有免 Token 的 flash 档（有 10MB / 20 页上限），
+# 把它按 Token 门控等于把一个能用的免费档直接关掉。
 _TOKEN_BACKEND_REQUIREMENTS = {
     "oxr": "oxrTokens",
+    "paddleocr": "paddleTokens",
+}
+
+# 显式点名一个没配凭证的云端后端时，告诉用户该去填哪一格。
+_TOKEN_BACKEND_LABELS = {
+    "oxr": "OXR Token",
+    "paddleocr": "PaddleOCR Access Token",
 }
 
 
@@ -393,8 +402,9 @@ def select_backend_chain(
             )
         if not _backend_configured(explicit_backend, settings):
             if explicit_backend in _TOKEN_BACKEND_REQUIREMENTS:
+                label = _TOKEN_BACKEND_LABELS.get(explicit_backend, "Token")
                 raise ValueError(
-                    f"后端 {explicit_backend} 需要先在设置里填写 OXR Token"
+                    f"后端 {explicit_backend} 需要先在设置里填写 {label}"
                 )
             required = _LOCAL_BACKEND_REQUIREMENTS.get(explicit_backend)
             if explicit_backend == "mineru-local":

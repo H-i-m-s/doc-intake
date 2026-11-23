@@ -64,7 +64,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 
 - PDF：默认 mineru > oxr > paddleocr > mineru-local > local（云端优先、自建服务居中、本地解析兜底）；用户设置中存在自行配置项
 - 图片：默认 oxr > paddleocr > mineru > mineru-local，同样可被用户设置覆盖。
-- `oxr` 指 SoMark（云端），没填 OXR Token 时这一档会被自动跳过，不会报错。
+- `oxr` 指 SoMark（云端），`paddleocr` 指云端 PaddleOCR：没填对应 Token 时这两档会被自动跳过，不会报错。MinerU 例外——它有免 Token 的 flash 档（单文件 10MB / 20 页上限），所以不填 Token 也能跑。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM、HTML：走本地 Python 解析；旧版 DOC/XLS/PPT 会先由配置的转换层转为 OOXML，再复用对应现代格式适配器。
 - 电子书（EPUB / FB2 / FBZ / CBZ / MOBI / AZW / AZW3 / PRC）：**永远走本地**，不进降级链。云端几档做不了电子书，即使设置里的默认后端是 oxr 也照本地解析，并在 `warnings` 里说一句。CBZ（漫画）默认只按页序出图、不主动 OCR；要文字就让用户明确要走图片链。MOBI/AZW 需要可选依赖 `mobi`（GPL-3.0，插件不打包它），没装时返回的是可读的安装提示，把原话转给用户，别自己去 pip install。有 DRM 的书会被明确拒绝，不要尝试绕过。
 - 纯文本（`.txt`）：也就地解析，编码全自动判（BOM → UTF-8 → 检测库 → 自建打分），没有手动指定编码的入口。看 `metadata.encoding` 知道它按什么读的，`encodingConfidence` 低或 `replacementCount` 大于 0 时，**必须在回答里告诉用户可能认错了编码**，不要把乱码当正文总结，也不要声称自己换过编码重试。正文是逐字保真的，没有标题也没有段落重组，不要替它补。
