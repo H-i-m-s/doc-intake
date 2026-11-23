@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 2,
+  "id": "svc-probe",
+  "name": "Service Probe",
+  "version": "0.1.0",
+  "description": "探针：从另一个 App 调用 doc-intake 的对外服务，把原始返回或错误原样交出来，用来验证跨 App 调用这条路是否真的通。",
+  "entry": "index.js",
+  "icon": "assets/icon.png",
+  "minAppVersion": "0.978.0",
+  "capabilities": [
+    "app/services.call",
+    "app/tools.expose-to-model"
+  ]
+}

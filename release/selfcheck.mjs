@@ -369,7 +369,15 @@ if (!py) {
 // 包照样出得来，只是给开发者的文档偷偷没了。所以这里按 pack.mjs 的同一套判据把
 // 「真会被收进 zip 吗」重算一遍，而不是相信默认行为。
 const BUILDERS_DIR = join(ROOT, "builders");
-const REQUIRED_BUILDER_DOCS = ["SERVICE-API.md", "PARAMETERS.md"];
+const REQUIRED_BUILDER_DOCS = [
+  "SERVICE-API.md",
+  "PARAMETERS.md",
+  // 跨 App 调用的探针 App：既是可运行的最小例子，也是唯一在调用方一侧验过服务的手具。
+  // 三份文件缺一份它就不是能装的东西了，所以和文档一起按「必顶」过关。
+  "svc-probe/index.js",
+  "svc-probe/manifest.json",
+  "svc-probe/README.md",
+];
 
 const packRules = (() => {
   let raw;
