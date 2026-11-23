@@ -63,7 +63,7 @@ doc_intake(source=["a.pdf", "b.docx"], summaryOnly=true)
 默认不传 `backend`，应用会自行按文件类型和设置中的降级链处理（即若用户无明确的特殊要求，你无须传递backend，不得自作主张选择用哪个backend）。以下信息仅作为工具调用阐述，极少数情况才会用到
 
 - PDF：默认 mineru > oxr > paddleocr > mineru-local > local（云端优先、自建服务居中、本地解析兜底）；用户设置中存在自行配置项
-- 图片：默认 oxr > paddleocr，同样可被用户设置覆盖。
+- 图片：默认 mineru > oxr > paddleocr > mineru-local，同样可被用户设置覆盖。
 - `oxr` 指 SoMark（云端），没填 OXR Token 时这一档会被自动跳过，不会报错。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM、HTML：走本地 Python 解析；旧版 DOC/XLS/PPT 会先由配置的转换层转为 OOXML，再复用对应现代格式适配器。
 - 电子书（EPUB / FB2 / FBZ / CBZ / MOBI / AZW / AZW3 / PRC）：**永远走本地**，不进降级链。云端几档做不了电子书，即使设置里的默认后端是 oxr 也照本地解析，并在 `warnings` 里说一句。CBZ（漫画）默认只按页序出图、不主动 OCR；要文字就让用户明确要走图片链。MOBI/AZW 需要可选依赖 `mobi`（GPL-3.0，插件不打包它），没装时返回的是可读的安装提示，把原话转给用户，别自己去 pip install。有 DRM 的书会被明确拒绝，不要尝试绕过。

@@ -72,7 +72,7 @@
             "type": "string",
             "title": "图片后端降级链",
             "default": "",
-            "description": "留空 = 自动 oxr>paddleocr。用 > 或 ; 分隔，按顺序尝试"
+            "description": "留空 = 自动 mineru>oxr>paddleocr>mineru-local。用 > 或 ; 分隔，按顺序尝试"
           },
           "formulaChain": {
             "type": "array",

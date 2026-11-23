@@ -318,8 +318,9 @@ DEFAULT_PDF_BACKEND_CHAIN = [
     "local",
 ]
 
-# 图片链留空时的兜底：云端 SoMark（OXR）优先，其次云端 PaddleOCR。
-DEFAULT_IMAGE_BACKEND_CHAIN = ["oxr", "paddleocr"]
+# 图片链留空时的兜底：与 PDF 链同序，先云端 MinerU，再 SoMark（OXR），再云端 PaddleOCR，
+# 最后自建的本地 MinerU。缺 Token / 缺地址的档位由选链时剔除。
+DEFAULT_IMAGE_BACKEND_CHAIN = ["mineru", "oxr", "paddleocr", "mineru-local"]
 
 # 认得的所有后端 id。用户存的旧链里可能还留着已经下线的档位，
 # 选链时按这张表过滤，不然会拿着不存在的后端去跑，最后死在一个 KeyError 上。
