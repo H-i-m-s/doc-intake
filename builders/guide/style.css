@@ -860,7 +860,7 @@ table.cmp td:not(.cmp-key) { white-space: normal; min-width: 96px; }
 .svg-head { fill: rgba(var(--g-accent-rgb), 0.9); }
 
 .fig-vols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.fig-vol { display: grid; justify-items: start; gap: 3px; }
+.fig-vol { display: flex; flex-direction: column; align-items: center; gap: 5px; }
 .vol-disk {
   font-size: 10.8px;
   padding: 2px 8px;
