@@ -315,6 +315,18 @@
       row.appendChild(el("span", "fig-node", "摘要与路径"));
       box.appendChild(row);
       box.appendChild(files);
+
+      var cap = el("p", "fig-caption", "对话中发得下的部分：");
+      box.appendChild(cap);
+
+      var blocks = el("div", "fig-blocks");
+      blocks.appendChild(el("span", "fig-block", "≤ 28 KiB"));
+      blocks.appendChild(el("span", "fig-block", "≤ 28 KiB"));
+      blocks.appendChild(el("span", "fig-block", "≤ 28 KiB"));
+      blocks.appendChild(el("span", "fig-block", "≤ 28 KiB"));
+      blocks.appendChild(el("span", "fig-block is-more", "…"));
+      box.appendChild(blocks);
+      box.appendChild(el("p", "fig-caption", "默认四块，合计约 112 KiB。其余内容留在文件里，需要时按路径读取。"));
       return box;
     },
 

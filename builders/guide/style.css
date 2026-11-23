@@ -743,7 +743,7 @@ table.matrix tr:last-child td { border-bottom: 0; }
   border-radius: 50%;
   border: 1px solid var(--g-line);
 }
-.mx-dot.is-best { background: rgba(var(--g-accent-rgb), 0.85); border-color: transparent; }
+.mx-dot.is-best, .mx-dot.is-yes { background: rgba(var(--g-accent-rgb), 0.85); border-color: transparent; }
 .mx-dot.is-ok { background: transparent; border-color: rgba(var(--g-accent-rgb), 0.55); }
 .mx-dot.is-no { background: transparent; border-color: var(--g-line); border-style: dashed; }
 
@@ -780,6 +780,24 @@ table.matrix tr:last-child td { border-bottom: 0; }
   background: rgba(var(--g-accent-rgb), 0.1);
   color: var(--g-ink);
 }
+
+.fig-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.fig-block {
+  font-size: 10.4px;
+  padding: 3px 8px;
+  border: 1px solid var(--g-line);
+  border-radius: 5px;
+  color: var(--g-soft);
+  font-family: var(--g-mono);
+}
+
+.fig-block.is-more { border-style: dashed; color: var(--g-mute); }
 
 .principle {
   padding: 10px 12px 11px;
