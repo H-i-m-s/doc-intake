@@ -1,5 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-3.3.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license">
   <img src="https://img.shields.io/badge/hana-%E2%89%A5%200.978.0-lightgrey" alt="hana">
   <img src="https://img.shields.io/badge/python-3.11+-yellow" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
@@ -241,4 +242,8 @@ outputDir/
 App 的能力声明为 `app/process.spawn`、`app/tools.expose-to-model`、`app/ui.open-external`、`app/resources.read`、`app/resources.write`、`app/tasks.manage`、`app/session.start-turn`、`app/services.provide`。出站网络仅限 `mineru.net`、`somark.cn`、`paddleocr.aistudio-app.com`、`github.com`。
 
 ## 许可
+
+本项目以 Apache License 2.0 发布，正文见 `LICENSE`，归属与第三方声明见 `NOTICE`。
+
+随包分发的 `sdk/` 为 Hana App SDK，其第三方声明见 `sdk/THIRD_PARTY_NOTICES.txt`。`release/` 下的打包脚本衍生自 git-save-load 与 GitHana，按文件保留 MPL-2.0，且不随 App 分发包发布。可选依赖（Kindle 解包库、公式兜底权重）不随包分发，由用户自行安装。
 

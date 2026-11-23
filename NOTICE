@@ -1,0 +1,24 @@
+doc-intake
+Copyright 2026 H-i-m-s
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+It bundles the Hana App SDK under sdk/, published by the Hana host project under
+the Apache License 2.0. Third-party notices for that bundle are kept in
+sdk/THIRD_PARTY_NOTICES.txt and sdk/app-ui.js.LEGAL.txt.
+
+The packaging scripts under release/ are derived from the following works and
+remain licensed, file by file, under the Mozilla Public License 2.0:
+
+  - H-i-m-s/git-save-load
+  - GitHana, Copyright (c) 2026 Nyasers
+
+Those scripts are not part of the distributed App package.
+
+Optional dependencies are not distributed with this repository; they are
+installed by the user into their own Python environment:
+
+  - mobi (Kindle unpacking), GPL-3.0
+  - texo (formula fallback weights), AGPL-3.0
+  - plus-m (formula fallback weights), Apache-2.0 original weights; the ONNX
+    conversion distributed by its upstream publisher is AGPL-3.0
