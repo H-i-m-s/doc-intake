@@ -246,6 +246,113 @@
       row.appendChild(el("span", "fig-out is-bad", "猜出来的乱码正文"));
       box.appendChild(row);
       return box;
+    },
+
+    struct: function () {
+      var box = figWrap("struct");
+      var pair = el("div", "fig-pair");
+      var left = el("div", "fig-side");
+      left.appendChild(el("p", "fig-label", "文件里本来就是结构"));
+      var doc = el("div", "struct-doc");
+      doc.appendChild(el("div", "struct-row"));
+      doc.appendChild(el("div", "struct-row is-accent"));
+      doc.appendChild(el("div", "struct-row is-short"));
+      left.appendChild(doc);
+      left.appendChild(el("p", "fig-caption", "标记、目录、压缩包里的 XML"));
+
+      var right = el("div", "fig-side");
+      right.appendChild(el("p", "fig-label", "文件里只有像素"));
+      var pic = el("div", "struct-pic");
+      pic.appendChild(el("span", "struct-dot"));
+      pic.appendChild(el("span", "struct-dot is-second"));
+      right.appendChild(pic);
+      right.appendChild(el("p", "fig-caption", "截图、扫描页、粘贴进来的图片"));
+
+      pair.appendChild(left);
+      pair.appendChild(right);
+      box.appendChild(pair);
+      return box;
+    },
+
+    matrix: function () {
+      var box = figWrap("matrix");
+      var m = window.GUIDE.why.matrix;
+      var table = el("table", "matrix");
+      var thead = el("thead");
+      var tr = el("tr");
+      tr.appendChild(el("th", "mx-name", ""));
+      m.cols.forEach(function (c) { tr.appendChild(el("th", "mx-col", c)); });
+      thead.appendChild(tr);
+      table.appendChild(thead);
+      var tbody = el("tbody");
+      m.rows.forEach(function (r) {
+        var row = el("tr");
+        row.appendChild(el("td", "mx-name", r.name));
+        r.cells.forEach(function (c) {
+          var td = el("td", "mx-cell");
+          td.appendChild(el("span", "mx-dot is-" + c));
+          row.appendChild(td);
+        });
+        tbody.appendChild(row);
+      });
+      table.appendChild(tbody);
+      box.appendChild(table);
+      box.appendChild(el("p", "fig-caption", m.legend));
+      return box;
+    },
+
+    output: function () {
+      var box = figWrap("output");
+      var row = el("div", "fig-flow");
+      row.appendChild(el("span", "fig-node", "解析完成"));
+      row.appendChild(el("span", "fig-arrow", "→"));
+      row.appendChild(el("span", "fig-node is-out", "磁盘上的文件"));
+      var files = el("div", "fig-files");
+      files.appendChild(el("span", "fig-file", "正文 .md"));
+      files.appendChild(el("span", "fig-file", "媒体目录"));
+      files.appendChild(el("span", "fig-file is-optional", "元数据 .json"));
+      row.appendChild(el("span", "fig-arrow", "→"));
+      row.appendChild(el("span", "fig-node", "摘要与路径"));
+      box.appendChild(row);
+      box.appendChild(files);
+      return box;
+    },
+
+    norm: function () {
+      var box = figWrap("norm");
+      var row = el("div", "fig-flow");
+      row.appendChild(el("span", "fig-node", "段落文本"));
+      row.appendChild(el("span", "fig-node", "HTML 表格"));
+      row.appendChild(el("span", "fig-node", "带坐标的块"));
+      row.appendChild(el("span", "fig-arrow", "→"));
+      row.appendChild(el("span", "fig-node is-out", "统一成四类"));
+      box.appendChild(row);
+      var kinds = el("div", "fig-kinds");
+      ["段落", "表格", "公式", "媒体"].forEach(function (k) {
+        kinds.appendChild(el("span", "fig-kind", k));
+      });
+      box.appendChild(kinds);
+      return box;
+    },
+
+    enc: function () {
+      var box = figWrap("enc");
+      var flow = el("div", "fig-flow");
+      flow.appendChild(el("span", "fig-node", "字节序标记"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node", "严格 UTF-8"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node is-out", "候选编码打分"));
+      box.appendChild(flow);
+      var pair = el("div", "fig-pair is-tight");
+      var a = el("div", "fig-side");
+      a.appendChild(el("p", "fig-caption", "UTF-8 读出：你好"));
+      var b = el("div", "fig-side");
+      b.appendChild(el("p", "fig-caption", "GBK 读出：浣犲ソ"));
+      pair.appendChild(a);
+      pair.appendChild(b);
+      box.appendChild(pair);
+      return box;
     }
   };
 
@@ -501,6 +608,7 @@
       head.appendChild(el("span", "principle-no", p.no));
       head.appendChild(el("h3", "principle-title", p.title));
       card.appendChild(head);
+      if (p.figure && FIGURES[p.figure]) card.appendChild(FIGURES[p.figure]());
       card.appendChild(el("p", "principle-text", p.text));
       pGrid.appendChild(card);
     });
