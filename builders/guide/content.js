@@ -180,8 +180,8 @@ window.GUIDE = {
       {
         id: "offline",
         label: "完全离线",
-        chain: ["纯本地", "本地 MinerU"],
-        advice: "文件不离开本机。代价是扫描件只能依靠本地 MinerU，首次唤醒需要等待模型加载。"
+        chain: ["本地 MinerU", "纯本地"],
+        advice: "文件不离开本机。扫描件由本地 MinerU 识别，其它的文档由本机直接解析；首次唤醒需要等待模型加载。"
       },
       {
         id: "cloud",
@@ -192,8 +192,8 @@ window.GUIDE = {
       {
         id: "mixed",
         label: "混合",
-        chain: ["MinerU 云", "本地 MinerU", "纯本地"],
-        advice: "优先使用云端，断网或额度用尽时自动转为本机处理。多数用户采用这一组合。"
+        chain: ["MinerU 云", "SoMark 云", "PaddleOCR 云", "本地 MinerU"],
+        advice: "三档云端依次尝试，都不可用时转入本机上的 MinerU。断网或额度用尽时仍然可以完成处理，多数用户采用这一组合。"
       },
       {
         id: "local-mineru",
