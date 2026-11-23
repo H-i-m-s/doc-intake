@@ -53,7 +53,7 @@
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `pdfBackendChain` | `string` | `""` | PDF 降级链。留空 = `mineru → oxr → paddleocr → mineru-local → local`。分隔符接受 `>`、`;`、`,`、换行。链上缺凭证（MinerU / OXR / PaddleOCR 无 Token）或缺地址（两个自建服务的 endpoint 为空）的档位会被自动剔除，不会白失败一次。 |
-| `imageBackendChain` | `string` | `""` | 图片降级链。留空 = `mineru → oxr → paddleocr → mineru-local`。同一个分隔符规则。 |
+| `imageBackendChain` | `string` | `""` | 图片降级链。留空 = `oxr → paddleocr → mineru → mineru-local`。同一个分隔符规则。 |
 | `formulaChain` | `string[]` | `["local"]` | 公式识别降级链，**顺序即优先级**。`local`（现有 OMML + MathType 转换器）永远首位、不可取消，它是前置条件而不是可选后端；`texo` / `plus-m` 是本机小模型，要装了才参与（未装静默剔除，只记一条 debug）。图片不落盘的公式才会走到它：成功时正文换成 `$latex$`，那张预览图既不写入 `images`、也不留在输出目录。只在设置页配置，**不进工具参数**，也没有 per-call 覆盖。 |
 | `autoSplitLargePDF` | `boolean` | `true` | 自动切割超限 PDF。切割在插件 Python 进程内按 `splitChunkPages` 生成内存 PDF bytes 直接上传，**不会**在源文件目录留下 `*_chunks` 文件夹或 chunk PDF。 |
 | `splitChunkPages` | `number` | `180` | 内存分块时每块页数，取小于 MinerU 200 页上限的值。 |
@@ -251,4 +251,4 @@ Token 检测不在工具列表里，它不是「提取文档」这类活，而�
 3. **服务入口的读取范围默认是空的。** 空着不是「全放开」，而是一律拒收外部路径；第一次接进来报 `PATH_NOT_ALLOWED` 多半是这个原因，而不是路径写错。
 4. **`summaryOnly` 不是「只探测文件在不在」。** 它照常解析、照常落盘，只是不回正文；拿它当轻量预检会白烧一遍额度。
 5. **保存下来的 JSON 与工具返回的路径块不是同一套路径。** 前者是相对路径（便于整个目录搬走），后者是绝对路径（便于当场读取）。
-6. **图片链缺凭证就整链失败。** 默认 `mineru → oxr → paddleocr → mineru-local`，前三个都要 Token，最后一档要本地服务或启动器路径；四档都没配就整链失败。
+6. **图片链缺凭证就整链失败。** 默认 `oxr → paddleocr → mineru → mineru-local`，前三个都要 Token，最后一档要本地服务或启动器路径；四档都没配就整链失败。

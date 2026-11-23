@@ -87,9 +87,9 @@ const FIELDS = {
     type: "chain",
     wide: true,
     options: [
-      { value: "mineru", label: "MinerU", note: "云端" },
       { value: "oxr", label: "OXR（SoMark）", note: "云端" },
       { value: "paddleocr", label: "PaddleOCR", note: "云端" },
+      { value: "mineru", label: "MinerU", note: "云端" },
       { value: "mineru-local", label: "MinerU（本地）", note: "填地址或启动器路径", endpoint: "mineruLocalEndpoint", altEndpoint: "mineruKitPath", altSkipText: "地址和启动器路径都没填，会被跳过" },
     ],
   },
