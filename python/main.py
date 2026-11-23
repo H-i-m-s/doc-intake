@@ -348,6 +348,13 @@ def _has_any_token(value) -> bool:
 
 def _backend_configured(backend: str, settings: dict) -> bool:
     """自建后端要有地址、Token 后端要有 Token，其余后端默认可用。"""
+    # mineru-local 有两条路：填了服务地址就用那个；不填则由 JS 侧自管拉起，
+    # 这时“配置好了”的凭据是启动器路径。只认地址会把自管路全部排除在外。
+    if backend == "mineru-local":
+        return bool(
+            str(settings.get("mineruLocalEndpoint") or "").strip()
+            or str(settings.get("mineruKitPath") or "").strip()
+        )
     required = _LOCAL_BACKEND_REQUIREMENTS.get(backend)
     if required:
         return bool(str(settings.get(required) or "").strip())
@@ -377,6 +384,12 @@ def select_backend_chain(
                     f"后端 {explicit_backend} 需要先在设置里填写 OXR Token"
                 )
             required = _LOCAL_BACKEND_REQUIREMENTS[explicit_backend]
+            if explicit_backend == "mineru-local":
+                raise ValueError(
+                    "本地 MinerU 还没就绪：设置里既没填「MinerU 本地服务地址」，也没填"
+                    "「MinerU 启动器路径」（mineruKitPath），插件无从拉起自管实例。"
+                    "到设置页「高级设置 → MinerU」里填一次 mineru-kit.exe 的完整路径即可。"
+                )
             raise ValueError(
                 f"后端 {explicit_backend} 需要先在设置里填写「{required}」"
             )
@@ -542,6 +555,7 @@ def extract_with_chain(
 
     # 所有档都失败
     result = ExtractionResult()
+    result.metadata = {"errorCode": "all_backends_failed"}
     if attempted:
         last = attempted[-1]
         result.warnings.append(f"所有后端都失败（最后档: {last}）")
@@ -874,6 +888,9 @@ def format_result(result: ExtractionResult):
         "warnings": result.warnings,
         "usedBackendInChain": meta.get("usedBackendInChain"),
         "authFailures": auth_failures,
+        # 失败是「正常退出 + 错误正文」的形态，光看 markdown 分不出是文档本身
+        # 就叫「错误」还是我们没跑成；这个码是判定的依据。
+        "errorCode": meta.get("errorCode"),
     }
     # 电子书这类本地提取器会带书名、作者、章节数；纯文本会带编码与规模。
     # compact_meta 是白名单，不转发的字段等于白读了。
@@ -1027,7 +1044,21 @@ def _run(args) -> dict:
     # 做不了电子书，进去了只会把进度、超时、返回体按错的那套走。
     # 判据用格式清单里的粗类，而不是写死类型名：以后再加一种电子书格式，这里不用改。
     ebook_local_only = formats.category_of(Path(args.source).suffix.lower()) == "ebook"
-    backend_chain = ["local"] if ebook_local_only else select_backend_chain(file_type, backend, settings)
+    if ebook_local_only:
+        backend_chain = ["local"]
+    else:
+        try:
+            backend_chain = select_backend_chain(file_type, backend, settings)
+        except ValueError as exc:
+            # 配置不全是「这次解析做不成」，不是崩溃。走正常的失败出参，
+            # 面板与 agent 才能拿到那句话；抛 traceback 只会剩下一句「退出码 1」。
+            broken = ExtractionResult()
+            broken.markdown = f"# 错误\n\n{exc}"
+            broken.warnings.append(str(exc))
+            broken.metadata = {"errorCode": "backend_unconfigured"}
+            return _finalize_single_result(
+                broken, args, output_dir, settings, start_time, None
+            )
     include_images = settings.get("includeMedia", settings.get("includeImages", True))
 
     chunk_state = _iter_pdf_chunks_if_needed(args, settings)
@@ -1174,6 +1205,13 @@ def _extract_memory_pdf_chunks(
         "usedBackends": sorted(used_backends),
     }
     merged.output_dir = output_dir
+    # 每一块都没跑成时，整份也算失败：否则面板会把一串错误拼成的正文当成成功。
+    codes = [
+        (chunk_result.metadata or {}).get("errorCode")
+        for _, chunk_result in chunk_results
+    ]
+    if codes and all(codes):
+        merged.metadata["errorCode"] = codes[0]
     return merged
 
 
