@@ -1013,6 +1013,64 @@ table.matrix tr:last-child td { border-bottom: 0; }
   color: var(--g-mute);
 }
 
+/* 长图分割示意图 */
+.fig-longpic {
+  display: grid;
+  gap: 5px;
+  max-width: 260px;
+}
+
+.fig-lp-line {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 7px;
+  align-items: center;
+}
+
+.fig-lp-mark {
+  font-family: var(--g-mono);
+  font-size: 10px;
+  color: var(--g-mute);
+  text-align: center;
+}
+
+.fig-lp-block {
+  height: 12px;
+  border-radius: 3px;
+  background: rgba(150, 170, 200, 0.26);
+}
+
+.fig-lp-block.is-long { width: 100%; }
+.fig-lp-block.is-short { width: 58%; }
+.fig-lp-block.is-gap {
+  height: 7px;
+  width: 100%;
+  background: rgba(var(--g-accent-rgb), 0.45);
+}
+
+.fig-rules {
+  display: grid;
+  gap: 4px;
+  margin-top: 9px;
+}
+
+.fig-rule {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.fig-rule-k {
+  font-size: 11px;
+  color: var(--g-ink);
+}
+
+.fig-rule-v {
+  font-size: 10.9px;
+  color: var(--g-mute);
+}
+
 /* 占比刻度 */
 .fig-scale {
   display: grid;

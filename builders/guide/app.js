@@ -480,12 +480,11 @@
     threshold: function () {
       var box = figWrap("threshold");
       var scale = el("div", "fig-scale");
-      [["文档里嵌的码", "0.2%", "8%", "low"], ["扫描页中间的大码", "14%", "34%", "mid"], ["码几乎占满画面", "62%", "96%", "high"]].forEach(function (r) {
+      [["文档里嵌的码", "0.2% – 8%", "low"], ["扫描页中间的大码", "14% – 34%", "mid"], ["码几乎占满画面", "62% – 96%", "high"]].forEach(function (r) {
         var band = el("div", "fig-band");
         band.appendChild(el("span", "fig-band-name", r[0]));
-        var bar = el("div", "fig-band-bar is-" + r[3]);
-        band.appendChild(bar);
-        band.appendChild(el("span", "fig-band-range", r[1] + " – " + r[2]));
+        band.appendChild(el("div", "fig-band-bar is-" + r[2]));
+        band.appendChild(el("span", "fig-band-range", r[1]));
         scale.appendChild(band);
       });
       box.appendChild(scale);
@@ -493,6 +492,39 @@
       line.appendChild(el("span", "fig-threshold-mark", "30%"));
       line.appendChild(el("span", "fig-threshold-text", "纯码文档的判定线：低于它算文档，高于它算一张码。"));
       box.appendChild(line);
+      return box;
+    },
+
+    split: function () {
+      var box = figWrap("split");
+      var pic = el("div", "fig-longpic");
+      [
+        { m: "1", cls: "is-long" },
+        { m: "", cls: "is-gap" },
+        { m: "2", cls: "is-long" },
+        { m: "", cls: "is-gap" },
+        { m: "3", cls: "is-short" }
+      ].forEach(function (row) {
+        var line = el("div", "fig-lp-line");
+        line.appendChild(el("span", "fig-lp-mark", row.m));
+        line.appendChild(el("span", "fig-lp-block " + row.cls));
+        pic.appendChild(line);
+      });
+      box.appendChild(pic);
+
+      var rules = el("div", "fig-rules");
+      [
+        ["超过宽的 1.2 倍", "才需要切"],
+        ["在 1.2–1.5 倍间找空白行", "连续 5 行就切"],
+        ["找不到就强切", "并留 10% 重叠"]
+      ].forEach(function (r) {
+        var row = el("div", "fig-rule");
+        row.appendChild(el("span", "fig-rule-k", r[0]));
+        row.appendChild(el("span", "fig-rule-v", r[1]));
+        rules.appendChild(row);
+      });
+      box.appendChild(rules);
+      box.appendChild(el("p", "fig-caption", "切完的块与原文结果合并时去重，避免重叠部分重复出现。"));
       return box;
     }
   };
