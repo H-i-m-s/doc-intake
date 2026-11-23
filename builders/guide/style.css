@@ -483,6 +483,10 @@ h1 {
 /* ── 折叠块与对比表 ─────────────────────────────── */
 .folds { margin-top: 10px; display: grid; gap: 9px; }
 
+/* 折叠块与其它块之间保持同样的间距，别让它们贴成一整块 */
+.folds + .block { margin-top: 10px; }
+.page > .block:first-child { margin-top: 0; }
+
 .fold {
   border: 1px solid var(--g-line);
   border-radius: 12px;
