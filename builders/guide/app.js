@@ -443,6 +443,68 @@
       box.appendChild(lane2);
       box.appendChild(el("p", "fig-caption", "默认值：云端同时 4 个，本机同时 8 个，可在设置页调整。"));
       return box;
+    },
+
+    keys: function () {
+      var box = figWrap("keys");
+      var flow = el("div", "fig-flow");
+      flow.appendChild(el("span", "fig-node", "调用某一档"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node", "第一把密钥"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node", "失败就换下一把"));
+      box.appendChild(flow);
+      var row = el("div", "fig-flow is-center");
+      row.appendChild(el("span", "fig-out is-bad", "全部密钥都失败"));
+      row.appendChild(el("span", "fig-arrow", "→"));
+      row.appendChild(el("span", "fig-out is-good", "换链路上的下一档"));
+      box.appendChild(row);
+      return box;
+    },
+
+    barcode: function () {
+      var box = figWrap("barcode");
+      var flow = el("div", "fig-flow");
+      flow.appendChild(el("span", "fig-node", "PDF 内嵌图"));
+      flow.appendChild(el("span", "fig-node", "Office 内嵌图"));
+      flow.appendChild(el("span", "fig-node", "整页渲染"));
+      flow.appendChild(el("span", "fig-node", "图片文件"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node is-out", "解码结果"));
+      box.appendChild(flow);
+
+      var steps = el("div", "fig-steps");
+      [
+        ["转灰度", "纯 numpy 加权，比彩色图快两成"],
+        ["算占比", "四角点面积 ÷ 整图面积，鞋带公式"],
+        ["要错误", "默认会把「有码但解不出」吞掉"]
+      ].forEach(function (s) {
+        var row = el("div", "fig-step");
+        row.appendChild(el("span", "fig-step-k", s[0]));
+        row.appendChild(el("span", "fig-step-v", s[1]));
+        steps.appendChild(row);
+      });
+      box.appendChild(steps);
+      return box;
+    },
+
+    threshold: function () {
+      var box = figWrap("threshold");
+      var scale = el("div", "fig-scale");
+      [["文档里嵌的码", "0.2%", "8%", "low"], ["扫描页中间的大码", "14%", "34%", "mid"], ["码几乎占满画面", "62%", "96%", "high"]].forEach(function (r) {
+        var band = el("div", "fig-band");
+        band.appendChild(el("span", "fig-band-name", r[0]));
+        var bar = el("div", "fig-band-bar is-" + r[3]);
+        band.appendChild(bar);
+        band.appendChild(el("span", "fig-band-range", r[1] + " – " + r[2]));
+        scale.appendChild(band);
+      });
+      box.appendChild(scale);
+      var line = el("div", "fig-threshold");
+      line.appendChild(el("span", "fig-threshold-mark", "30%"));
+      line.appendChild(el("span", "fig-threshold-text", "纯码文档的判定线：低于它算文档，高于它算一张码。"));
+      box.appendChild(line);
+      return box;
     }
   };
 
@@ -718,6 +780,19 @@
     });
     pipe.appendChild(steps);
     page.appendChild(pipe);
+
+    var bc = section(data.barcodeTitle, data.barcodeLead);
+    var bcGrid = el("div", "bc-grid");
+    data.barcode.forEach(function (b) {
+      var card = el("div", "bc-card");
+      card.appendChild(el("h3", "bc-k", b.k));
+      card.appendChild(el("p", "bc-v", b.v));
+      bcGrid.appendChild(card);
+    });
+    bc.appendChild(bcGrid);
+    bc.appendChild(FIGURES.barcode());
+    bc.appendChild(el("p", "fig-caption", data.barcodePerf));
+    page.appendChild(bc);
 
     var mech = section(data.mechTitle, data.mechHint);
     var list = el("div", "why-list");
