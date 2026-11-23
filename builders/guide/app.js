@@ -465,26 +465,15 @@
     barcode: function () {
       var box = figWrap("barcode");
       var flow = el("div", "fig-flow");
-      flow.appendChild(el("span", "fig-node", "PDF 内嵌图"));
-      flow.appendChild(el("span", "fig-node", "Office 内嵌图"));
+      flow.appendChild(el("span", "fig-node", "内嵌图"));
       flow.appendChild(el("span", "fig-node", "整页渲染"));
-      flow.appendChild(el("span", "fig-node", "图片文件"));
       flow.appendChild(el("span", "fig-arrow", "→"));
-      flow.appendChild(el("span", "fig-node is-out", "解码结果"));
+      flow.appendChild(el("span", "fig-node", "转灰度"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node is-out", "解码"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node", "注在图下"));
       box.appendChild(flow);
-
-      var steps = el("div", "fig-steps");
-      [
-        ["转灰度", "纯 numpy 加权，比彩色图快两成"],
-        ["算占比", "四角点面积 ÷ 整图面积，鞋带公式"],
-        ["要错误", "默认会把「有码但解不出」吞掉"]
-      ].forEach(function (s) {
-        var row = el("div", "fig-step");
-        row.appendChild(el("span", "fig-step-k", s[0]));
-        row.appendChild(el("span", "fig-step-v", s[1]));
-        steps.appendChild(row);
-      });
-      box.appendChild(steps);
       return box;
     },
 
@@ -783,7 +772,7 @@
 
     var bc = section(data.barcodeTitle, data.barcodeLead);
     var bcGrid = el("div", "bc-grid");
-    data.barcode.forEach(function (b) {
+    data.barcodePoints.forEach(function (b) {
       var card = el("div", "bc-card");
       card.appendChild(el("h3", "bc-k", b.k));
       card.appendChild(el("p", "bc-v", b.v));
@@ -792,6 +781,7 @@
     bc.appendChild(bcGrid);
     bc.appendChild(FIGURES.barcode());
     bc.appendChild(el("p", "fig-caption", data.barcodePerf));
+    bc.appendChild(el("p", "bc-note", data.barcodeNote));
     page.appendChild(bc);
 
     var mech = section(data.mechTitle, data.mechHint);
