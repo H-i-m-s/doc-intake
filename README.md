@@ -147,6 +147,8 @@ pip install -r python/requirements.txt
 
 App 提供三个入口：模型循环（工具 `doc_intake`）、面板卡片（应用内「文档提取」）、服务总线（`app:doc-intake/*`）。
 
+第一次使用可先看分层说明 `builders/guide/index.html`：入门讲三步上手，进阶讲三条解析链与常用配置，原理解释为什么要这么安排。
+
 由 Agent 调用时，最常用的形式如下：
 
 ```python

@@ -377,6 +377,11 @@ const REQUIRED_BUILDER_DOCS = [
   "svc-probe/index.js",
   "svc-probe/manifest.json",
   "svc-probe/README.md",
+  // 给第一次用的人看的《使用向导》：随包分发，装完就能打开看，所以四个文件按必顶过关。
+  "guide/index.html",
+  "guide/style.css",
+  "guide/app.js",
+  "guide/content.js",
 ];
 
 const packRules = (() => {
