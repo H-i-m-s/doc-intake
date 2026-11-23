@@ -72,7 +72,7 @@ const FIELDS = {
       { value: "mineru", label: "MinerU", note: "云端" },
       { value: "oxr", label: "OXR（SoMark）", note: "云端" },
       { value: "paddleocr", label: "PaddleOCR", note: "云端" },
-      { value: "mineru-local", label: "MinerU（本地）", note: "需填服务地址", endpoint: "mineruLocalEndpoint" },
+      { value: "mineru-local", label: "MinerU（本地）", note: "填地址或启动器路径", endpoint: "mineruLocalEndpoint", altEndpoint: "mineruKitPath", altSkipText: "地址和启动器路径都没填，会被跳过" },
       { value: "paddleocr-local", label: "PaddleOCR（本地）", note: "需填服务地址", endpoint: "paddleLocalEndpoint" },
       { value: "local", label: "本地（PyMuPDF）", note: "始终可用" },
     ],
@@ -1358,14 +1358,19 @@ function buildChainControl(meta) {
     empty.hidden = any;
   }
 
-  // 本地后端依赖服务地址：地址空着就直说它会被跳过。只碰备注，不动勾选。
+  // 本地后端依赖一项配置：填了就可用，空着就直说它会被跳过。只碰备注，不动勾选。
+  // mineru-local 有两种填法（服务地址 / 启动器路径），altEndpoint 就是第二种。
   function refreshNotes() {
     for (const entry of rows.values()) {
       const dep = entry.option.endpoint;
       if (!dep) continue;
       const endpoint = String(controls.get(dep)?.read() ?? "").trim();
-      const skip = !endpoint;
-      const text = skip ? "未填服务地址，会被跳过" : (entry.option.note || "");
+      const alt = entry.option.altEndpoint
+        ? String(controls.get(entry.option.altEndpoint)?.read() ?? "").trim()
+        : "";
+      const skip = !endpoint && !alt;
+      const skipText = entry.option.altSkipText || "未填服务地址，会被跳过";
+      const text = skip ? skipText : (entry.option.note || "");
       // 这个函数会在每次草稿变更时被调，值没变就别重写节点
       if (entry.note.textContent !== text) entry.note.textContent = text;
       if (skip) entry.note.dataset.kind = "skip";
