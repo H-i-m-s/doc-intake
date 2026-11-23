@@ -54,6 +54,10 @@ _OLE_CONTAINERS = {"object", "AlternateContent", "pict", "drawing", "inline",
                    "anchor", "graphicData", "graphic", "choice", "fallback"}
 _PREVIEW_TAGS = ("blip", "imagedata")
 
+# 预览图是空白图、已经被转换层删掉了的那种公式。它必须能参与配对(否则会落到
+# 同段落后一张图上,把别人的公式图挂到这个公式的位置),但不能进正文。
+_BLANK_PREVIEW = object()
+
 
 def pair_ole_previews(element, resolve):
     """给 element 下的每个公式对象配它自己的预览图。
@@ -115,6 +119,9 @@ class DocxExtractor(BaseExtractor):
         super().__init__(settings)
         self.omml_converter = OmmlToLatexConverter()
         self._mathtype_converter = None
+        # 本次提取里被拦掉的空白预览(zip 内路径)。_extract_text 据此在公式原位置
+        # 连占位都不留,而不是落到「找不到预览」那个显眼记号上。
+        self._blank_previews: set[str] = set()
 
     @property
     def mathtype_converter(self):
@@ -141,6 +148,9 @@ class DocxExtractor(BaseExtractor):
             return self._handle_legacy_doc(path, output_dir, include_images)
 
         result = ExtractionResult()
+        # 每次提取重新开账:空白预览拦截只在这一个文件的媒体里生效。
+        blank_previews: set[str] = set()
+        self._blank_previews = blank_previews
 
         with zipfile.ZipFile(path) as zf:
             names = set(zf.namelist())
@@ -164,7 +174,11 @@ class DocxExtractor(BaseExtractor):
                 all_media_files = sorted(name for name in names if name.startswith("word/media/"))
                 media_files = self._select_media_files(zf, all_media_files, mathtype_equations)
                 media_files = self._sort_media_by_refs(zf, media_files)
-                media_list = extract_and_convert_media(media_files, zf, output_dir or "", path.stem)
+                media_list = extract_and_convert_media(
+                    media_files, zf, output_dir or "", path.stem,
+                    warnings=result.warnings,
+                    blank_previews=blank_previews,
+                )
                 result.images = [m.local_path for m in media_list]
 
             # 构建媒体映射: original zip 路径 -> ExtractedMedia
@@ -400,7 +414,7 @@ class DocxExtractor(BaseExtractor):
 
         # 构建公式 OLE 的 rId -> LaTeX 映射，同时保留失败公式的预览图回退映射。
         mathtype_map: dict[str, str] = {}
-        ole_preview_map: dict[str, ExtractedMedia] = {}
+        ole_preview_map: dict[str, object] = {}
         try:
             rels_path = "word/_rels/document.xml.rels"
             if rels_path in zf.namelist():
@@ -431,6 +445,19 @@ class DocxExtractor(BaseExtractor):
 
                 # 在同一段落中，公式 OLE 前后的两个 WMF 通常是 VML Fallback/Preview。
                 # 建立 OLE rId -> 可渲染预览媒体的映射，失败时保持公式原位置。
+                blank_previews = getattr(self, "_blank_previews", set())
+
+                def resolve_preview(rel_id: str):
+                    """预览图的关系 id -> 可渲染的预览媒体。
+
+                    空白预览(已被转换层删掉)返回 _BLANK_PREVIEW：让配对认得「这张就是
+                    它的预览」，不会退化到按次序借用别人的图；正文那边见到这个记号
+                    直接不写任何东西。
+                    """
+                    if blank_previews and rid_to_target.get(rel_id) in blank_previews:
+                        return _BLANK_PREVIEW
+                    return rid_to_media.get(rel_id)
+
                 for paragraph in root.iter():
                     if _local_name(paragraph.tag) != "p":
                         continue
@@ -439,7 +466,7 @@ class DocxExtractor(BaseExtractor):
                         continue
                     # 每个公式对象配它自己那张预览图；同段落里有别的图也不会串。
                     ole_preview_map.update(
-                        pair_ole_previews(paragraph, rid_to_media.get))
+                        pair_ole_previews(paragraph, resolve_preview))
         except Exception:
             logger.exception("构建 DOCX 公式关系映射失败")
 
@@ -788,6 +815,10 @@ class DocxExtractor(BaseExtractor):
                 rendered.append(f"${mathtype_map[r_id]}$")
                 continue
             preview = ole_preview_map.get(r_id)
+            if preview is _BLANK_PREVIEW:
+                # 预览本身是空白图(空公式)：转换层已经删了文件并记了 warning，
+                # 公式原位置什么都不留，也不补占位文字。
+                continue
             if preview is not None:
                 rendered.append(self._render_media(preview, stem, alt="formula"))
             else:

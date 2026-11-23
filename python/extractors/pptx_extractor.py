@@ -6,7 +6,10 @@ markdown 引用按 kind 分别用 ![](), <video>, <audio> 渲染。
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -17,7 +20,7 @@ from legacy_converter import (
     convert_legacy_document,
     restore_original_heading,
 )
-from .emf_converter import convert_emf_to_png
+from .emf_converter import convert_emf_to_png, preview_is_blank
 from .omml_converter import OmmlToLatexConverter
 from ._utils import (
     ExtractedMedia,
@@ -98,7 +101,7 @@ class PptxExtractor(BaseExtractor):
             used_media = self._determine_media(slides, zf)
 
             # 第三步：按 kind 分别连续编号
-            media_records = self._assign_numbers(used_media)
+            media_records = self._assign_numbers(used_media, zf, result.warnings)
 
             # 第四步：提取内容(markdown)
             result.markdown = self._extract_content(
@@ -474,16 +477,30 @@ class PptxExtractor(BaseExtractor):
 
     # ========== 第三步：分配编号 ==========
 
-    def _assign_numbers(self, used_media: list[dict]) -> dict[str, dict]:
-        """按 kind 分别连续编号,返回 media_path -> {kind, ext, new_name, alt, type}"""
+    def _assign_numbers(self, used_media: list[dict], zf=None,
+                        warnings: list[str] | None = None) -> dict[str, dict]:
+        """按 kind 分别连续编号,返回 media_path -> {kind, ext, new_name, alt, type}
+
+        EMF/WMF 预览在发号前先转一张临时 PNG 看看是不是空白图:空白的不发号、
+        不留记录,正文里自然就没有这张图。这里必须先判再编号——编号先发出去、
+        写文件时再抽掉,正文会指向一个不存在的路径。
+        """
         media_records: dict[str, dict] = {}
         counters = {"image": 0, "video": 0, "audio": 0, "other": 0}
+        preview_index = 0
 
         for media in used_media:
             media_path = media["media_path"]
             kind = media["kind"]
             ext = media["ext"]
             alt = media["alt"]
+
+            if ext in (".emf", ".wmf"):
+                preview_index += 1
+                if zf is not None and self._preview_is_blank_in_zip(media_path, zf):
+                    if warnings is not None:
+                        warnings.append(f"第 {preview_index} 个公式的预览是空白图，已跳过")
+                    continue
 
             counters[kind] += 1
             # EMF/WMF 转 PNG,其他保持原扩展
@@ -501,6 +518,27 @@ class PptxExtractor(BaseExtractor):
             }
 
         return media_records
+
+    def _preview_is_blank_in_zip(self, media_path: str, zf) -> bool:
+        """把 zip 里的 EMF/WMF 预览转一张临时 PNG,看它是不是空白图。
+
+        这里只为了在编号前得出「有没有内容」,真正的转换在 _extract_files 里再做一遍
+        (预览图很小,多转一次比把临时文件的生命周期拉扯到两个阶段要干净)。
+        转不出来就按「不空白」算,交给原来的转换失败分支。
+        """
+        scratch = tempfile.mkdtemp(prefix="docintake-emf-")
+        try:
+            raw = os.path.join(scratch, "preview" + Path(media_path).suffix.lower())
+            png = os.path.join(scratch, "preview.png")
+            with zf.open(media_path) as src, open(raw, "wb") as dst:
+                dst.write(src.read())
+            if not convert_emf_to_png(raw, png):
+                return False
+            return preview_is_blank(png)
+        except Exception:
+            return False
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
 
     # ========== 第四步：提取内容 ==========
 

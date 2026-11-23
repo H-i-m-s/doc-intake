@@ -23,7 +23,7 @@
 //      连 ui/*.html 里的内联脚本一起查
 //   4) 第一方代码里每个相对 import 都指得到实处（路径写错 = App 起不来）
 //   5) routes/ 同一个文件里没有重复注册的同方法同路径（后者会被前者吞掉）
-//   6) python/ 下所有 .py 能过语法编译；环境里装了 olefile 时还会跑 test/ 的十个库自测
+//   6) python/ 下所有 .py 能过语法编译；环境里装了 olefile 时还会跑 test/ 的十二个库自测
 //   7) builders/ 下给开发者的两份文档存在、非空，且不命中出包排除规则（少一份就不许出包）
 //   8) formats.json 自身合法；登记了的扩展名都有本地提取器接着；Python 与 JS 两侧
 //      派生出来的清单都与它一致（清单只有一份，漂了就没意义）
@@ -310,15 +310,15 @@ if (!py) {
     }
   }
 
-  // 6b) 库自测：那十一个脚本要 olefile 才能 import。装了就跑，没装就跳过 ——
+  // 6b) 库自测：那十二个脚本要 olefile 才能 import。装了就跑，没装就跳过 ——
   // 这一步不该让「换台机器没装依赖」变成出不了包，但也绝不在装齐的机器上放水。
-  const SELFTESTS = ["selftest_v3_parse.py", "selftest_v3_render.py", "selftest_v5_parse.py", "selftest_v5_render.py", "selftest_v6_epub.py", "selftest_v7_fb2.py", "selftest_v8_cbz.py", "selftest_v9_mobi.py", "selftest_v10_txt.py", "selftest_v10_mineru_tasks.py", "selftest_v11_mineru_service.py"];
+  const SELFTESTS = ["selftest_v3_parse.py", "selftest_v3_render.py", "selftest_v5_parse.py", "selftest_v5_render.py", "selftest_v6_epub.py", "selftest_v7_fb2.py", "selftest_v8_cbz.py", "selftest_v9_mobi.py", "selftest_v10_txt.py", "selftest_v10_mineru_tasks.py", "selftest_v11_mineru_service.py", "selftest_v12_emf_media.py"];
   const depsReady = (() => {
     const r = runPy(["-c", "import olefile"]);
     return !r.error && r.status === 0;
   })();
   if (!depsReady) {
-    note("当前环境 import 不到 olefile，已跳过 test/ 的十一个库自测（在装齐依赖的环境里跑就会自动带上）");
+    note("当前环境 import 不到 olefile，已跳过 test/ 的十二个库自测（在装齐依赖的环境里跑就会自动带上）");
   } else if (!existsSync(join(ROOT, "test"))) {
     note("没找到 test/ 目录，跳过库自测");
   } else {
