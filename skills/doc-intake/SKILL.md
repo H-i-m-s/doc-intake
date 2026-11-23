@@ -1,7 +1,7 @@
 ---
 name: doc-intake
 description: >
-  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML、图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）、电子书（EPUB、FB2、FBZ、CBZ、MOBI、AZW、AZW3、PRC）或纯文本（TXT）。当用户发送文档/图片/电子书/文本文件、提到 Word、Excel、PowerPoint、PDF、电子书、EPUB、Kindle、漫画、txt、乱码、编码、扫描件、截图文字、公式、表格、图片内容或图片/文档里的二维码、条形码（QR、Data Matrix、一维条码）时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。
+  必须用于读取、查看、理解、总结、分析、转录、OCR 或提取任何 PDF、DOC、DOCX、PPT、PPTX、XLS、XLSX、XLSM、HTML、图片文件（PNG、JPG、JPEG、BMP、TIFF、TIF、WEBP）、电子书（EPUB、FB2、FBZ、CBZ、MOBI、AZW、AZW3、PRC）或纯文本（TXT）。当用户发送文档/图片/电子书/文本文件、提到 Word、Excel、PowerPoint、PDF、电子书、EPUB、Kindle、txt、扫描件、截图文字、公式、表格、图片内容或图片/文档里的二维码、条形码（QR、Data Matrix、一维条码）时，优先调用本 skill 的工具，不要自行读取二进制文件或猜测文件内容。
 compatibility: "需要 Python 环境（用户需在 App 设置面板填 pythonPath）和可选的 MinerU / OXR / PaddleOCR Token"
 metadata:
   default-enabled: true

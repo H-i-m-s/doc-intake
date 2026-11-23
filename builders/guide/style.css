@@ -799,6 +799,89 @@ table.matrix tr:last-child td { border-bottom: 0; }
 
 .fig-block.is-more { border-style: dashed; color: var(--g-mute); }
 
+/* 分流 */
+.fig-lanes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.fig-lane {
+  padding: 8px 9px 9px;
+  border-radius: 9px;
+  background: rgba(140, 170, 220, 0.05);
+  text-align: center;
+}
+
+.fig-lane.is-wide { margin-top: 8px; }
+
+.fig-lane-name {
+  margin: 0;
+  font-size: 11.4px;
+  font-weight: 600;
+  color: var(--g-ink);
+}
+
+.fig-lane-items {
+  margin: 3px 0 0;
+  font-size: 10.6px;
+  line-height: 1.45;
+  color: var(--g-mute);
+}
+
+.fig-lane-cap {
+  margin: 4px 0 0;
+  font-size: 10.4px;
+  color: rgba(var(--g-accent-rgb), 0.85);
+}
+
+/* 目录树 */
+.fig-tree { display: grid; gap: 6px; }
+
+.fig-dir { display: flex; }
+
+.fig-kids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 14px;
+  border-left: 1px solid var(--g-line);
+  margin-left: 8px;
+}
+
+.fig-node.is-muted { color: var(--g-mute); border-style: dashed; text-decoration: line-through; }
+
+/* 状态与队列 */
+.fig-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.fig-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.fig-slot {
+  font-size: 10.2px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid rgba(var(--g-accent-rgb), 0.45);
+  background: rgba(var(--g-accent-rgb), 0.12);
+  color: var(--g-ink);
+}
+
+.fig-slot.is-wait {
+  border-color: var(--g-line);
+  background: transparent;
+  color: var(--g-mute);
+}
+
 .principle {
   padding: 10px 12px 11px;
   border-radius: 11px;

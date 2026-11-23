@@ -365,6 +365,84 @@
       pair.appendChild(b);
       box.appendChild(pair);
       return box;
+    },
+
+    dispatch: function () {
+      var box = figWrap("dispatch");
+      var top = el("div", "fig-flow is-center");
+      top.appendChild(el("span", "fig-node", "一批文件"));
+      box.appendChild(top);
+
+      var lanes = el("div", "fig-lanes");
+      [
+        ["云端队列", "PDF · 图片", "同时 4 个"],
+        ["本机队列", "Office · 网页 · 电子书 · 纯文本", "同时 8 个"],
+        ["转换队列", "旧版 Office", "先转再解析"]
+      ].forEach(function (l) {
+        var lane = el("div", "fig-lane");
+        lane.appendChild(el("p", "fig-lane-name", l[0]));
+        lane.appendChild(el("p", "fig-lane-items", l[1]));
+        lane.appendChild(el("p", "fig-lane-cap", l[2]));
+        lanes.appendChild(lane);
+      });
+      box.appendChild(lanes);
+      return box;
+    },
+
+    folder: function () {
+      var box = figWrap("folder");
+      var tree = el("div", "fig-tree");
+      var dir = el("div", "fig-dir");
+      dir.appendChild(el("span", "fig-node is-out", "资料夹"));
+      tree.appendChild(dir);
+      var kids = el("div", "fig-kids");
+      ["a.pdf", "b.docx", "c.epub", "说明.txt"].forEach(function (n, i) {
+        kids.appendChild(el("span", "fig-node" + (i === 3 ? " is-muted" : ""), n));
+      });
+      tree.appendChild(kids);
+      box.appendChild(tree);
+      box.appendChild(el("p", "fig-caption", "按文件名排序，只取当前层，不进子目录；不支持的扩展名被忽略。"));
+      return box;
+    },
+
+    async: function () {
+      var box = figWrap("async");
+      var flow = el("div", "fig-flow");
+      flow.appendChild(el("span", "fig-node", "点击开始"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node is-out", "返回作业编号"));
+      flow.appendChild(el("span", "fig-arrow", "→"));
+      flow.appendChild(el("span", "fig-node", "后台逐个处理"));
+      box.appendChild(flow);
+      var stat = el("div", "fig-status");
+      stat.appendChild(el("span", "fig-node", "等待中"));
+      stat.appendChild(el("span", "fig-node", "进行中"));
+      stat.appendChild(el("span", "fig-node is-out", "已完成"));
+      stat.appendChild(el("span", "fig-node is-muted", "失败"));
+      box.appendChild(stat);
+      box.appendChild(el("p", "fig-caption", "作业记录每个文件的状态，重启后仍可查。"));
+      return box;
+    },
+
+    queue: function () {
+      var box = figWrap("queue");
+      var lane = el("div", "fig-lane is-wide");
+      lane.appendChild(el("p", "fig-lane-name", "云端队列"));
+      var slots = el("div", "fig-slots");
+      for (var i = 0; i < 4; i++) slots.appendChild(el("span", "fig-slot", "处理中"));
+      for (var j = 0; j < 4; j++) slots.appendChild(el("span", "fig-slot is-wait", "等待"));
+      lane.appendChild(slots);
+      box.appendChild(lane);
+
+      var lane2 = el("div", "fig-lane is-wide");
+      lane2.appendChild(el("p", "fig-lane-name", "本机队列"));
+      var slots2 = el("div", "fig-slots");
+      for (var k = 0; k < 8; k++) slots2.appendChild(el("span", "fig-slot", "处理中"));
+      for (var m = 0; m < 4; m++) slots2.appendChild(el("span", "fig-slot is-wait", "等待"));
+      lane2.appendChild(slots2);
+      box.appendChild(lane2);
+      box.appendChild(el("p", "fig-caption", "默认值：云端同时 4 个，本机同时 8 个，可在设置页调整。"));
+      return box;
     }
   };
 
