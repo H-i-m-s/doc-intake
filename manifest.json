@@ -12,6 +12,7 @@
     "app/tools.expose-to-model",
     "app/ui.open-external",
     "app/resources.read",
+    "app/resources.write",
     "app/tasks.manage",
     "app/session.start-turn",
     "app/services.provide"

@@ -883,6 +883,8 @@ body { padding: 0 12px; }
 /* 每条一行：时间、释放空间、删了几个。文件名单独一行跟在下面，
    不和时间挤在一起，否则长文件名一多就满屏锯歯。 */
 .gs-cleanup { display: flex; flex-direction: column; gap: 10px; }
+/* 清理记录收起后，正文里第一行是说明文字，和条目之间留一点空。 */
+#cleanup-log-body > .gs-card__desc { margin-bottom: 10px; }
 .gs-cleanup__row {
   display: flex; flex-direction: column; gap: 3px;
   padding-bottom: 9px;

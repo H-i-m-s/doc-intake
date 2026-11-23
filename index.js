@@ -76,6 +76,9 @@ export default defineApp(async (sdk) => {
           network: sdk.network,
           storage: sdk.storage,
           logger: sdk.logger,
+          // 自动清理需要把过期产物放进回收站；工具 ctx 也直接揣一份，
+          // 免得每个调用方都得从 sdk 里再析一层。
+          resources: sdk.resources,
           // 工具要自己建宿主任务、拿调用凭据，所以把这两样往下传；
           // 只传用得到的字段，不把整个 invocation 丢给工具模块。
           sdk,
@@ -108,6 +111,9 @@ export default defineApp(async (sdk) => {
       return getSettings({ config: { get: (key) => raw[key] } });
     },
     logger: sdk.logger,
+    // 自动清理要把过期产物放进系统回收站，用的就是这扇门（需要 app/resources.write）。
+    // 服务入口自己没有 App 上下文，不从这里递进去就只剩一句「宿主没有提供回收站接口」。
+    resources: sdk.resources,
   });
   for (const [method, handler] of Object.entries(serviceHandlers)) {
     try {

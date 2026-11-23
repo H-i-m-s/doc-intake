@@ -430,6 +430,9 @@ const ui = {
   aboutCheck: el("about-check"),
   aboutNotes: el("about-notes"),
   cleanupCard: el("sec-cleanup-log"),
+  cleanupToggle: el("cleanup-toggle"),
+  cleanupBody: el("cleanup-log-body"),
+  cleanupSummary: el("cleanup-summary"),
   cleanupList: el("cleanup-log-list"),
   cleanupClear: el("btn-clear-cleanup-log"),
   search: el("gs-search"),
@@ -450,6 +453,7 @@ let installing = false;
 let depsLogText = "";
 let advCollapsible = null;
 let depsCollapsible = null;
+let cleanupCollapsible = null;
 let depsAutoExpanded = false; // 缺必装时只自动展开一次
 let depsUserToggled = false;  // 用户自己动过折叠，就不再替他自动展开
 // × 只是"这次打开先别显示"：纯前端内存态，不写任何存储，下次打开照旧提示。
@@ -2465,6 +2469,18 @@ function renderCleanupLog(entries) {
   if (!list) return;
   list.textContent = "";
 
+  // 标题那一行只给一句概括：收起时也能一眼看出「上次动过手没有、什么时候」。
+  if (ui.cleanupSummary) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      ui.cleanupSummary.textContent = "还没有清理记录";
+    } else {
+      const latest = entries[entries.length - 1] || {};
+      const count = entries.length;
+      ui.cleanupSummary.textContent =
+        `最近 ${formatStamp(latest.at)} · 释放 ${humanBytes(latest.freedBytes)} · 共 ${count} 条`;
+    }
+  }
+
   if (!Array.isArray(entries) || entries.length === 0) {
     const empty = document.createElement("p");
     empty.className = "gs-cleanup__empty";
@@ -2984,6 +3000,8 @@ function wire() {
   });
   advCollapsible = createCollapsible(ui.advToggle, ui.adv, false);
   depsCollapsible = createCollapsible(ui.depsToggle, ui.depsBody, false);
+  // 清理记录是一份日志，默认收起：收起时标题行那句概括已经说明「最近一次什么时候、释放多少」。
+  cleanupCollapsible = createCollapsible(ui.cleanupToggle, ui.cleanupBody, false);
   // 用户自己点过折叠开关，之后就不再替他自动展开
   ui.depsToggle.addEventListener("click", () => { depsUserToggled = true; });
 
