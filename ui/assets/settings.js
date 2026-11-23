@@ -224,7 +224,7 @@ const FIELDS = {
   },
   mineruLocalPort: {
     title: "自管实例端口",
-    hint: "插件自己拉起的 MinerU 监听哪个端口。避开手工占用的 8000。",
+    hint: "插件自己拉起的 MinerU 监听哪个端口。这是起点：被占就自动往后找邻位，解析用的地址跟着实际端口走。默认 8010，避开手工占用的 8000。",
     type: "number",
     int: true,
   },
