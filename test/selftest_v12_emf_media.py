@@ -5,7 +5,8 @@
 覆盖：
   1. 高 DPI 重绘 + 裁墨迹：真实 Word 公式预览（test/fixtures/formula_preview.wmf）转出来的
      长边落在 600–1200、墨迹占比落在 60%–85%、单张 < 120 KB、黑白线稿存成 mode="L"。
-  2. dpi 阶梯走到 1200 仍够不到 720 时接受已经拿到的最大尺寸，不放大。
+  2. dpi 阶梯走到 1200 仍够不到 720 时接受已经拿到的最大尺寸，不放大。这条路现在是
+     GDI+ 用不了时的回退，所以这个用例显式把 `wmf_render.is_available` 关掉。
   3. 长边超 1200 时按单一比例截到 1200（宽高比不许变）。
   4. 打不开的输入返回 False，不留下半张图（老行为：调用方保留原始 WMF）。
   5. 空白预览拦截：空白 WMF 转出来的纯白 PNG 被删掉、不产出记录、不占编号（不出现
@@ -199,7 +200,16 @@ def case_high_dpi(check: Checker, root: str) -> None:
     # 60×36 个图元单位 / 1000 单位每英寸：1200 dpi 也只有 72×43，永远够不到 720。
     # 它本来也没墨迹，所以裁不动——退化框按原图处理的同一条路。
     build_wmf(tiny, bbox=(60, 36), inch=1000)
-    check.ok(convert_emf_to_png(tiny, tiny_png), "极小图样也能转")
+    # 这一段验的是 Pillow 的 dpi 阶梯，而阶梯现在是回退路径（GDI+ 只按固定长边渲一次，
+    # 不量墨迹就不放大），所以先把 GDI+ 关掉，否则量到的是 GDI+ 的分支。
+    from extractors import wmf_render
+
+    _available = wmf_render.is_available
+    wmf_render.is_available = lambda: False
+    try:
+        check.ok(convert_emf_to_png(tiny, tiny_png), "极小图样也能转")
+    finally:
+        wmf_render.is_available = _available
     tw, th = png_size(tiny_png)
     print("    tiny.wmf -> %dx%d" % (tw, th))
     check.ok(60 <= max(tw, th) <= 100, "停在 1200 dpi 能给到的尺寸，没被放大", "%dx%d" % (tw, th))

@@ -1,10 +1,16 @@
 """EMF/WMF 到 PNG 转换器 与 媒体通用抽取器。
 
-依赖 Pillow (`PIL.Image`)。如果 Pillow 不支持 EMF/WMF(老版本或非 Windows 构建),
-转换失败,原 EMF 仍留在 media 目录里,前端拿不到预览但不阻塞主流程。
+Windows 上先走 GDI+（`wmf_render`，ctypes 直调 gdiplus.dll）渲一张长边 1440 的 PNG,
+再在这张图上做裁剪/判空/存盘;GDI+ 不可用或渲不出来时回退到 Pillow 的 dpi 阶梯。
+为什么优先 GDI+:Word 显示 WMF 走的就是 GDI+,而 Pillow 在 Windows 上走 GDI 的
+PlayMetaFile,两者对同一份记录的解释不同 —— 几何会被非等比压扁、矢量笔画会断成几段。
+
+裁剪/判空/存盘这一段依赖 Pillow (`PIL.Image`)。如果 Pillow 不支持 EMF/WMF(老版本或
+非 Windows 构建)且 GDI+ 也用不了,转换失败,原 EMF 仍留在 media 目录里,前端拿不到
+预览但不阻塞主流程。
 
 WMF/EMF 是矢量图,`Image.open` 之后不重绘就是按 72 dpi 落地 —— 公式预览会糊成
-8×13 这种尺寸。所以转换改成按 dpi 阶梯重绘:长边目标 720 px、上限 1200 px。
+8×13 这种尺寸。所以 Pillow 那条路按 dpi 阶梯重绘:长边目标 720 px、上限 1200 px。
 重绘之后再按墨迹外接框裁掉画布上的大片空白(WMF 的画布常常比字大好几倍,
 不裁就是一个字浮在大白框里),四周补一圈统一留白。
 重绘出来的 PNG 如果是空白(空公式的预览),可以按调用方的要求拦下来。
@@ -17,8 +23,10 @@ WMF/EMF 是矢量图,`Image.open` 之后不重绘就是按 72 dpi 落地 —— 
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
+from . import wmf_render
 from ._utils import ExtractedMedia, classify_media, media_filename
 
 # 重绘阶梯:从 96 dpi 起逐级加大,长边够 720 px 就停。
@@ -29,6 +37,11 @@ _MAX_LONG_SIDE = 1200
 # 单张 PNG 的上限。公式是线稿,720 px 长边通常几 KB;真超了就往回降一档重绘。
 _MAX_PNG_BYTES = 120 * 1024
 _SHRINK_LADDER = (600, 480)
+
+# GDI+ 那条路:一次渲到长边 1440(裁墨迹有余量,矢量放大不损质量),体积超上限时
+# 按这个阶梯换个长边重渲 —— 只换分辨率,别退回 Pillow:GDI 那套解释正是要避开的东西。
+_GDI_LONG_SIDE = 1440
+_GDI_SHRINK_SIDES = (1080, 800)
 
 # 墨迹裁剪:按墨迹外接框裁掉画布上的大片空白,再补一圈留白。
 # 留白按墨迹框长边的 8% 算,夹在 6–24 px —— 太小会切到笔画,太大又把刚裁掉的空白还回去。
@@ -207,8 +220,55 @@ def _save_png(im, dst: str) -> None:
             out.close()
 
 
+def _gdi_preview(src: str, tmp_png: str, long_side: int):
+    """让 GDI+ 渲一张到临时 PNG,读回来套同一套裁墨迹。渲不出来返回 None。"""
+    from PIL import Image
+
+    if not wmf_render.render_to_png(src, tmp_png, long_side):
+        return None
+    try:
+        im = Image.open(tmp_png)
+        im.load()
+    except Exception:
+        return None
+    try:
+        return _trim(im)
+    finally:
+        im.close()
+
+
+def _convert_with_gdi(emf_path: str, png_path: str) -> bool:
+    """GDI+ 渲一遍,再走共用的裁墨迹 / 封顶 / 灰阶存盘。失败返回 False(由调用方回退)。"""
+    fd, tmp_png = tempfile.mkstemp(prefix="docintake-wmf-", suffix=".png")
+    os.close(fd)
+    try:
+        for long_side in (_GDI_LONG_SIDE,) + _GDI_SHRINK_SIDES:
+            framed = _gdi_preview(emf_path, tmp_png, long_side)
+            if framed is None:
+                return False
+            try:
+                _save_png(framed, png_path)
+            finally:
+                framed.close()
+            if os.path.getsize(png_path) <= _MAX_PNG_BYTES:
+                return True
+        # 阶梯降到底还超上限就接受,不无限降(与 Pillow 那条路的取舍一致)。
+        return True
+    except Exception:
+        return False
+    finally:
+        _unlink(tmp_png)
+
+
 def convert_emf_to_png(emf_path: str, png_path: str) -> bool:
     """EMF/WMF 按矢量高 DPI 重绘、裁到墨迹框之后存成 PNG。失败返回 False。"""
+    if wmf_render.is_available() and _convert_with_gdi(emf_path, png_path):
+        return True
+    return _convert_with_pillow(emf_path, png_path)
+
+
+def _convert_with_pillow(emf_path: str, png_path: str) -> bool:
+    """Pillow 的 dpi 阶梯那条路:GDI+ 用不了时的退路,行为与老版本一致。"""
     best = _render_preview(emf_path)
     if best is None:
         return False

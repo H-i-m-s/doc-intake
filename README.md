@@ -296,7 +296,8 @@ doc-intake/
 │   │   ├── legacy_converter.py   # DOC/XLS/PPT → OOXML 临时转换层
 │   │   ├── html_extractor.py     # HTML（元数据/链接/代码块/远程媒体）
 │   │   ├── pdf_extractor.py      # PDF 本地兜底（PyMuPDF）
-│   │   ├── emf_converter.py      # EMF/WMF → PNG
+│   │   ├── emf_converter.py      # EMF/WMF → PNG（裁墨迹 / 判空 / 存盘）
+│   │   ├── wmf_render.py         # EMF/WMF → PNG 的 GDI+ 渲染后端（ctypes 直调 gdiplus.dll）
 │   │   ├── omml_converter.py     # OMML（Office 公式）→ LaTeX
 │   │   └── mathtype_filter.py    # MathType 预览图过滤
 │   │
